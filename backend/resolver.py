@@ -1,0 +1,345 @@
+"""
+Resolve player names + markets to TAB proposition IDs.
+Matches CSV bet descriptions to live SGM propositions.
+"""
+import re
+import logging
+from typing import Optional
+
+from betting import get_matches, get_sgm_propositions, price_check
+
+logger = logging.getLogger(__name__)
+
+# Team name mappings: abbreviation -> possible TAB names
+TEAM_ALIASES = {
+    "GWS": ["GWS Giants", "GWS", "Greater Western Sydney", "Giants"],
+    "COL": ["Collingwood", "Collingwood Magpies", "Magpies"],
+    "SYD": ["Sydney", "Sydney Swans", "Swans"],
+    "MEL": ["Melbourne", "Melbourne Demons", "Demons"],
+    "WCE": ["West Coast", "West Coast Eagles", "Eagles"],
+    "HAW": ["Hawthorn", "Hawthorn Hawks", "Hawks"],
+    "BRI": ["Brisbane", "Brisbane Lions", "Lions"],
+    "GEE": ["Geelong", "Geelong Cats", "Cats"],
+    "RIC": ["Richmond", "Richmond Tigers", "Tigers"],
+    "ESS": ["Essendon", "Essendon Bombers", "Bombers"],
+    "NM": ["North Melbourne", "North Melbourne Kangaroos", "Kangaroos", "Roos"],
+    "CAR": ["Carlton", "Carlton Blues", "Blues"],
+    "STK": ["St Kilda", "St Kilda Saints", "Saints"],
+    "FRE": ["Fremantle", "Fremantle Dockers", "Dockers"],
+    "PA": ["Port Adelaide", "Port Adelaide Power", "Power"],
+    "WB": ["Western Bulldogs", "Bulldogs", "Footscray"],
+    "ADL": ["Adelaide", "Adelaide Crows", "Crows"],
+    "GC": ["Gold Coast", "Gold Coast Suns", "Suns"],
+}
+
+
+def _parse_game_id(game_id: str) -> tuple[str, str]:
+    """Parse game ID like '20260327_GWS_COL' into (away_abbr, home_abbr)."""
+    parts = game_id.split("_")
+    if len(parts) >= 3:
+        return parts[1], parts[2]
+    return "", ""
+
+
+def _team_matches(abbr: str, match_name: str) -> bool:
+    """Check if a team abbreviation matches a TAB match name."""
+    aliases = TEAM_ALIASES.get(abbr.upper(), [abbr])
+    match_lower = match_name.lower()
+    return any(a.lower() in match_lower for a in aliases)
+
+
+def _find_match(matches: list, game_id: str) -> Optional[dict]:
+    """Find the TAB match matching a game ID."""
+    away, home = _parse_game_id(game_id)
+    if not away or not home:
+        return None
+
+    for m in matches:
+        name = m.get("match_name", "") or str(m.get("match_id", ""))
+        if _team_matches(away, name) and _team_matches(home, name):
+            return m
+
+    # Fallback: try matching just one team
+    for m in matches:
+        name = m.get("match_name", "") or str(m.get("match_id", ""))
+        if _team_matches(away, name) or _team_matches(home, name):
+            return m
+
+    return None
+
+
+def _parse_leg_description(desc: str) -> dict:
+    """
+    Parse leg like 'Billy Frampton 15+ Disposals' into:
+    {player: 'Billy Frampton', line: '14.5', market: 'Disposals'}
+    """
+    # Pattern: "Player Name N+ Market" e.g. "Billy Frampton 15+ Disposals"
+    match = re.match(r'^(.+?)\s+(\d+)\+\s+(.+)$', desc.strip())
+    if match:
+        player = match.group(1).strip()
+        threshold = int(match.group(2))
+        market = match.group(3).strip()
+        # TAB uses X.5 lines (e.g. 15+ = Over 14.5)
+        line = f"{threshold - 0.5}"
+        return {"player": player, "line": line, "market": market, "raw": desc.strip()}
+
+    # Pattern: "Player Name Over/Under N.5 Market"
+    match = re.match(r'^(.+?)\s+(Over|Under)\s+([\d.]+)\s+(.+)$', desc.strip(), re.IGNORECASE)
+    if match:
+        return {
+            "player": match.group(1).strip(),
+            "line": match.group(3),
+            "market": match.group(4).strip(),
+            "raw": desc.strip(),
+        }
+
+    # Fallback: just use the whole thing as player name
+    return {"player": desc.strip(), "line": None, "market": None, "raw": desc.strip()}
+
+
+def _normalize(s: str) -> str:
+    """Normalize string for fuzzy matching."""
+    return re.sub(r'[^a-z0-9]', '', s.lower())
+
+
+def _match_proposition(leg: dict, propositions: list) -> Optional[dict]:
+    """
+    Find the best matching proposition for a leg description.
+    Matches player name + market type (e.g. "30+ Disposals").
+    TAB format: name="Jack Sinclair (STK)", marketName="30+ Disposals"
+    CSV format: "Jack Sinclair 30+ Disposals"
+    """
+    player_norm = _normalize(leg["player"])
+    market_raw = leg.get("market") or ""  # e.g. "Disposals"
+    market_norm = _normalize(market_raw)
+    line = leg.get("line")  # e.g. "29.5" for 30+
+
+    # Build the full market string from CSV: "30+ Disposals"
+    threshold = None
+    if line:
+        try:
+            threshold = str(int(float(line) + 0.5))  # 29.5 -> "30"
+        except (ValueError, TypeError):
+            pass
+    full_market = f"{threshold}+ {market_raw}" if threshold and market_raw else market_raw
+    full_market_norm = _normalize(full_market)
+
+    best = None
+    best_score = 0
+
+    for prop in propositions:
+        sel_name = prop.get("selectionName", prop.get("name", ""))
+        mkt_name = prop.get("marketName", prop.get("market", ""))
+        prop_line = str(prop.get("line", ""))
+
+        # Strip team suffix like "(STK)" from name for matching
+        sel_clean = re.sub(r'\s*\([A-Z]{2,4}\)\s*$', '', sel_name)
+        sel_norm = _normalize(sel_clean)
+        mkt_norm = _normalize(mkt_name)
+
+        score = 0
+
+        # Player name match (most important)
+        if player_norm in sel_norm or sel_norm in player_norm:
+            score += 10
+        elif player_norm and sel_norm and player_norm == sel_norm:
+            score += 10
+        else:
+            # Try last name match
+            last_name = _normalize(leg["player"].split()[-1]) if leg["player"] else ""
+            if last_name and len(last_name) > 2 and last_name in sel_norm:
+                score += 7
+
+        if score == 0:
+            continue  # Must at least match player name
+
+        # Market match — TAB betOption is like "30+ Disposals"
+        if full_market_norm and full_market_norm == mkt_norm:
+            score += 8  # Exact market+line match
+        elif full_market_norm and full_market_norm in mkt_norm:
+            score += 6
+        elif market_norm and market_norm in mkt_norm:
+            score += 5
+        elif market_norm:
+            if "disposal" in market_norm and "disposal" in mkt_norm:
+                score += 5
+            elif "goal" in market_norm and "goal" in mkt_norm:
+                score += 5
+            elif "mark" in market_norm and "mark" in mkt_norm:
+                score += 5
+            elif "tackle" in market_norm and "tackle" in mkt_norm:
+                score += 5
+
+        # Line match
+        if line and prop_line and str(line) == str(prop_line):
+            score += 3
+
+        # Over/under - prefer "Over" for N+ bets
+        if "over" in mkt_norm.lower():
+            score += 1
+
+        if score > best_score:
+            best_score = score
+            best = prop
+
+    return best
+
+
+def resolve_and_price(
+    token: str,
+    proxy_url: str,
+    game_id: str,
+    bet_description: str,
+    stake: str,
+    min_odds: float,
+    sport: str = "AFL Football",
+    competition: str = "AFL",
+) -> dict:
+    """
+    Resolve a bet description to propositions, price check, and validate odds.
+
+    Returns dict with:
+    - resolved: bool
+    - match_name: str
+    - legs: list of resolved legs
+    - combined_odds: str or None
+    - meets_minimum: bool
+    - error: str or None
+    """
+    result = {
+        "game_id": game_id,
+        "description": bet_description,
+        "resolved": False,
+        "match_name": None,
+        "legs": [],
+        "propositions": [],
+        "combined_odds": None,
+        "meets_minimum": False,
+        "error": None,
+    }
+
+    try:
+        # Step 1: Get matches
+        matches = get_matches(token, proxy_url, sport, competition)
+        if not matches:
+            result["error"] = "No matches found"
+            return result
+
+        # Step 2: Find the match
+        match = _find_match(matches, game_id)
+        if not match:
+            result["error"] = f"Could not find match for {game_id}"
+            return result
+
+        result["match_name"] = match.get("match_name", match.get("match_id"))
+
+        # Step 3: Get SGM propositions (use URL-encoded match name, not short ID)
+        sgm_match_id = match.get("match_name_url", match["match_id"])
+        sgm_data = get_sgm_propositions(token, sgm_match_id, proxy_url, sport, competition)
+
+        # Flatten all propositions from the nested response
+        # Structure: {data: [{title, data: [{betOption, data: [{propositions: [...]}]}]}]}
+        all_props = []
+
+        def _extract_props(obj, market_name="", depth=0):
+            if depth > 8:
+                return
+            if isinstance(obj, dict):
+                # Track market/betOption name
+                current_market = obj.get("betOption", obj.get("title", market_name))
+
+                # If this dict has a propositions array, extract them
+                if "propositions" in obj and isinstance(obj["propositions"], list):
+                    for p in obj["propositions"]:
+                        prop = {
+                            "propositionId": p.get("numberId", p.get("id")),
+                            "name": p.get("name", ""),
+                            "selectionName": p.get("name", ""),
+                            "marketName": current_market,
+                            "odds": {"decimal": str(p.get("returnWin", 0))},
+                            "returnWin": p.get("returnWin", 0),
+                            "line": str(p.get("line", "")),
+                        }
+                        all_props.append(prop)
+                    return
+
+                # If this has propositionId/numberId directly
+                if "numberId" in obj or "propositionId" in obj:
+                    prop = {
+                        "propositionId": obj.get("numberId", obj.get("propositionId")),
+                        "name": obj.get("name", ""),
+                        "selectionName": obj.get("selectionName", obj.get("name", "")),
+                        "marketName": market_name,
+                        "odds": {"decimal": str(obj.get("returnWin", obj.get("odds", 0)))},
+                        "returnWin": obj.get("returnWin", 0),
+                    }
+                    all_props.append(prop)
+                    return
+
+                # Recurse into nested data
+                for k, v in obj.items():
+                    _extract_props(v, current_market, depth + 1)
+            elif isinstance(obj, list):
+                for item in obj:
+                    _extract_props(item, market_name, depth + 1)
+
+        _extract_props(sgm_data)
+
+        if not all_props:
+            result["error"] = f"No SGM propositions for match {result['match_name']}"
+            return result
+
+        # Step 4: Parse and resolve each leg
+        leg_descriptions = bet_description.split("/")
+        resolved_props = []
+
+        for leg_desc in leg_descriptions:
+            leg = _parse_leg_description(leg_desc)
+            prop = _match_proposition(leg, all_props)
+
+            leg_result = {
+                "description": leg["raw"],
+                "player": leg["player"],
+                "market": leg.get("market"),
+                "line": leg.get("line"),
+                "matched": prop is not None,
+            }
+
+            if prop:
+                odds = prop.get("odds", {})
+                odds_val = odds.get("decimal", odds) if isinstance(odds, dict) else str(odds)
+                leg_result["propositionId"] = prop.get("propositionId", prop.get("id"))
+                leg_result["odds"] = str(odds_val)
+                leg_result["selectionName"] = prop.get("selectionName", prop.get("name"))
+                leg_result["marketName"] = prop.get("marketName", "")
+                resolved_props.append({
+                    "propositionId": leg_result["propositionId"],
+                    "odds": leg_result["odds"],
+                })
+            else:
+                result["error"] = f"Could not match: {leg['raw']}"
+
+            result["legs"].append(leg_result)
+
+        if len(resolved_props) != len(leg_descriptions):
+            result["error"] = result.get("error") or "Not all legs resolved"
+            return result
+
+        result["propositions"] = resolved_props
+        result["resolved"] = True
+
+        # Step 5: Price check
+        price_result = price_check(token, resolved_props, stake, "SAME_GAME_MULTI", proxy_url)
+        combined = price_result.get("combined_odds")
+
+        if combined:
+            result["combined_odds"] = combined
+            result["meets_minimum"] = float(combined) >= min_odds
+            if not result["meets_minimum"]:
+                result["error"] = f"Odds {combined} below minimum {min_odds}"
+
+        return result
+
+    except Exception as e:
+        result["error"] = str(e)
+        return result

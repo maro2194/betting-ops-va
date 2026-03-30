@@ -1,0 +1,440 @@
+@import "tailwindcss";
+
+/* ── Signal Dashboard Design Tokens ── */
+:root {
+  --radius: 0.5rem;
+  --background: oklch(8% .015 165);
+  --foreground: oklch(87% .01 165);
+  --card: oklch(14% .015 165);
+  --card-foreground: oklch(87% .01 165);
+  --primary: oklch(55% .22 165);
+  --primary-foreground: oklch(98.5% 0 0);
+  --secondary: oklch(15% .01 165);
+  --secondary-foreground: oklch(87% .01 165);
+  --muted: oklch(15% .01 165);
+  --muted-foreground: oklch(50% .015 165);
+  --accent: oklch(15% .01 165);
+  --accent-foreground: oklch(87% .01 165);
+  --destructive: oklch(57.7% .245 27);
+  --success: oklch(62% .2 145);
+  --warning: oklch(75% .18 75);
+  --border: oklch(22% .012 165);
+  --input: oklch(18% .01 165);
+  --ring: oklch(55% .22 165);
+  --sidebar-bg: oklch(10% .02 165);
+  --sidebar-foreground: oklch(87% .01 165);
+  --sidebar-border: oklch(16% .01 165);
+  --sidebar-primary: oklch(55% .22 165);
+
+  /* Mapped aliases for component compatibility */
+  --bg-primary: var(--background);
+  --bg-sidebar: var(--sidebar-bg);
+  --bg-card: var(--card);
+  --bg-card-hover: oklch(17% .015 165);
+  --bg-input: var(--secondary);
+  --bg-hover: oklch(13% .01 165);
+  --border-hover: oklch(28% .015 165);
+  --text-primary: var(--foreground);
+  --text-secondary: oklch(65% .01 165);
+  --text-muted: var(--muted-foreground);
+  --accent-color: var(--primary);
+  --accent-hover: oklch(50% .22 165);
+  --accent-muted: oklch(15% .04 165);
+  --success-color: var(--success);
+  --success-muted: oklch(15% .04 145);
+  --warning-color: var(--warning);
+  --warning-muted: oklch(15% .04 75);
+  --danger: var(--destructive);
+  --danger-muted: oklch(15% .04 27);
+  --purple: oklch(60% .2 310);
+  --purple-muted: oklch(15% .04 310);
+  --radius-sm: 6px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --sidebar-width: 240px;
+  --topbar-height: 0px;
+
+  --default-font-family: 'JetBrains Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+}
+
+html.light {
+  --background: oklch(97.5% .005 165);
+  --foreground: oklch(13% .02 165);
+  --card: oklch(99.5% .002 165);
+  --card-foreground: oklch(13% .02 165);
+  --primary: oklch(55% .22 165);
+  --primary-foreground: oklch(98.5% 0 0);
+  --secondary: oklch(95.5% .008 165);
+  --secondary-foreground: oklch(20.5% .02 165);
+  --muted: oklch(95.5% .008 165);
+  --muted-foreground: oklch(50% .015 165);
+  --accent: oklch(95.5% .008 165);
+  --accent-foreground: oklch(20.5% .02 165);
+  --destructive: oklch(57.7% .245 27);
+  --success: oklch(62% .2 145);
+  --warning: oklch(75% .18 75);
+  --border: oklch(91% .008 165);
+  --input: oklch(91% .008 165);
+  --ring: oklch(55% .22 165);
+  --sidebar-bg: oklch(10% .02 165);
+  --sidebar-foreground: oklch(87% .01 165);
+  --sidebar-border: oklch(91% .008 165);
+  --sidebar-primary: oklch(55% .22 165);
+
+  /* Mapped aliases for light mode */
+  --bg-primary: var(--background);
+  --bg-sidebar: var(--sidebar-bg);
+  --bg-card: var(--card);
+  --bg-card-hover: oklch(98% .003 165);
+  --bg-input: var(--secondary);
+  --bg-hover: oklch(94% .006 165);
+  --border-hover: oklch(85% .008 165);
+  --text-primary: var(--foreground);
+  --text-secondary: oklch(40% .02 165);
+  --text-muted: var(--muted-foreground);
+  --accent-color: var(--primary);
+  --accent-hover: oklch(50% .22 165);
+  --accent-muted: oklch(95% .02 165);
+  --success-color: var(--success);
+  --success-muted: oklch(95% .02 145);
+  --warning-color: var(--warning);
+  --warning-muted: oklch(95% .02 75);
+  --danger: var(--destructive);
+  --danger-muted: oklch(95% .02 27);
+  --purple: oklch(60% .2 310);
+  --purple-muted: oklch(95% .02 310);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* ── Base ── */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Themed Utility Classes ── */
+.t-bg { background-color: var(--bg-primary); }
+.t-bg2 { background-color: var(--bg-card); }
+.t-bg3 { background-color: var(--bg-input); }
+.t-bg-hover:hover { background-color: var(--bg-hover); }
+.t-border { border-color: var(--border); }
+.t-text { color: var(--text-primary); }
+.t-text2 { color: var(--text-secondary); }
+.t-text3 { color: var(--text-muted); }
+
+/* ── Input Theming ── */
+.t-input {
+  background-color: var(--bg-input);
+  border-color: var(--border);
+  color: var(--text-primary);
+  border-radius: var(--radius);
+  font-family: 'JetBrains Mono', monospace;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.t-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px oklch(55% .22 165 / 0.15);
+  outline: none;
+}
+.t-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ── Card ── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow-card);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.card:hover {
+  border-color: var(--border-hover);
+}
+.card-interactive:hover {
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* ── Stat Card ── */
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow-card);
+  transition: border-color 0.2s;
+}
+.stat-card:hover {
+  border-color: var(--border-hover);
+}
+
+/* ── Sidebar — always dark ── */
+.sidebar {
+  width: var(--sidebar-width);
+  background-color: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
+  height: 100vh;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sidebar-foreground);
+  text-decoration: none;
+  opacity: 0.6;
+  transition: background-color 0.15s, color 0.15s, opacity 0.15s;
+}
+.sidebar-nav-item:hover {
+  background-color: oklch(15% .02 165);
+  opacity: 0.85;
+  color: var(--sidebar-foreground);
+}
+.sidebar-nav-item.active {
+  background-color: oklch(55% .22 165 / 0.15);
+  color: var(--primary);
+  opacity: 1;
+}
+
+/* ── Main Content ── */
+.main-content {
+  margin-left: var(--sidebar-width);
+  min-height: 100vh;
+}
+
+@media (max-width: 1023px) {
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+  }
+  .sidebar.open {
+    transform: translateX(0);
+  }
+  .main-content {
+    margin-left: 0;
+  }
+}
+
+/* ── Sidebar Overlay ── */
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 35;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s;
+}
+.sidebar-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: 'JetBrains Mono', monospace;
+  transition: background-color 0.15s, opacity 0.15s, box-shadow 0.15s;
+  cursor: pointer;
+  border: none;
+  outline: none;
+  white-space: nowrap;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+.btn-success {
+  background-color: var(--success);
+  color: var(--primary-foreground);
+}
+.btn-success:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.btn-danger {
+  background-color: var(--danger-muted);
+  color: var(--danger);
+}
+.btn-danger:hover:not(:disabled) {
+  opacity: 0.8;
+}
+.btn-secondary {
+  background-color: var(--bg-input);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+.btn-ghost:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Badge ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 10px;
+  border-radius: 9999px;
+}
+.badge-success {
+  background-color: var(--success-muted);
+  color: var(--success);
+}
+.badge-danger {
+  background-color: var(--danger-muted);
+  color: var(--danger);
+}
+.badge-warning {
+  background-color: var(--warning-muted);
+  color: var(--warning);
+}
+.badge-accent {
+  background-color: var(--accent-muted);
+  color: var(--primary);
+}
+.badge-purple {
+  background-color: var(--purple-muted);
+  color: var(--purple);
+}
+.badge-neutral {
+  background-color: var(--bg-input);
+  color: var(--text-muted);
+}
+
+/* ── Table ── */
+.data-table {
+  width: 100%;
+  font-size: 13px;
+  border-collapse: collapse;
+}
+.data-table thead th {
+  padding-bottom: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.data-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background-color 0.1s;
+}
+.data-table tbody tr:hover {
+  background-color: var(--bg-hover);
+}
+.data-table tbody td {
+  padding: 12px 0;
+  padding-right: 12px;
+}
+
+/* ── Section label ── */
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+  padding: 16px 12px 8px;
+}
+
+/* Sidebar section labels always use sidebar foreground */
+.sidebar .section-label {
+  color: var(--sidebar-foreground);
+  opacity: 0.4;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+html.light ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+/* ── Animations ── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* ── Page title ── */
+.page-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
