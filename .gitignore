@@ -10,10 +10,8 @@ node_modules/
 frontend/dist/
 frontend/.vite/
 
-# Environment (never commit real .env)
-.env
+# Environment
 .env.local
-backend/.env
 
 # OS
 .DS_Store
