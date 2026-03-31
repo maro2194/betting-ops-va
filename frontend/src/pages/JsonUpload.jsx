@@ -97,7 +97,8 @@ export default function JsonUpload() {
     for (const [id, s] of sessionEntries) {
       try {
         const res = await api.getBalance(s.session_id);
-        balances[id] = res.balance != null ? parseFloat(res.balance) : null;
+        const raw = res.account_balance || res.balance || '0';
+        balances[id] = parseFloat(String(raw).replace(/[$,]/g, '')) || null;
       } catch {
         balances[id] = null;
       }
@@ -294,7 +295,8 @@ export default function JsonUpload() {
         const result = await api.placeJson(sessionId, bet);
 
         if (result.success) {
-          const newBalance = result.account_balance != null ? parseFloat(result.account_balance) : runningBalances[currentAcc.id] - bet.stake;
+          const rawBal = result.account_balance || '';
+          const newBalance = rawBal ? parseFloat(String(rawBal).replace(/[$,]/g, '')) : runningBalances[currentAcc.id] - bet.stake;
           runningBalances[currentAcc.id] = newBalance;
           setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: newBalance }));
 
