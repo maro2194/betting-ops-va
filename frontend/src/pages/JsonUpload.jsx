@@ -30,12 +30,14 @@ function formatLegs(legs) {
   return legs.map((leg) => {
     const player = leg.player || '';
     const line = leg.line != null ? leg.line : '';
-    const stat = leg.stat ? leg.stat.charAt(0).toUpperCase() + leg.stat.slice(1) : '';
-    const selection = leg.selection ? leg.selection.charAt(0).toUpperCase() + leg.selection.slice(1) : '';
-    if (player && line && stat) {
-      return `${player} — ${line}+ ${stat}`;
+    // Handle both 'stat' and 'market' field names, capitalize
+    const stat = (leg.stat || leg.market || '');
+    const statDisplay = stat.charAt(0).toUpperCase() + stat.slice(1);
+    if (player && line) {
+      return `${player} — ${line}+ ${statDisplay}`;
     }
-    const parts = [leg.market, player, stat, line, selection].filter(Boolean);
+    const selection = leg.selection || leg.type || '';
+    const parts = [leg.market, player, statDisplay, line, selection].filter(Boolean);
     return parts.join(' ') || JSON.stringify(leg);
   });
 }
@@ -122,8 +124,16 @@ export default function JsonUpload() {
     setBetStatuses({});
     setCurrentBetIndex(-1);
     try {
-      let data = JSON.parse(jsonText);
-      if (!Array.isArray(data)) data = [data];
+      let raw = JSON.parse(jsonText);
+      // Handle wrapper format: {event, bets: [...]} or flat array or single object
+      let data;
+      if (raw.bets && Array.isArray(raw.bets)) {
+        data = raw.bets;
+      } else if (Array.isArray(raw)) {
+        data = raw;
+      } else {
+        data = [raw];
+      }
       if (data.length === 0) {
         setError('JSON is empty — provide at least one bet.');
         return;

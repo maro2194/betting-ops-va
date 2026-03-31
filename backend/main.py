@@ -906,14 +906,17 @@ async def api_paste_token(req: PasteTokenRequest, user: dict = Depends(_verify_a
 # ─── JSON Bet Upload ─────────────────────────────────────────────────────────
 
 class JsonBetLeg(_BM):
-    market: str = ""           # e.g. "player_prop"
+    model_config = {"extra": "allow"}
+    market: str = ""           # e.g. "player_prop" or "disposals"
     player: str = ""           # e.g. "Andrew Brayshaw"
-    stat: str = ""             # e.g. "disposals"
+    stat: str = ""             # e.g. "disposals" (alternative to market)
     line: float = 0            # e.g. 20
-    selection: str = "over"    # "over" or "under"
+    selection: str = ""        # "over" or "under"
+    type: str = ""             # alternative to selection (Diji format)
 
 class JsonBet(_BM):
-    session_id: str
+    model_config = {"extra": "allow"}  # Allow _meta and other extra fields
+    session_id: str = ""
     category: str = "sports"
     is_same_event_multi: bool = True
     stake: float = 10.0
@@ -1036,11 +1039,13 @@ def _resolve_json_bet(token: str, legacy_token: str, proxy_url: str, bet: JsonBe
         resolved_legs = []
         for leg in bet.legs:
             player_lower = leg.player.lower()
-            stat_lower = leg.stat.lower()
+            # Handle both field names: 'stat' or 'market' for the stat type
+            stat_name = leg.stat or leg.market or ""
+            stat_lower = stat_name.lower()
             line_str = f"{int(leg.line)}+"
 
             # Build target market name: "20+ Disposals"
-            target_market = f"{int(leg.line)}+ {leg.stat.title()}"
+            target_market = f"{int(leg.line)}+ {stat_name.title()}"
 
             best_prop = None
             best_score = 0
@@ -1087,7 +1092,7 @@ def _resolve_json_bet(token: str, legacy_token: str, proxy_url: str, bet: JsonBe
                     "matched_market": best_prop["betOption"],
                 })
             else:
-                result["error"] = f"Could not find: {leg.player} {int(leg.line)}+ {leg.stat}"
+                result["error"] = f"Could not find: {leg.player} {int(leg.line)}+ {stat_name}"
                 result["legs_resolved"] = resolved_legs
                 return result
 
