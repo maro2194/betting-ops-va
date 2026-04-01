@@ -141,25 +141,24 @@ query raceCard($race_ids: [ID!]!) {
 """
 
 CREATE_BET_MUTATION = """
-mutation createBet($input: CreateBetInput!) {
-  createBet(input: $input) {
-    id
+    mutation createBet($input: BetList!, $metadata: Metadata) {
+  createBet(input: $input, metadata: $metadata) {
+    bet_id
     status
     bets {
-      id
+      bet_id
       status
-      payout
-      odds
-      amount
-      is_bonus_bet
-    }
-    errors {
-      message
-      code
+      bet_type
+      error_message
+      error_code
+      error_metadata {
+        input_price
+        updated_price
+      }
     }
   }
 }
-"""
+    """
 
 BALANCE_QUERY = """
 query getUser {
@@ -453,14 +452,12 @@ class BetMakersClient(PlatformClient):
         payload = {
             "query": CREATE_BET_MUTATION,
             "variables": {"input": bet_input},
+            "operationName": "createBet",
         }
 
         async with AsyncSession(impersonate="chrome") as s:
-            if proxy_url:
-                s.proxies = {"http": proxy_url, "https": proxy_url}
-
             try:
-                resp = await s.post(url, json=payload, headers=headers, timeout=15)
+                resp = await s.post(url, json=payload, headers=headers, proxy=proxy_url, timeout=15)
             except Exception as e:
                 logger.error(f"BetMakers place_bet request failed: {e}")
                 return {"success": False, "error": f"Request failed: {e}"}
@@ -478,13 +475,19 @@ class BetMakersClient(PlatformClient):
                 logger.error(f"BetMakers createBet GraphQL error: {error_msg}")
                 return {"success": False, "error": error_msg}
 
-            result = data.get("data", {}).get("createBet", {})
-            bet_errors = result.get("errors", [])
-            if bet_errors:
-                error_msg = "; ".join(e.get("message", str(e)) for e in bet_errors)
-                return {"success": False, "error": error_msg}
+            create_result = data.get("data", {}).get("createBet", [])
+            # createBet returns a list
+            if isinstance(create_result, list):
+                result = create_result[0] if create_result else {}
+            else:
+                result = create_result or {}
 
-            bet_id = result.get("id", "")
+            # Check per-bet errors
+            for bet in result.get("bets", []):
+                if bet.get("error_message"):
+                    return {"success": False, "error": bet["error_message"], "bet_id": bet.get("bet_id", "")}
+
+            bet_id = result.get("bet_id", "")
             status = result.get("status", "")
             bets = result.get("bets", [])
 

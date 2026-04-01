@@ -256,7 +256,6 @@ async def process_batch(batch_id: str, rows: list[dict], username: str):
                     stake=float(row["stake"]),
                     stake_type=row.get("stake_type", "cash"),
                     brand_config=session.get("brand_config", {}),
-                    brand_config=brand_config,
                 )
 
                 if result.get("success"):
