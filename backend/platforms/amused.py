@@ -349,7 +349,14 @@ class AmusedClient(PlatformClient):
                     "barrier": r.get("barrier", r.get("barrierNumber", 0)),
                 })
 
-            return runners
+            # Deduplicate by outcome_id (futures returns WIN + PLC entries per runner)
+            seen_ids = set()
+            unique_runners = []
+            for r in runners:
+                if r["outcome_id"] not in seen_ids:
+                    seen_ids.add(r["outcome_id"])
+                    unique_runners.append(r)
+            return unique_runners
 
     async def place_bet(self, session: dict, race_info: dict, runner: dict,
                         stake: float, stake_type: str, brand_config: dict) -> dict:

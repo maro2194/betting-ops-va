@@ -11,6 +11,7 @@ from platforms.registry import get_platform_and_brand, get_client, is_supported,
 from session_manager import session_manager, _session_key
 from multi_database import (
     find_account_by_initials_brand, update_csv_row, update_batch_summary,
+    save_multi_bet,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,6 +188,9 @@ async def process_batch(batch_id: str, rows: list[dict], username: str):
                 failed += 1
             continue
 
+        # Pre-fetch balance for this account group (check once, subtract as we place)
+        cached_balance = None
+
         # Process each row in the group
         for row in group_rows:
             try:
@@ -196,6 +200,23 @@ async def process_batch(batch_id: str, rows: list[dict], username: str):
                     await update_csv_row(row["id"], {
                         "status": "failed",
                         "error": f"Login failed: {session.get('error', 'unknown')}",
+                    })
+                    failed += 1
+                    continue
+
+                # Balance pre-check (fetch once per account group, then subtract)
+                bet_stake = float(row["stake"])
+                if cached_balance is None:
+                    try:
+                        cached_balance = await client.get_balance(session)
+                    except Exception as e:
+                        logger.warning(f"Balance check failed for {group_key}: {e}")
+                        cached_balance = float("inf")  # skip check if balance fetch fails
+
+                if cached_balance < bet_stake:
+                    await update_csv_row(row["id"], {
+                        "status": "failed",
+                        "error": f"Insufficient balance: ${cached_balance:.2f} available, ${bet_stake:.2f} required",
                     })
                     failed += 1
                     continue
@@ -267,6 +288,33 @@ async def process_batch(batch_id: str, rows: list[dict], username: str):
                         "raw_response": result,
                     })
                     placed += 1
+
+                    # Subtract stake from cached balance
+                    if cached_balance != float("inf"):
+                        cached_balance -= bet_stake
+
+                    # Save to unified bet ledger
+                    try:
+                        await save_multi_bet({
+                            "id": str(uuid.uuid4()),
+                            "username": username,
+                            "initials": row["initials"],
+                            "owner_name": row.get("owner", ""),
+                            "platform": row["platform"],
+                            "brand": row["brand"],
+                            "method": "allocation",
+                            "track": row["track"],
+                            "race_number": int(row["race"]),
+                            "horse": row["horse"],
+                            "stake": float(row["stake"]),
+                            "stake_type": row.get("stake_type", "cash"),
+                            "odds": float(live_odds) if live_odds else None,
+                            "bet_reference": result.get("bet_id", ""),
+                            "status": "placed",
+                            "raw_response": result,
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to save multi_bet ledger entry: {e}")
                 else:
                     await update_csv_row(row["id"], {
                         "status": "failed",

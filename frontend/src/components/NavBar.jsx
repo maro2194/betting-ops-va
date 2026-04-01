@@ -16,6 +16,7 @@ import {
   X,
   ChevronLeft,
   Zap,
+  BookOpen,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -37,7 +38,7 @@ const NAV_GROUPS = [
   {
     label: 'Tools',
     items: [
-      { to: '/json', label: 'JSON Upload', icon: Upload },
+      { to: '/json', label: 'Expload', icon: Upload },
       { to: '/csv', label: 'CSV Paste', icon: FileSpreadsheet },
       { to: '/alloc', label: 'Allocation', icon: Upload },
     ],
@@ -52,6 +53,7 @@ const NAV_GROUPS = [
     label: 'Account',
     items: [
       { to: '/history', label: 'History', icon: History },
+      { to: '/ledger', label: 'Bet Ledger', icon: BookOpen },
     ],
   },
 ];

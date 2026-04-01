@@ -349,6 +349,9 @@ export default function AllocUpload() {
                         {isExecuting ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <StatusBadge status={row.status} />
+                            {row.status === 'placed' && row.bet_reference && (
+                              <span style={{ color: 'var(--text-muted)', marginLeft: 4, fontSize: 11 }}>#{row.bet_reference}</span>
+                            )}
                             {row.error && (
                               <span style={{ fontSize: 11, color: 'var(--danger)' }}>{row.error}</span>
                             )}

@@ -79,6 +79,40 @@ async def init_multi_db():
             CREATE INDEX IF NOT EXISTS idx_csv_rows_batch ON csv_bet_rows(batch_id)
         """)
 
+        # Unified bet ledger
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS multi_bets (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                initials TEXT NOT NULL,
+                owner_name TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                brand TEXT NOT NULL,
+                method TEXT NOT NULL,
+                track TEXT,
+                race_number INTEGER,
+                horse TEXT,
+                stake DOUBLE PRECISION NOT NULL,
+                stake_type TEXT DEFAULT 'cash',
+                odds DOUBLE PRECISION,
+                bet_reference TEXT,
+                status TEXT DEFAULT 'pending',
+                payout DOUBLE PRECISION,
+                placed_at TIMESTAMPTZ DEFAULT NOW(),
+                settled_at TIMESTAMPTZ,
+                raw_response JSONB
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_multi_bets_username ON multi_bets(username)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_multi_bets_method ON multi_bets(method)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_multi_bets_placed ON multi_bets(placed_at)
+        """)
+
     logger.info("Multi-bookie database tables initialized")
 
 
@@ -294,3 +328,140 @@ async def get_recent_batches(username: str, limit: int = 20) -> list[dict]:
                 d["uploaded_at"] = d["uploaded_at"].isoformat()
             result.append(d)
         return result
+
+
+# ─── Unified Bet Ledger (multi_bets) ─────────────────────────────────────
+
+
+async def save_multi_bet(data: dict):
+    """Insert a bet record into the unified bet ledger."""
+    async with _db.pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO multi_bets
+                (id, username, initials, owner_name, platform, brand, method,
+                 track, race_number, horse, stake, stake_type, odds,
+                 bet_reference, status, payout, raw_response)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)""",
+            data["id"],
+            data["username"],
+            data.get("initials", ""),
+            data.get("owner_name", ""),
+            data.get("platform", ""),
+            data.get("brand", ""),
+            data.get("method", "manual"),
+            data.get("track"),
+            data.get("race_number"),
+            data.get("horse"),
+            data["stake"],
+            data.get("stake_type", "cash"),
+            data.get("odds"),
+            data.get("bet_reference"),
+            data.get("status", "pending"),
+            data.get("payout"),
+            json.dumps(data.get("raw_response")) if data.get("raw_response") else None,
+        )
+
+
+async def get_multi_bets(
+    username: str,
+    method: str | None = None,
+    brand: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Query bet ledger with optional filters."""
+    conditions = ["username = $1"]
+    params: list = [username]
+    idx = 2
+
+    if method:
+        conditions.append(f"method = ${idx}")
+        params.append(method)
+        idx += 1
+    if brand:
+        conditions.append(f"brand = ${idx}")
+        params.append(brand)
+        idx += 1
+    if status:
+        conditions.append(f"status = ${idx}")
+        params.append(status)
+        idx += 1
+
+    params.append(limit)
+    where = " AND ".join(conditions)
+    query = f"""SELECT * FROM multi_bets
+                WHERE {where}
+                ORDER BY placed_at DESC
+                LIMIT ${idx}"""
+
+    async with _db.pool.acquire() as conn:
+        rows = await conn.fetch(query, *params)
+        result = []
+        for r in rows:
+            d = dict(r)
+            if isinstance(d.get("raw_response"), str):
+                d["raw_response"] = json.loads(d["raw_response"])
+            if d.get("placed_at"):
+                d["placed_at"] = d["placed_at"].isoformat()
+            if d.get("settled_at"):
+                d["settled_at"] = d["settled_at"].isoformat()
+            result.append(d)
+        return result
+
+
+async def get_multi_bet_stats(
+    username: str,
+    method: str | None = None,
+) -> dict:
+    """Aggregate stats: total bets, total staked, total won, P/L."""
+    conditions = ["username = $1"]
+    params: list = [username]
+    idx = 2
+
+    if method:
+        conditions.append(f"method = ${idx}")
+        params.append(method)
+        idx += 1
+
+    where = " AND ".join(conditions)
+
+    async with _db.pool.acquire() as conn:
+        # Overall stats
+        row = await conn.fetchrow(
+            f"""SELECT
+                    COUNT(*) as total_bets,
+                    COALESCE(SUM(stake), 0) as total_staked,
+                    COALESCE(SUM(payout), 0) as total_won,
+                    COALESCE(SUM(payout), 0) - COALESCE(SUM(CASE WHEN status IN ('won', 'lost') THEN stake ELSE 0 END), 0) as pl,
+                    COUNT(*) FILTER (WHERE status = 'won') as won_count,
+                    COUNT(*) FILTER (WHERE status = 'lost') as lost_count,
+                    COUNT(*) FILTER (WHERE status = 'placed') as pending_count
+                FROM multi_bets WHERE {where}""",
+            *params,
+        )
+
+        stats = dict(row)
+
+        # Breakdown by method
+        method_rows = await conn.fetch(
+            f"""SELECT method,
+                    COUNT(*) as total_bets,
+                    COALESCE(SUM(stake), 0) as total_staked,
+                    COALESCE(SUM(payout), 0) as total_won,
+                    COALESCE(SUM(payout), 0) - COALESCE(SUM(CASE WHEN status IN ('won', 'lost') THEN stake ELSE 0 END), 0) as pl
+                FROM multi_bets WHERE {where}
+                GROUP BY method""",
+            *params,
+        )
+        stats["by_method"] = [dict(r) for r in method_rows]
+
+        # Convert Decimal types to float for JSON serialization
+        for key in ("total_staked", "total_won", "pl"):
+            if stats.get(key) is not None:
+                stats[key] = float(stats[key])
+        for m in stats["by_method"]:
+            for key in ("total_staked", "total_won", "pl"):
+                if m.get(key) is not None:
+                    m[key] = float(m[key])
+
+        return stats

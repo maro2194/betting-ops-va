@@ -14,7 +14,7 @@ class CsvUploadRequest(BaseModel):
 from multi_database import (
     get_bookie_accounts, upsert_bookie_account, delete_bookie_account,
     find_account_by_id, create_csv_batch, insert_csv_rows, get_batch_status,
-    get_recent_batches,
+    get_recent_batches, get_multi_bets, get_multi_bet_stats,
 )
 from csv_processor import parse_racing_csv, validate_csv_rows, process_batch
 from database import get_app_session
@@ -316,3 +316,34 @@ async def api_csv_batches(
     """List recent CSV batches for the current user."""
     batches = await get_recent_batches(user["username"], limit=limit)
     return {"batches": batches}
+
+
+# ─── Unified Bet Ledger ──────────────────────────────────────────────────
+
+@multi_router.get("/bets")
+async def api_list_bets(
+    method: str = None,
+    brand: str = None,
+    status: str = None,
+    limit: int = 100,
+    user: dict = Depends(_verify_app_token),
+):
+    """List bets from the unified ledger with optional filters."""
+    bets = await get_multi_bets(
+        user["username"],
+        method=method or None,
+        brand=brand or None,
+        status=status or None,
+        limit=limit,
+    )
+    return {"bets": bets}
+
+
+@multi_router.get("/bets/stats")
+async def api_bet_stats(
+    method: str = None,
+    user: dict = Depends(_verify_app_token),
+):
+    """Get aggregated bet stats (P/L, totals) from the unified ledger."""
+    stats = await get_multi_bet_stats(user["username"], method=method or None)
+    return stats
