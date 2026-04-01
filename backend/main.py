@@ -60,6 +60,8 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     await init_db()
+    from multi_database import init_multi_db
+    await init_multi_db()
     # Restore sessions from DB
     global app_tokens, sessions
     app_tokens.update(await load_all_app_sessions())
@@ -1317,6 +1319,10 @@ async def api_place_json_batch(req: JsonBetBatch, _user: dict = Depends(_verify_
     failed = len(results) - placed
     return {"total": len(results), "placed": placed, "failed": failed, "results": results}
 
+
+# ─── Multi-Bookie Routes ────────────────────────────────────────────────────
+from multi_routes import multi_router
+app.include_router(multi_router)
 
 # ─── Health ──────────────────────────────────────────────────────────────────
 
