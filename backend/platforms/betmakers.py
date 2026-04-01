@@ -31,14 +31,54 @@ BETMAKERS_BRANDS = {
         "referer": "https://terrybet.com.au/",
         "product_keyword": "TBF",
     },
-    # Other brands follow same pattern but with their own client IDs
-    # Use terrybet config as default until extracted from frontend
-    "crownbet": None,   # TODO: extract from frontend
-    "ponybet": None,
-    "betit": None,
-    "diamondbet": None,
-    "betdash": None,
-    "swiftbet": None,
+    "crownbet": {
+        "cognito_client_id": "1b8vvipjgq694cqt6koarsuqrj",
+        "user_pool_id": "ap-southeast-2_UxQKFkiUE",
+        "racing_host": "racing.crownbet.bmapollo.com",
+        "platform_host": "platform.crownbet.bmapollo.com",
+        "referer": "https://crownbet.com.au/",
+        "product_keyword": "TBF",
+    },
+    "ponybet": {
+        "cognito_client_id": "1va9olufe5nbf1r704durfkfa5",
+        "user_pool_id": "ap-southeast-2_sGlghz4Ov",
+        "racing_host": "racing.ponybet.bmapollo.com",
+        "platform_host": "platform.ponybet.bmapollo.com",
+        "referer": "https://ponybet.com.au/",
+        "product_keyword": "TBF",
+    },
+    "betit": {
+        "cognito_client_id": "7m70ns60lc6g3ovhhdjhs0lcb6",
+        "user_pool_id": "ap-southeast-2_LImK0TYTM",
+        "racing_host": "racing.betit.bmapollo.com",
+        "platform_host": "platform.betit.bmapollo.com",
+        "referer": "https://betit.com.au/",
+        "product_keyword": "TBF",
+    },
+    "diamondbet": {
+        "cognito_client_id": "65tumqa6elclm410pq4bqklra3",
+        "user_pool_id": "ap-southeast-2_tEqGrxbhn",
+        "racing_host": "racing.diamondbet.bmapollo.com",
+        "platform_host": "platform.diamondbet.bmapollo.com",
+        "referer": "https://diamondbet.com.au/",
+        "product_keyword": "TBF",
+    },
+    "betdash": {
+        "cognito_client_id": "4cq6ubu5rfga8aq3uqoa0iu707",
+        "user_pool_id": "ap-southeast-2_PIH8zd6Xh",
+        "racing_host": "racing.betdash.bmapollo.com",
+        "platform_host": "platform.betdash.bmapollo.com",
+        "referer": "https://betdash.com.au/",
+        "product_keyword": "TBF",
+    },
+    "swiftbet": {
+        "cognito_client_id": "2k7qfmkk7jaisoack274e4em7i",
+        "user_pool_id": "ap-southeast-2_qG2ieTekV",
+        "racing_host": "racing.swiftbet.bmapollo.com",
+        "platform_host": "platform.swiftbet.bmapollo.com",
+        "referer": "https://swiftbet.com.au/",
+        "product_keyword": "TBF",
+    },
 }
 
 # ─── GraphQL Queries ────────────────────────────────────────────────────────
