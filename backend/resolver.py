@@ -351,7 +351,7 @@ def resolve_and_price(
 import time as _time
 
 _sport_props_cache = {}
-_CACHE_TTL = 3600  # 1 hour
+_CACHE_TTL = 300  # 5 minutes — TAB opens player markets gradually, stale cache causes false failures
 
 
 def _flatten_sgm_props(sgm_data):
@@ -409,18 +409,21 @@ def _fetch_match_props(token, proxy_url, match, sport, competition):
         return []
 
 
-def _get_all_sport_props(token, proxy_url, sport, competition):
+def _get_all_sport_props(token, proxy_url, sport, competition, force_refresh=False):
     """Get all SGM propositions across all matches for a sport, with caching.
     Uses thread pool to fetch matches in parallel for speed."""
     from concurrent.futures import ThreadPoolExecutor
 
     cache_key = f"{sport}:{competition}"
     now = _time.time()
-    if cache_key in _sport_props_cache:
+    if not force_refresh and cache_key in _sport_props_cache:
         cached = _sport_props_cache[cache_key]
         if now - cached["ts"] < _CACHE_TTL:
             logger.info(f"Using cached props for {sport}/{competition} ({len(cached['props'])} props)")
             return cached["props"]
+
+    if force_refresh:
+        logger.info(f"Force-refreshing props for {sport}/{competition}")
 
     matches = get_matches(token, proxy_url, sport, competition)
     logger.info(f"Fetching props for {len(matches)} {competition} matches in parallel...")
@@ -493,6 +496,7 @@ def resolve_csb_bet(
 
         resolved_props = []
         matched_odds = []
+        failed_leg = None
         for leg_desc in leg_descriptions:
             leg = _parse_leg_description(leg_desc)
             prop = _match_proposition(leg, all_props)
@@ -506,8 +510,39 @@ def resolve_csb_bet(
                 })
                 matched_odds.append(float(odds_val) if odds_val else 0)
             else:
-                result["error"] = f"Could not match: {leg['raw']}"
-                return result
+                failed_leg = leg['raw']
+                break
+
+        # Retry with fresh data if a leg failed and we were using cached props
+        if failed_leg and bet_type.upper() != "SGM":
+            cache_key = f"{sport}:{competition}"
+            was_cached = cache_key in _sport_props_cache
+            if was_cached:
+                logger.info(f"Leg '{failed_leg}' failed with cached props — retrying with fresh data")
+                all_props = _get_all_sport_props(token, proxy_url, sport, competition, force_refresh=True)
+                if all_props:
+                    resolved_props = []
+                    matched_odds = []
+                    failed_leg = None
+                    for leg_desc in leg_descriptions:
+                        leg = _parse_leg_description(leg_desc)
+                        prop = _match_proposition(leg, all_props)
+                        if prop:
+                            odds_val = prop.get("returnWin", 0)
+                            resolved_props.append({
+                                "propositionId": prop.get("propositionId"),
+                                "odds": str(odds_val),
+                                "name": f"{prop.get('selectionName', prop.get('name', ''))} — {prop.get('marketName', '')}",
+                                "match_name": prop.get("_match_name", ""),
+                            })
+                            matched_odds.append(float(odds_val) if odds_val else 0)
+                        else:
+                            failed_leg = leg['raw']
+                            break
+
+        if failed_leg:
+            result["error"] = f"Could not match: {failed_leg}"
+            return result
 
         result["propositions"] = resolved_props
         result["matched_odds"] = matched_odds
