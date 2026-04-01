@@ -248,14 +248,14 @@ async def process_batch(batch_id: str, rows: list[dict], username: str):
                 # Human delay: simulate reviewing odds before betting
                 await asyncio.sleep(random.uniform(1.5, 3.0))
 
-                # Place the bet
-                brand_config = account.get("brand_config", {})
+                # Place the bet — brand_config is in the session (set by session_manager)
                 result = await client.place_bet(
                     session=session,
                     race_info=race_info,
                     runner=matched_runner,
                     stake=float(row["stake"]),
                     stake_type=row.get("stake_type", "cash"),
+                    brand_config=session.get("brand_config", {}),
                     brand_config=brand_config,
                 )
 

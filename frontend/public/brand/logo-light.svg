@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- BotOps Logo Mark — Light Variant -->
+  <!-- Transparent background, designed for light surfaces -->
+
+  <!-- === CIRCUIT TRACES === -->
+
+  <!-- LEFT SIDE TRACES -->
+  <line x1="168" y1="208" x2="112" y2="208" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="112" y1="208" x2="112" y2="152" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="88" y1="152" x2="112" y2="152" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+
+  <line x1="168" y1="248" x2="88" y2="248" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.3"/>
+
+  <line x1="168" y1="304" x2="112" y2="304" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="112" y1="304" x2="112" y2="360" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="88" y1="360" x2="112" y2="360" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+
+  <!-- RIGHT SIDE TRACES -->
+  <line x1="344" y1="208" x2="400" y2="208" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="400" y1="208" x2="400" y2="152" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="400" y1="152" x2="424" y2="152" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+
+  <line x1="344" y1="248" x2="424" y2="248" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.3"/>
+
+  <line x1="344" y1="304" x2="400" y2="304" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="400" y1="304" x2="400" y2="360" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="400" y1="360" x2="424" y2="360" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+
+  <!-- TOP SIDE TRACES -->
+  <line x1="220" y1="168" x2="220" y2="112" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="176" y1="112" x2="220" y2="112" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+
+  <line x1="256" y1="168" x2="256" y2="80" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.4"/>
+
+  <line x1="292" y1="168" x2="292" y2="112" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="292" y1="112" x2="336" y2="112" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+
+  <!-- BOTTOM SIDE TRACES -->
+  <line x1="220" y1="344" x2="220" y2="400" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="176" y1="400" x2="220" y2="400" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+
+  <line x1="256" y1="344" x2="256" y2="432" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.4"/>
+
+  <line x1="292" y1="344" x2="292" y2="400" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="292" y1="400" x2="336" y2="400" stroke="#00a37a" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+
+  <!-- === SOLDER PADS === -->
+  <!-- Left side pads -->
+  <rect x="80" y="144" width="16" height="16" rx="2" fill="#00a37a" opacity="0.65"/>
+  <rect x="72" y="240" width="16" height="16" rx="2" fill="#00a37a" opacity="0.4"/>
+  <rect x="80" y="352" width="16" height="16" rx="2" fill="#00a37a" opacity="0.65"/>
+
+  <!-- Right side pads -->
+  <rect x="416" y="144" width="16" height="16" rx="2" fill="#00a37a" opacity="0.65"/>
+  <rect x="416" y="240" width="16" height="16" rx="2" fill="#00a37a" opacity="0.4"/>
+  <rect x="416" y="352" width="16" height="16" rx="2" fill="#00a37a" opacity="0.65"/>
+
+  <!-- Top pads -->
+  <rect x="168" y="104" width="16" height="16" rx="2" fill="#00a37a" opacity="0.65"/>
+  <rect x="248" y="72" width="16" height="16" rx="2" fill="#00a37a" opacity="0.55"/>
+  <rect x="328" y="104" width="16" height="16" rx="2" fill="#00a37a" opacity="0.65"/>
+
+  <!-- Bottom pads -->
+  <rect x="168" y="392" width="16" height="16" rx="2" fill="#00a37a" opacity="0.65"/>
+  <rect x="248" y="424" width="16" height="16" rx="2" fill="#00a37a" opacity="0.55"/>
+  <rect x="328" y="392" width="16" height="16" rx="2" fill="#00a37a" opacity="0.65"/>
+
+  <!-- === MAIN IC CHIP BODY === -->
+  <!-- Drop shadow for depth on light bg -->
+  <rect x="172" y="174" width="176" height="176" rx="10" fill="none" stroke="#00a37a" stroke-width="1" opacity="0.12"/>
+  <rect x="168" y="168" width="176" height="176" rx="10" fill="#fafcfa" stroke="#00a37a" stroke-width="3"/>
+
+  <!-- Subtle inner stroke -->
+  <rect x="176" y="176" width="160" height="160" rx="7" fill="none" stroke="#00a37a" stroke-width="0.75" opacity="0.15"/>
+
+  <!-- === IC PIN PADS on chip edges === -->
+  <!-- Left pins -->
+  <rect x="162" y="200" width="12" height="10" rx="1.5" fill="#00a37a" opacity="0.85"/>
+  <rect x="162" y="251" width="12" height="10" rx="1.5" fill="#00a37a" opacity="0.6"/>
+  <rect x="162" y="302" width="12" height="10" rx="1.5" fill="#00a37a" opacity="0.85"/>
+
+  <!-- Right pins -->
+  <rect x="338" y="200" width="12" height="10" rx="1.5" fill="#00a37a" opacity="0.85"/>
+  <rect x="338" y="251" width="12" height="10" rx="1.5" fill="#00a37a" opacity="0.6"/>
+  <rect x="338" y="302" width="12" height="10" rx="1.5" fill="#00a37a" opacity="0.85"/>
+
+  <!-- Top pins -->
+  <rect x="213" y="162" width="10" height="12" rx="1.5" fill="#00a37a" opacity="0.85"/>
+  <rect x="251" y="162" width="10" height="12" rx="1.5" fill="#00a37a" opacity="0.6"/>
+  <rect x="289" y="162" width="10" height="12" rx="1.5" fill="#00a37a" opacity="0.85"/>
+
+  <!-- Bottom pins -->
+  <rect x="213" y="338" width="10" height="12" rx="1.5" fill="#00a37a" opacity="0.85"/>
+  <rect x="251" y="338" width="10" height="12" rx="1.5" fill="#00a37a" opacity="0.6"/>
+  <rect x="289" y="338" width="10" height="12" rx="1.5" fill="#00a37a" opacity="0.85"/>
+
+  <!-- === ORIENTATION NOTCH === -->
+  <path d="M 244 168 A 12 12 0 0 1 268 168" fill="#fafcfa" stroke="#00a37a" stroke-width="2"/>
+
+  <!-- === BO WORDMARK === -->
+  <text
+    x="256"
+    y="262"
+    font-family="'JetBrains Mono', 'Courier New', monospace"
+    font-size="82"
+    font-weight="700"
+    fill="#00a37a"
+    text-anchor="middle"
+    dominant-baseline="middle"
+    letter-spacing="-2">BO</text>
+
+</svg>

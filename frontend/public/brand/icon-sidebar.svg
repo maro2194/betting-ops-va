@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- BotOps Sidebar Icon — 32px optimized -->
+  <!-- Transparent background, for always-dark sidebar -->
+
+  <!-- Minimal traces — 2 per side, held at small size -->
+  <!-- Left trace -->
+  <line x1="6.5" y1="12" x2="3" y2="12" stroke="#00c896" stroke-width="1" stroke-linecap="round" opacity="0.6"/>
+  <line x1="6.5" y1="20" x2="3" y2="20" stroke="#00c896" stroke-width="1" stroke-linecap="round" opacity="0.6"/>
+
+  <!-- Right trace -->
+  <line x1="25.5" y1="12" x2="29" y2="12" stroke="#00c896" stroke-width="1" stroke-linecap="round" opacity="0.6"/>
+  <line x1="25.5" y1="20" x2="29" y2="20" stroke="#00c896" stroke-width="1" stroke-linecap="round" opacity="0.6"/>
+
+  <!-- Top trace (center only) -->
+  <line x1="16" y1="6.5" x2="16" y2="2.5" stroke="#00c896" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+
+  <!-- Bottom trace (center only) -->
+  <line x1="16" y1="25.5" x2="16" y2="29.5" stroke="#00c896" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+
+  <!-- IC chip body -->
+  <rect x="6.5" y="6.5" width="19" height="19" rx="2" fill="#0d1117" stroke="#00c896" stroke-width="1.5"/>
+
+  <!-- Left pins -->
+  <rect x="4.5" y="10.5" width="3" height="3" rx="0.5" fill="#00c896" opacity="0.9"/>
+  <rect x="4.5" y="18.5" width="3" height="3" rx="0.5" fill="#00c896" opacity="0.9"/>
+
+  <!-- Right pins -->
+  <rect x="24.5" y="10.5" width="3" height="3" rx="0.5" fill="#00c896" opacity="0.9"/>
+  <rect x="24.5" y="18.5" width="3" height="3" rx="0.5" fill="#00c896" opacity="0.9"/>
+
+  <!-- Top pin (center) -->
+  <rect x="14.5" y="4.5" width="3" height="3" rx="0.5" fill="#00c896" opacity="0.9"/>
+
+  <!-- Bottom pin (center) -->
+  <rect x="14.5" y="24.5" width="3" height="3" rx="0.5" fill="#00c896" opacity="0.9"/>
+
+  <!-- Orientation notch -->
+  <path d="M 13.5 6.5 A 2.5 2.5 0 0 1 18.5 6.5" fill="#0d1117" stroke="#00c896" stroke-width="1"/>
+
+  <!-- BO text -->
+  <text
+    x="16"
+    y="16.5"
+    font-family="'JetBrains Mono', 'Courier New', monospace"
+    font-size="7.5"
+    font-weight="700"
+    fill="#00c896"
+    text-anchor="middle"
+    dominant-baseline="middle"
+    letter-spacing="-0.3">BO</text>
+
+</svg>

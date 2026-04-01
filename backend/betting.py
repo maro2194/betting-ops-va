@@ -358,6 +358,15 @@ def place_sgm_bet(legacy_token: str, account_number: str, propositions: list[dic
 
         if resp.status_code == 201:
             data = resp.json()
+            # TAB returns 201 even for rejected bets — check for errors
+            top_errors = data.get("errors", [])
+            bet_errors = []
+            for b in data.get("bets", []):
+                bet_errors.extend(b.get("errors", []))
+            all_errors = top_errors + bet_errors
+            if all_errors:
+                error_msg = "; ".join(e.get("message", e.get("code", str(e))) for e in all_errors)
+                return {"success": False, "error": error_msg, "details": data}
             return {
                 "success": True,
                 "ticket_number": _extract_ticket(data),
@@ -406,6 +415,15 @@ def place_multi_bet(legacy_token: str, account_number: str, legs: list[dict],
 
         if resp.status_code == 201:
             data = resp.json()
+            # TAB returns 201 even for rejected bets — check for errors
+            top_errors = data.get("errors", [])
+            bet_errors = []
+            for b in data.get("bets", []):
+                bet_errors.extend(b.get("errors", []))
+            all_errors = top_errors + bet_errors
+            if all_errors:
+                error_msg = "; ".join(e.get("message", e.get("code", str(e))) for e in all_errors)
+                return {"success": False, "error": error_msg, "details": data}
             return {
                 "success": True,
                 "ticket_number": _extract_ticket(data),

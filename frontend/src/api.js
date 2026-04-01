@@ -120,6 +120,25 @@ export const api = {
       body: JSON.stringify({ session_id: sessionId, ...bet }),
     }),
 
+  // CSB
+  csbWarmup: (sessionId, sports) =>
+    request('/api/csb-warmup', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, sports }),
+    }),
+
+  csbResolveOne: (sessionId, bet) =>
+    request('/api/csb-resolve-one', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, ...bet }),
+    }),
+
+  csbPlaceOne: (sessionId, bet) =>
+    request('/api/csb-place-one', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, ...bet }),
+    }),
+
   // Health
   health: () => request('/api/health'),
 };

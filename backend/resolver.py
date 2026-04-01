@@ -23,6 +23,7 @@ TEAM_ALIASES = {
     "RIC": ["Richmond", "Richmond Tigers", "Tigers"],
     "ESS": ["Essendon", "Essendon Bombers", "Bombers"],
     "NM": ["North Melbourne", "North Melbourne Kangaroos", "Kangaroos", "Roos"],
+    "NME": ["North Melbourne", "North Melbourne Kangaroos", "Kangaroos", "Roos"],
     "CAR": ["Carlton", "Carlton Blues", "Blues"],
     "STK": ["St Kilda", "St Kilda Saints", "Saints"],
     "FRE": ["Fremantle", "Fremantle Dockers", "Dockers"],
@@ -337,6 +338,201 @@ def resolve_and_price(
             result["meets_minimum"] = float(combined) >= min_odds
             if not result["meets_minimum"]:
                 result["error"] = f"Odds {combined} below minimum {min_odds}"
+
+        return result
+
+    except Exception as e:
+        result["error"] = str(e)
+        return result
+
+
+# ─── CSB Resolution (SGM + Multi) ─────────────────────────────────────────────
+
+import time as _time
+
+_sport_props_cache = {}
+_CACHE_TTL = 3600  # 1 hour
+
+
+def _flatten_sgm_props(sgm_data):
+    """Flatten nested SGM response into a flat list of propositions."""
+    all_props = []
+
+    def _extract(obj, market_name="", depth=0):
+        if depth > 8:
+            return
+        if isinstance(obj, dict):
+            current_market = obj.get("betOption", obj.get("title", market_name))
+            if "propositions" in obj and isinstance(obj["propositions"], list):
+                for p in obj["propositions"]:
+                    all_props.append({
+                        "propositionId": p.get("numberId", p.get("id")),
+                        "name": p.get("name", ""),
+                        "selectionName": p.get("name", ""),
+                        "marketName": current_market,
+                        "returnWin": p.get("returnWin", 0),
+                        "line": str(p.get("line", "")),
+                    })
+                return
+            if "numberId" in obj or "propositionId" in obj:
+                all_props.append({
+                    "propositionId": obj.get("numberId", obj.get("propositionId")),
+                    "name": obj.get("name", ""),
+                    "selectionName": obj.get("selectionName", obj.get("name", "")),
+                    "marketName": market_name,
+                    "returnWin": obj.get("returnWin", 0),
+                })
+                return
+            for k, v in obj.items():
+                _extract(v, current_market, depth + 1)
+        elif isinstance(obj, list):
+            for item in obj:
+                _extract(item, market_name, depth + 1)
+
+    _extract(sgm_data)
+    return all_props
+
+
+def _fetch_match_props(token, proxy_url, match, sport, competition):
+    """Fetch SGM props for a single match. Used by thread pool."""
+    try:
+        sgm_id = match.get("match_name_url", match["match_id"])
+        sgm_data = get_sgm_propositions(token, sgm_id, proxy_url, sport, competition)
+        props = _flatten_sgm_props(sgm_data)
+        match_name = match.get("match_name", "")
+        for p in props:
+            p["_match_name"] = match_name
+        logger.info(f"Fetched {len(props)} props for {match_name}")
+        return props
+    except Exception as e:
+        logger.warning(f"Props fetch failed for {match.get('match_name', '?')}: {e}")
+        return []
+
+
+def _get_all_sport_props(token, proxy_url, sport, competition):
+    """Get all SGM propositions across all matches for a sport, with caching.
+    Uses thread pool to fetch matches in parallel for speed."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    cache_key = f"{sport}:{competition}"
+    now = _time.time()
+    if cache_key in _sport_props_cache:
+        cached = _sport_props_cache[cache_key]
+        if now - cached["ts"] < _CACHE_TTL:
+            logger.info(f"Using cached props for {sport}/{competition} ({len(cached['props'])} props)")
+            return cached["props"]
+
+    matches = get_matches(token, proxy_url, sport, competition)
+    logger.info(f"Fetching props for {len(matches)} {competition} matches in parallel...")
+
+    all_props = []
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = [
+            executor.submit(_fetch_match_props, token, proxy_url, m, sport, competition)
+            for m in matches
+        ]
+        for f in futures:
+            all_props.extend(f.result())
+
+    _sport_props_cache[cache_key] = {"props": all_props, "ts": now}
+    logger.info(f"Cached {len(all_props)} total props for {sport}/{competition}")
+    return all_props
+
+
+def resolve_csb_bet(
+    token: str,
+    proxy_url: str,
+    bet_type: str,
+    game_id: str,
+    bet_description: str,
+    stake: str,
+    min_odds: float,
+    sport: str = "AFL Football",
+    competition: str = "AFL",
+) -> dict:
+    """
+    Resolve a CSB bet (SGM or Multi) to TAB propositions.
+
+    SGM: uses game_id to find the specific match, resolves within it.
+    Multi: scans all matches for the sport to find each player across games.
+    """
+    result = {
+        "bet_type": bet_type,
+        "game_id": game_id,
+        "description": bet_description,
+        "resolved": False,
+        "match_name": None,
+        "propositions": [],
+        "combined_odds": None,
+        "meets_minimum": False,
+        "matched_odds": [],
+        "error": None,
+    }
+
+    try:
+        leg_descriptions = [l.strip() for l in bet_description.split("/")]
+
+        if bet_type.upper() == "SGM" and game_id:
+            # SGM: resolve within a single match
+            matches = get_matches(token, proxy_url, sport, competition)
+            match = _find_match(matches, game_id)
+            if not match:
+                result["error"] = f"Match not found: {game_id}"
+                return result
+            result["match_name"] = match.get("match_name")
+            sgm_id = match.get("match_name_url", match["match_id"])
+            sgm_data = get_sgm_propositions(token, sgm_id, proxy_url, sport, competition)
+            all_props = _flatten_sgm_props(sgm_data)
+        else:
+            # Multi: scan all matches for the sport
+            all_props = _get_all_sport_props(token, proxy_url, sport, competition)
+
+        if not all_props:
+            result["error"] = "No propositions found"
+            return result
+
+        resolved_props = []
+        matched_odds = []
+        for leg_desc in leg_descriptions:
+            leg = _parse_leg_description(leg_desc)
+            prop = _match_proposition(leg, all_props)
+            if prop:
+                odds_val = prop.get("returnWin", 0)
+                resolved_props.append({
+                    "propositionId": prop.get("propositionId"),
+                    "odds": str(odds_val),
+                    "name": f"{prop.get('selectionName', prop.get('name', ''))} — {prop.get('marketName', '')}",
+                    "match_name": prop.get("_match_name", ""),
+                })
+                matched_odds.append(float(odds_val) if odds_val else 0)
+            else:
+                result["error"] = f"Could not match: {leg['raw']}"
+                return result
+
+        result["propositions"] = resolved_props
+        result["matched_odds"] = matched_odds
+        result["resolved"] = True
+
+        if bet_type.upper() == "SGM" and game_id:
+            # SGM: use TAB pricing service for combined odds
+            props_for_price = [{"propositionId": p["propositionId"], "odds": p["odds"]} for p in resolved_props]
+            price_result = price_check(token, props_for_price, stake, "SAME_GAME_MULTI", proxy_url)
+            combined = price_result.get("combined_odds")
+            if combined:
+                result["combined_odds"] = combined
+                result["meets_minimum"] = float(combined) >= min_odds
+            else:
+                result["error"] = "Price check returned no odds"
+        else:
+            # Multi: combined odds = product of individual leg odds
+            combined = 1.0
+            for odds in matched_odds:
+                combined *= odds
+            result["combined_odds"] = f"{combined:.2f}"
+            result["meets_minimum"] = combined >= min_odds
+
+        if not result["meets_minimum"] and not result.get("error"):
+            result["error"] = f"Odds {result['combined_odds']} below minimum {min_odds}"
 
         return result
 

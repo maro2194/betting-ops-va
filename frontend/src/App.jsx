@@ -12,6 +12,7 @@ import MultiBuilder from './pages/MultiBuilder';
 import JsonUpload from './pages/JsonUpload';
 import AllocUpload from './pages/AllocUpload';
 import BookieAccounts from './pages/BookieAccounts';
+import CsbUpload from './pages/CsbUpload';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -43,6 +44,7 @@ function AppRoutes() {
         <Route path="/csv" element={<CsvPaste />} />
         <Route path="/multi" element={<MultiBuilder />} />
         <Route path="/json" element={<JsonUpload />} />
+        <Route path="/csb" element={<CsbUpload />} />
         <Route path="/alloc" element={<AllocUpload />} />
         <Route path="/bookie-accounts" element={<BookieAccounts />} />
       </Route>

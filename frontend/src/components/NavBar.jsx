@@ -15,6 +15,7 @@ import {
   Menu,
   X,
   ChevronLeft,
+  Zap,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -25,6 +26,12 @@ const NAV_GROUPS = [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/betting', label: 'SGM Builder', icon: Trophy },
       { to: '/multi', label: 'Multi Builder', icon: Layers },
+    ],
+  },
+  {
+    label: 'Services',
+    items: [
+      { to: '/csb', label: 'CSB', icon: Zap },
     ],
   },
   {

@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 80" width="400" height="80">
+  <!-- BotOps Logo + Wordmark — Dark Variant -->
+  <!-- Transparent background, horizontal layout, for dark surfaces -->
+
+  <!-- === MINI CHIP ICON (56px tall, centered at y=40) === -->
+  <!-- Chip sits in a 56x56 bounding box at x=12, y=12 -->
+  <!-- Scale factor: 56/176 ≈ 0.318 relative to full logo chip body -->
+
+  <!-- Chip body (176px source) scaled to 56px: scale=0.3182 -->
+  <!-- translate(-45.5, -41.5) centers the 512x512 source chip at canvas y=40, left-aligned at x=8 -->
+  <g transform="translate(-45.5, -41.5) scale(0.3182)">
+    <!-- Traces (abbreviated for small size — left and right only) -->
+    <line x1="168" y1="208" x2="128" y2="208" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+    <line x1="128" y1="208" x2="128" y2="168" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+    <line x1="108" y1="168" x2="128" y2="168" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+
+    <line x1="168" y1="304" x2="128" y2="304" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+    <line x1="128" y1="304" x2="128" y2="344" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+    <line x1="108" y1="344" x2="128" y2="344" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+
+    <line x1="344" y1="208" x2="384" y2="208" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+    <line x1="384" y1="208" x2="384" y2="168" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+    <line x1="384" y1="168" x2="404" y2="168" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+
+    <line x1="344" y1="304" x2="384" y2="304" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+    <line x1="384" y1="304" x2="384" y2="344" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+    <line x1="384" y1="344" x2="404" y2="344" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+
+    <!-- Top and bottom (2 each) -->
+    <line x1="220" y1="168" x2="220" y2="128" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.45"/>
+    <line x1="220" y1="128" x2="190" y2="128" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.45"/>
+
+    <line x1="292" y1="168" x2="292" y2="128" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.45"/>
+    <line x1="292" y1="128" x2="322" y2="128" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.45"/>
+
+    <line x1="220" y1="344" x2="220" y2="384" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.45"/>
+    <line x1="220" y1="384" x2="190" y2="384" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.45"/>
+
+    <line x1="292" y1="344" x2="292" y2="384" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.45"/>
+    <line x1="292" y1="384" x2="322" y2="384" stroke="#00c896" stroke-width="3" stroke-linecap="round" opacity="0.45"/>
+
+    <!-- Solder pads -->
+    <rect x="100" y="160" width="20" height="20" rx="3" fill="#00c896" opacity="0.7"/>
+    <rect x="100" y="332" width="20" height="20" rx="3" fill="#00c896" opacity="0.7"/>
+    <rect x="392" y="160" width="20" height="20" rx="3" fill="#00c896" opacity="0.7"/>
+    <rect x="392" y="332" width="20" height="20" rx="3" fill="#00c896" opacity="0.7"/>
+    <rect x="182" y="120" width="20" height="20" rx="3" fill="#00c896" opacity="0.7"/>
+    <rect x="314" y="120" width="20" height="20" rx="3" fill="#00c896" opacity="0.7"/>
+    <rect x="182" y="372" width="20" height="20" rx="3" fill="#00c896" opacity="0.7"/>
+    <rect x="314" y="372" width="20" height="20" rx="3" fill="#00c896" opacity="0.7"/>
+
+    <!-- Chip body -->
+    <rect x="168" y="168" width="176" height="176" rx="12" fill="#0d1117" stroke="#00c896" stroke-width="4"/>
+
+    <!-- Pin pads -->
+    <rect x="161" y="200" width="14" height="12" rx="2" fill="#00c896" opacity="0.9"/>
+    <rect x="161" y="250" width="14" height="12" rx="2" fill="#00c896" opacity="0.7"/>
+    <rect x="161" y="300" width="14" height="12" rx="2" fill="#00c896" opacity="0.9"/>
+    <rect x="337" y="200" width="14" height="12" rx="2" fill="#00c896" opacity="0.9"/>
+    <rect x="337" y="250" width="14" height="12" rx="2" fill="#00c896" opacity="0.7"/>
+    <rect x="337" y="300" width="14" height="12" rx="2" fill="#00c896" opacity="0.9"/>
+    <rect x="212" y="161" width="12" height="14" rx="2" fill="#00c896" opacity="0.9"/>
+    <rect x="250" y="161" width="12" height="14" rx="2" fill="#00c896" opacity="0.7"/>
+    <rect x="288" y="161" width="12" height="14" rx="2" fill="#00c896" opacity="0.9"/>
+    <rect x="212" y="337" width="12" height="14" rx="2" fill="#00c896" opacity="0.9"/>
+    <rect x="250" y="337" width="12" height="14" rx="2" fill="#00c896" opacity="0.7"/>
+    <rect x="288" y="337" width="12" height="14" rx="2" fill="#00c896" opacity="0.9"/>
+
+    <!-- Notch -->
+    <path d="M 243 168 A 13 13 0 0 1 269 168" fill="#0d1117" stroke="#00c896" stroke-width="3"/>
+
+    <!-- BO text -->
+    <text x="256" y="262" font-family="'JetBrains Mono', 'Courier New', monospace" font-size="86" font-weight="700" fill="#00c896" text-anchor="middle" dominant-baseline="middle" letter-spacing="-2">BO</text>
+  </g>
+
+  <!-- === WORDMARK === -->
+  <!-- Baseline aligned with chip center -->
+  <text
+    x="80"
+    y="40"
+    font-family="'JetBrains Mono', 'Courier New', monospace"
+    font-size="34"
+    font-weight="700"
+    fill="#e6e6e6"
+    dominant-baseline="middle"
+    letter-spacing="-0.5">BotOps</text>
+
+</svg>

@@ -7,6 +7,7 @@ import logging
 from .base import PlatformClient
 from .betmakers import BetMakersClient
 from .amused import AmusedClient
+from .sportsbet import SportsbetClient
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ BOOKMAKER_PLATFORM_MAP: dict[str, tuple[str, str]] = {
     "ponybet": ("betmakers", "ponybet"),
     "betit": ("betmakers", "betit"),
     "swiftbet": ("betmakers", "swiftbet"),
+    # Sportsbet
+    "sportsbet": ("sportsbet", "sportsbet"),
     # Amused/BlackStream brands
     "betnation": ("amused", "betnation"),
     "betdeluxe": ("amused", "betdeluxe"),
@@ -34,7 +37,7 @@ BOOKMAKER_PLATFORM_MAP: dict[str, tuple[str, str]] = {
 }
 
 # Unsupported (yet)
-UNSUPPORTED_BOOKMAKERS = {"sportsbet", "neds", "ladbrokes", "bet365", "pointsbet"}
+UNSUPPORTED_BOOKMAKERS = {"neds", "ladbrokes", "bet365", "pointsbet"}
 
 # Singleton client instances
 _clients: dict[str, PlatformClient] = {}
@@ -60,8 +63,10 @@ def get_client(platform: str) -> PlatformClient:
             _clients[platform] = BetMakersClient()
         elif platform == "amused":
             _clients[platform] = AmusedClient()
+        elif platform == "sportsbet":
+            _clients[platform] = SportsbetClient()
         else:
-            raise ValueError(f"Unknown platform: {platform}. Use 'betmakers' or 'amused'.")
+            raise ValueError(f"Unknown platform: {platform}. Use 'betmakers', 'amused', or 'sportsbet'.")
     return _clients[platform]
 
 

@@ -30,10 +30,11 @@ const BOOKMAKERS = [
   { name: 'BigBet', platform: 'amused' },
   { name: 'YesBet', platform: 'amused' },
   { name: 'MightyBet', platform: 'amused' },
+  { name: 'Sportsbet', platform: 'sportsbet' },
   { name: 'TAB', platform: 'tab' },
 ];
 
-const PLATFORM_LABELS = { betmakers: 'BetMakers', amused: 'Amused', tab: 'TAB' };
+const PLATFORM_LABELS = { betmakers: 'BetMakers', amused: 'Amused', sportsbet: 'Sportsbet', tab: 'TAB' };
 
 function AccountModal({ account, onClose, onSaved }) {
   const isEdit = !!account;
@@ -378,9 +379,12 @@ export default function BookieAccounts() {
                           <Wifi size={10} /> Online
                         </span>
                       ) : (
-                        <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }} title={test.error}>
-                          <WifiOff size={10} /> Failed
-                        </span>
+                        <div>
+                          <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <WifiOff size={10} /> Failed
+                          </span>
+                          {test.error && <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 4, maxWidth: 200 }}>{test.error}</div>}
+                        </div>
                       )}
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>

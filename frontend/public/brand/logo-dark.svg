@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- BotOps Logo Mark — Dark Variant -->
+  <!-- Transparent background, designed for dark surfaces -->
+
+  <!-- === CIRCUIT TRACES — drawn before chip so chip sits on top === -->
+
+  <!-- LEFT SIDE TRACES -->
+  <!-- Pin 1 (top-left area): routes left then up to solder pad -->
+  <line x1="168" y1="208" x2="112" y2="208" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="112" y1="208" x2="112" y2="152" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="88" y1="152" x2="112" y2="152" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- Pin 2 (mid-left): routes left straight out -->
+  <line x1="168" y1="248" x2="88" y2="248" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.35"/>
+
+  <!-- Pin 3 (lower-left area): routes left then down to solder pad -->
+  <line x1="168" y1="304" x2="112" y2="304" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="112" y1="304" x2="112" y2="360" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="88" y1="360" x2="112" y2="360" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- RIGHT SIDE TRACES -->
+  <!-- Pin 4 (top-right area): routes right then up -->
+  <line x1="344" y1="208" x2="400" y2="208" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="400" y1="208" x2="400" y2="152" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="400" y1="152" x2="424" y2="152" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- Pin 5 (mid-right): routes right straight out -->
+  <line x1="344" y1="248" x2="424" y2="248" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.35"/>
+
+  <!-- Pin 6 (lower-right area): routes right then down -->
+  <line x1="344" y1="304" x2="400" y2="304" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="400" y1="304" x2="400" y2="360" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="400" y1="360" x2="424" y2="360" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- TOP SIDE TRACES -->
+  <!-- Pin 7 (top-left): routes up then left -->
+  <line x1="220" y1="168" x2="220" y2="112" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="176" y1="112" x2="220" y2="112" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- Pin 8 (top-center): routes straight up -->
+  <line x1="256" y1="168" x2="256" y2="80" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.45"/>
+
+  <!-- Pin 9 (top-right): routes up then right -->
+  <line x1="292" y1="168" x2="292" y2="112" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="292" y1="112" x2="336" y2="112" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- BOTTOM SIDE TRACES -->
+  <!-- Pin 10 (bottom-left): routes down then left -->
+  <line x1="220" y1="344" x2="220" y2="400" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="176" y1="400" x2="220" y2="400" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- Pin 11 (bottom-center): routes straight down -->
+  <line x1="256" y1="344" x2="256" y2="432" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.45"/>
+
+  <!-- Pin 12 (bottom-right): routes down then right -->
+  <line x1="292" y1="344" x2="292" y2="400" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+  <line x1="292" y1="400" x2="336" y2="400" stroke="#00c896" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- === SOLDER PADS at trace endpoints === -->
+  <!-- Left side pads -->
+  <rect x="80" y="144" width="16" height="16" rx="2" fill="#00c896" opacity="0.75"/>
+  <rect x="72" y="240" width="16" height="16" rx="2" fill="#00c896" opacity="0.45"/>
+  <rect x="80" y="352" width="16" height="16" rx="2" fill="#00c896" opacity="0.75"/>
+
+  <!-- Right side pads -->
+  <rect x="416" y="144" width="16" height="16" rx="2" fill="#00c896" opacity="0.75"/>
+  <rect x="416" y="240" width="16" height="16" rx="2" fill="#00c896" opacity="0.45"/>
+  <rect x="416" y="352" width="16" height="16" rx="2" fill="#00c896" opacity="0.75"/>
+
+  <!-- Top pads -->
+  <rect x="168" y="104" width="16" height="16" rx="2" fill="#00c896" opacity="0.75"/>
+  <rect x="248" y="72" width="16" height="16" rx="2" fill="#00c896" opacity="0.6"/>
+  <rect x="328" y="104" width="16" height="16" rx="2" fill="#00c896" opacity="0.75"/>
+
+  <!-- Bottom pads -->
+  <rect x="168" y="392" width="16" height="16" rx="2" fill="#00c896" opacity="0.75"/>
+  <rect x="248" y="424" width="16" height="16" rx="2" fill="#00c896" opacity="0.6"/>
+  <rect x="328" y="392" width="16" height="16" rx="2" fill="#00c896" opacity="0.75"/>
+
+  <!-- === MAIN IC CHIP BODY === -->
+  <rect x="168" y="168" width="176" height="176" rx="10" fill="#0d1117" stroke="#00c896" stroke-width="3"/>
+
+  <!-- Subtle inner glow ring — premium detail -->
+  <rect x="176" y="176" width="160" height="160" rx="7" fill="none" stroke="#00c896" stroke-width="0.75" opacity="0.2"/>
+
+  <!-- === IC PIN PADS on chip edges === -->
+  <!-- Left pins — 3 evenly spaced, centered vertically in the chip body -->
+  <rect x="162" y="200" width="12" height="10" rx="1.5" fill="#00c896" opacity="0.9"/>
+  <rect x="162" y="251" width="12" height="10" rx="1.5" fill="#00c896" opacity="0.7"/>
+  <rect x="162" y="302" width="12" height="10" rx="1.5" fill="#00c896" opacity="0.9"/>
+
+  <!-- Right pins -->
+  <rect x="338" y="200" width="12" height="10" rx="1.5" fill="#00c896" opacity="0.9"/>
+  <rect x="338" y="251" width="12" height="10" rx="1.5" fill="#00c896" opacity="0.7"/>
+  <rect x="338" y="302" width="12" height="10" rx="1.5" fill="#00c896" opacity="0.9"/>
+
+  <!-- Top pins -->
+  <rect x="213" y="162" width="10" height="12" rx="1.5" fill="#00c896" opacity="0.9"/>
+  <rect x="251" y="162" width="10" height="12" rx="1.5" fill="#00c896" opacity="0.7"/>
+  <rect x="289" y="162" width="10" height="12" rx="1.5" fill="#00c896" opacity="0.9"/>
+
+  <!-- Bottom pins -->
+  <rect x="213" y="338" width="10" height="12" rx="1.5" fill="#00c896" opacity="0.9"/>
+  <rect x="251" y="338" width="10" height="12" rx="1.5" fill="#00c896" opacity="0.7"/>
+  <rect x="289" y="338" width="10" height="12" rx="1.5" fill="#00c896" opacity="0.9"/>
+
+  <!-- === IC ORIENTATION NOTCH (top-center) === -->
+  <!-- Notch arc cut into chip top edge -->
+  <path d="M 244 168 A 12 12 0 0 1 268 168" fill="#0d1117" stroke="#00c896" stroke-width="2"/>
+
+  <!-- === BO WORDMARK inside chip === -->
+  <!-- Optically centered — slightly above true center due to cap height -->
+  <text
+    x="256"
+    y="262"
+    font-family="'JetBrains Mono', 'Courier New', monospace"
+    font-size="82"
+    font-weight="700"
+    fill="#00c896"
+    text-anchor="middle"
+    dominant-baseline="middle"
+    letter-spacing="-2">BO</text>
+
+</svg>

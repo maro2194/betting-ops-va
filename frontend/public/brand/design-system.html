@@ -1,0 +1,1490 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BotOps Design System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet">
+
+  <style>
+    /* ============================================================
+       DESIGN TOKENS — CSS Custom Properties
+       ============================================================ */
+    :root,
+    [data-theme="dark"] {
+      --bg:             #0a0a0f;
+      --bg-card:        #0d1117;
+      --bg-card-alt:    #111520;
+      --bg-elevated:    #161b27;
+      --border:         rgba(0, 200, 150, 0.12);
+      --border-strong:  rgba(0, 200, 150, 0.25);
+
+      --primary:        #00c896;
+      --primary-dark:   #00a37a;
+      --primary-dim:    rgba(0, 200, 150, 0.15);
+      --primary-glow:   rgba(0, 200, 150, 0.08);
+
+      --text-primary:   #e6e6e6;
+      --text-secondary: #8b9cb0;
+      --text-muted:     #4a5568;
+      --text-inverted:  #1a1f2e;
+
+      --success:        #22c55e;
+      --danger:         #ef4444;
+      --warning:        #f59e0b;
+
+      --sidebar-bg:     #070a0e;
+      --radius-sm:      4px;
+      --radius-md:      8px;
+      --radius-lg:      12px;
+      --radius-xl:      16px;
+
+      --shadow-card:    0 1px 3px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.3);
+      --shadow-glow:    0 0 0 1px rgba(0, 200, 150, 0.15), 0 0 24px rgba(0, 200, 150, 0.06);
+    }
+
+    [data-theme="light"] {
+      --bg:             #f5f7f5;
+      --bg-card:        #fafcfa;
+      --bg-card-alt:    #f0f4f0;
+      --bg-elevated:    #ffffff;
+      --border:         rgba(0, 163, 122, 0.15);
+      --border-strong:  rgba(0, 163, 122, 0.3);
+
+      --primary:        #00c896;
+      --primary-dark:   #00a37a;
+      --primary-dim:    rgba(0, 163, 122, 0.1);
+      --primary-glow:   rgba(0, 163, 122, 0.05);
+
+      --text-primary:   #1a1f2e;
+      --text-secondary: #4a6070;
+      --text-muted:     #8b9cb0;
+      --text-inverted:  #e6e6e6;
+
+      --success:        #16a34a;
+      --danger:         #dc2626;
+      --warning:        #d97706;
+
+      --sidebar-bg:     #070a0e;
+      --shadow-card:    0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+      --shadow-glow:    0 0 0 1px rgba(0, 163, 122, 0.12), 0 4px 20px rgba(0, 163, 122, 0.04);
+    }
+
+    /* ============================================================
+       RESET + BASE
+       ============================================================ */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.6;
+      transition: background 0.25s ease, color 0.25s ease;
+      min-height: 100vh;
+    }
+
+    /* ============================================================
+       LAYOUT
+       ============================================================ */
+    .page-wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 32px 80px;
+    }
+
+    section {
+      margin-bottom: 80px;
+    }
+
+    /* ============================================================
+       SITE HEADER
+       ============================================================ */
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 0 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 60px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: background 0.25s ease, border-color 0.25s ease;
+    }
+
+    .site-header-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .site-header-logo img {
+      height: 32px;
+      width: auto;
+    }
+
+    .site-header-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* ============================================================
+       THEME TOGGLE
+       ============================================================ */
+    .theme-toggle {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-strong);
+      border-radius: 99px;
+      padding: 5px 14px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.04em;
+      transition: all 0.2s ease;
+      user-select: none;
+    }
+
+    .theme-toggle:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .theme-toggle-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--primary);
+      transition: transform 0.2s ease;
+    }
+
+    .theme-toggle:hover .theme-toggle-dot {
+      transform: scale(1.3);
+    }
+
+    /* ============================================================
+       HERO SECTION
+       ============================================================ */
+    .hero {
+      padding: 72px 0 56px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .hero-tag {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--primary);
+      opacity: 0.8;
+    }
+
+    .hero-title {
+      font-size: clamp(28px, 5vw, 48px);
+      font-weight: 800;
+      color: var(--text-primary);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+    }
+
+    .hero-title span {
+      color: var(--primary);
+    }
+
+    .hero-subtitle {
+      font-size: 14px;
+      color: var(--text-secondary);
+      max-width: 560px;
+      line-height: 1.7;
+      margin-top: 4px;
+    }
+
+    /* ============================================================
+       SECTION HEADERS
+       ============================================================ */
+    .section-header {
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      margin-bottom: 32px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-number {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--primary);
+      opacity: 0.6;
+      letter-spacing: 0.1em;
+      flex-shrink: 0;
+    }
+
+    .section-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    .section-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-left: auto;
+      text-align: right;
+    }
+
+    /* ============================================================
+       CARDS
+       ============================================================ */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card);
+      transition: background 0.25s ease, border-color 0.25s ease;
+    }
+
+    .card-elevated {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-glow);
+      transition: all 0.25s ease;
+    }
+
+    /* ============================================================
+       LOGO SHOWCASE
+       ============================================================ */
+    .logo-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2px;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    @media (max-width: 640px) {
+      .logo-grid { grid-template-columns: 1fr; }
+    }
+
+    .logo-panel {
+      padding: 48px 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 32px;
+    }
+
+    .logo-panel-dark {
+      background: #0a0a0f;
+    }
+
+    .logo-panel-light {
+      background: #f5f7f5;
+    }
+
+    .logo-panel-sidebar {
+      background: #070a0e;
+    }
+
+    .logo-panel-white {
+      background: #ffffff;
+    }
+
+    .logo-display {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .logo-display img {
+      display: block;
+    }
+
+    .logo-display img.logo-main {
+      width: 120px;
+      height: 120px;
+    }
+
+    .logo-display img.logo-wordmark {
+      width: 260px;
+      height: auto;
+    }
+
+    .logo-display img.logo-icon {
+      width: 56px;
+      height: 56px;
+    }
+
+    .logo-display img.logo-favicon {
+      width: 32px;
+      height: 32px;
+    }
+
+    .logo-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .logo-label-light-text {
+      color: rgba(230, 230, 230, 0.45);
+    }
+
+    .logo-label-dark-text {
+      color: rgba(26, 31, 46, 0.4);
+    }
+
+    .logo-panel-divider {
+      width: 1px;
+      background: var(--border);
+    }
+
+    /* Size row */
+    .logo-size-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 32px;
+      padding: 40px;
+      background: var(--bg-card);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    .logo-size-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-size-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+    }
+
+    /* ============================================================
+       COLOR PALETTE
+       ============================================================ */
+    .color-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+    }
+
+    .color-swatch {
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+    }
+
+    .color-block {
+      height: 72px;
+      width: 100%;
+      position: relative;
+    }
+
+    .color-block-inner {
+      position: absolute;
+      inset: 0;
+    }
+
+    /* Checkerboard for transparent/opacity colors */
+    .color-block-checker {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(45deg, #444 25%, transparent 25%),
+        linear-gradient(-45deg, #444 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #444 75%),
+        linear-gradient(-45deg, transparent 75%, #444 75%);
+      background-size: 8px 8px;
+      background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+      background-color: #1a1a1a;
+    }
+
+    .color-info {
+      padding: 10px 12px;
+    }
+
+    .color-name {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .color-hex {
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+      margin-top: 2px;
+    }
+
+    /* ============================================================
+       TYPOGRAPHY SHOWCASE
+       ============================================================ */
+    .type-table {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .type-row {
+      display: grid;
+      grid-template-columns: 140px 1fr 80px 80px;
+      align-items: center;
+      gap: 24px;
+      padding: 20px 28px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s ease;
+    }
+
+    .type-row:last-child {
+      border-bottom: none;
+    }
+
+    .type-row:hover {
+      background: var(--primary-glow);
+    }
+
+    .type-row-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--primary);
+      opacity: 0.7;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .type-row-meta {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: right;
+    }
+
+    .type-h1 { font-size: 40px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.1; color: var(--text-primary); }
+    .type-h2 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; color: var(--text-primary); }
+    .type-h3 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.3; color: var(--text-primary); }
+    .type-h4 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--text-primary); }
+    .type-body { font-size: 14px; font-weight: 400; color: var(--text-primary); line-height: 1.6; }
+    .type-small { font-size: 12px; font-weight: 400; color: var(--text-secondary); line-height: 1.5; }
+    .type-caption { font-size: 11px; font-weight: 500; color: var(--text-muted); letter-spacing: 0.04em; }
+    .type-label { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--primary); }
+    .type-code { font-size: 13px; font-weight: 400; color: var(--primary); background: var(--primary-dim); padding: 2px 8px; border-radius: 4px; }
+
+    /* ============================================================
+       USAGE GUIDELINES
+       ============================================================ */
+    .usage-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 640px) {
+      .usage-grid { grid-template-columns: 1fr; }
+    }
+
+    .usage-card {
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .usage-card-header {
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .usage-card-do .usage-card-header {
+      background: rgba(34, 197, 94, 0.08);
+      border-bottom: 1px solid rgba(34, 197, 94, 0.15);
+      color: #22c55e;
+    }
+
+    .usage-card-dont .usage-card-header {
+      background: rgba(239, 68, 68, 0.08);
+      border-bottom: 1px solid rgba(239, 68, 68, 0.15);
+      color: #ef4444;
+    }
+
+    .usage-card-body {
+      padding: 28px;
+      background: var(--bg-card);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 180px;
+    }
+
+    .usage-card-note {
+      padding: 12px 20px;
+      font-size: 11px;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      line-height: 1.5;
+    }
+
+    /* Misuse examples */
+    .dont-example-white {
+      background: #ffffff;
+      padding: 24px;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      border: 2px solid #ef4444;
+    }
+
+    .dont-example-colored {
+      background: #7c3aed;
+      padding: 24px;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      border: 2px solid #ef4444;
+    }
+
+    .dont-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #ef4444;
+    }
+
+    /* ============================================================
+       CLEAR SPACE GUIDE
+       ============================================================ */
+    .clearspace-demo {
+      padding: 40px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      display: flex;
+      justify-content: center;
+    }
+
+    .clearspace-inner {
+      position: relative;
+      display: inline-block;
+    }
+
+    .clearspace-zone {
+      position: relative;
+      padding: 32px;
+      border: 1px dashed var(--primary);
+      opacity: 0.7;
+      border-radius: 4px;
+    }
+
+    .clearspace-label-top,
+    .clearspace-label-left {
+      position: absolute;
+      font-size: 9px;
+      color: var(--primary);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .clearspace-label-top {
+      top: -18px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .clearspace-label-left {
+      left: -52px;
+      top: 50%;
+      transform: translateY(-50%) rotate(-90deg);
+      transform-origin: center;
+    }
+
+    .clearspace-tick {
+      position: absolute;
+      background: var(--primary);
+      opacity: 0.5;
+    }
+
+    /* ============================================================
+       SIZES AT SCALE
+       ============================================================ */
+    .scale-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 40px;
+      padding: 48px;
+      background: #0a0a0f;
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(0, 200, 150, 0.12);
+      flex-wrap: wrap;
+    }
+
+    .scale-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .scale-label {
+      font-size: 10px;
+      color: rgba(230, 230, 230, 0.3);
+      letter-spacing: 0.08em;
+      text-align: center;
+    }
+
+    /* ============================================================
+       SIDEBAR PREVIEW
+       ============================================================ */
+    .sidebar-preview {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 0;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      min-height: 360px;
+    }
+
+    @media (max-width: 640px) {
+      .sidebar-preview { grid-template-columns: 1fr; }
+    }
+
+    .sidebar-preview-nav {
+      background: #070a0e;
+      padding: 20px 0;
+    }
+
+    .sidebar-preview-header {
+      padding: 8px 20px 20px;
+      border-bottom: 1px solid rgba(0, 200, 150, 0.08);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .sidebar-preview-wordmark {
+      font-size: 15px;
+      font-weight: 700;
+      color: #e6e6e6;
+      letter-spacing: -0.02em;
+    }
+
+    .sidebar-preview-items {
+      padding: 12px 0;
+    }
+
+    .sidebar-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 20px;
+      font-size: 12px;
+      color: rgba(230, 230, 230, 0.45);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .sidebar-item.active {
+      background: rgba(0, 200, 150, 0.08);
+      color: #00c896;
+      border-right: 2px solid #00c896;
+    }
+
+    .sidebar-item:hover:not(.active) {
+      color: rgba(230, 230, 230, 0.7);
+      background: rgba(255,255,255,0.02);
+    }
+
+    .sidebar-item-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.5;
+      flex-shrink: 0;
+    }
+
+    .sidebar-item.active .sidebar-item-dot {
+      opacity: 1;
+    }
+
+    .sidebar-preview-content {
+      background: var(--bg);
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .preview-stat-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .preview-stat {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px;
+    }
+
+    .preview-stat-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .preview-stat-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--primary);
+      margin-top: 4px;
+      letter-spacing: -0.02em;
+    }
+
+    .preview-stat-sub {
+      font-size: 10px;
+      color: var(--success);
+      margin-top: 2px;
+    }
+
+    .preview-table-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      flex: 1;
+    }
+
+    .preview-table-header {
+      display: grid;
+      grid-template-columns: 1fr 1fr 80px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .preview-table-header span {
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .preview-table-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 80px;
+      padding: 9px 16px;
+      border-bottom: 1px solid var(--border);
+      align-items: center;
+    }
+
+    .preview-table-row:last-child {
+      border-bottom: none;
+    }
+
+    .preview-table-row span {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-success {
+      background: rgba(34, 197, 94, 0.12);
+      color: var(--success);
+    }
+
+    .badge-warning {
+      background: rgba(245, 158, 11, 0.12);
+      color: var(--warning);
+    }
+
+    .badge-danger {
+      background: rgba(239, 68, 68, 0.12);
+      color: var(--danger);
+    }
+
+    /* ============================================================
+       FOOTER
+       ============================================================ */
+    .ds-footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 0 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: gap;
+      gap: 16px;
+    }
+
+    .ds-footer-text {
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+    }
+
+    .ds-footer-version {
+      font-size: 10px;
+      color: var(--primary);
+      background: var(--primary-dim);
+      padding: 3px 10px;
+      border-radius: 99px;
+      letter-spacing: 0.06em;
+    }
+
+    /* ============================================================
+       UTILITY
+       ============================================================ */
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 40px 0;
+    }
+
+    .note {
+      font-size: 11px;
+      color: var(--text-muted);
+      background: var(--primary-glow);
+      border: 1px solid var(--border-strong);
+      border-left: 3px solid var(--primary);
+      padding: 10px 14px;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      line-height: 1.6;
+      margin-top: 16px;
+    }
+
+    /* Animate in on load */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .animate-in {
+      animation: fadeUp 0.4s ease both;
+    }
+
+    .animate-in-delay-1 { animation-delay: 0.05s; }
+    .animate-in-delay-2 { animation-delay: 0.1s; }
+    .animate-in-delay-3 { animation-delay: 0.15s; }
+    .animate-in-delay-4 { animation-delay: 0.2s; }
+    .animate-in-delay-5 { animation-delay: 0.25s; }
+  </style>
+</head>
+<body>
+
+  <!-- ============================================================
+       STICKY HEADER
+       ============================================================ -->
+  <header class="site-header">
+    <div class="site-header-logo">
+      <img id="header-logo" src="icon-sidebar.svg" alt="BotOps" style="height: 28px; width: 28px;">
+      <span class="site-header-title">BotOps / Design System</span>
+    </div>
+    <button class="theme-toggle" onclick="toggleTheme()" id="theme-btn">
+      <div class="theme-toggle-dot"></div>
+      <span id="theme-label">Light Mode</span>
+    </button>
+  </header>
+
+  <div class="page-wrap">
+
+    <!-- ============================================================
+         HERO
+         ============================================================ -->
+    <div class="hero animate-in">
+      <p class="hero-tag">v1.0 — April 2026</p>
+      <h1 class="hero-title">BotOps<br><span>Design System</span></h1>
+      <p class="hero-subtitle">
+        IC Chip / Circuit Board identity. A premium tech brand mark built for dark-first interfaces
+        with full light mode fidelity. JetBrains Mono. Teal on dark.
+      </p>
+    </div>
+
+    <!-- ============================================================
+         SECTION 01 — LOGO VARIANTS
+         ============================================================ -->
+    <section class="animate-in animate-in-delay-1">
+      <div class="section-header">
+        <span class="section-number">01</span>
+        <h2 class="section-title">Logo Variants</h2>
+        <span class="section-desc">All variants on intended backgrounds</span>
+      </div>
+
+      <!-- Primary logo dark + light -->
+      <div class="logo-grid" style="margin-bottom: 16px;">
+        <div class="logo-panel logo-panel-dark">
+          <div class="logo-display">
+            <img class="logo-main" src="logo-dark.svg" alt="BotOps Logo Dark">
+          </div>
+          <span class="logo-label logo-label-light-text">Dark variant — #0a0a0f</span>
+        </div>
+        <div class="logo-panel logo-panel-light">
+          <div class="logo-display">
+            <img class="logo-main" src="logo-light.svg" alt="BotOps Logo Light">
+          </div>
+          <span class="logo-label logo-label-dark-text">Light variant — #f5f7f5</span>
+        </div>
+      </div>
+
+      <!-- Wordmarks -->
+      <div class="logo-grid" style="margin-bottom: 16px;">
+        <div class="logo-panel logo-panel-dark" style="padding: 36px 40px;">
+          <div class="logo-display">
+            <img class="logo-wordmark" src="logo-wordmark-dark.svg" alt="BotOps Wordmark Dark">
+          </div>
+          <span class="logo-label logo-label-light-text">Wordmark — Dark</span>
+        </div>
+        <div class="logo-panel logo-panel-light" style="padding: 36px 40px;">
+          <div class="logo-display">
+            <img class="logo-wordmark" src="logo-wordmark-light.svg" alt="BotOps Wordmark Light">
+          </div>
+          <span class="logo-label logo-label-dark-text">Wordmark — Light</span>
+        </div>
+      </div>
+
+      <!-- Small icons -->
+      <div class="logo-grid">
+        <div class="logo-panel logo-panel-sidebar" style="gap: 20px; padding: 36px 40px;">
+          <span class="logo-label logo-label-light-text">Sidebar Icon — always dark bg</span>
+          <div style="display: flex; align-items: flex-end; gap: 32px; flex-wrap: wrap; justify-content: center;">
+            <div class="logo-display">
+              <img style="width: 64px; height: 64px;" src="icon-sidebar.svg" alt="Sidebar icon 64px">
+              <span class="logo-label logo-label-light-text">64px</span>
+            </div>
+            <div class="logo-display">
+              <img style="width: 32px; height: 32px;" src="icon-sidebar.svg" alt="Sidebar icon 32px">
+              <span class="logo-label logo-label-light-text">32px</span>
+            </div>
+            <div class="logo-display">
+              <img style="width: 20px; height: 20px;" src="icon-sidebar.svg" alt="Sidebar icon 20px">
+              <span class="logo-label logo-label-light-text">20px</span>
+            </div>
+          </div>
+        </div>
+        <div class="logo-panel logo-panel-dark" style="gap: 20px; padding: 36px 40px;">
+          <span class="logo-label logo-label-light-text">Favicon — with dark background</span>
+          <div style="display: flex; align-items: flex-end; gap: 32px; flex-wrap: wrap; justify-content: center;">
+            <div class="logo-display">
+              <img style="width: 64px; height: 64px;" src="favicon.svg" alt="Favicon 64px">
+              <span class="logo-label logo-label-light-text">64px</span>
+            </div>
+            <div class="logo-display">
+              <img style="width: 32px; height: 32px;" src="favicon.svg" alt="Favicon 32px">
+              <span class="logo-label logo-label-light-text">32px</span>
+            </div>
+            <div class="logo-display">
+              <img style="width: 16px; height: 16px;" src="favicon.svg" alt="Favicon 16px">
+              <span class="logo-label logo-label-light-text">16px</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         SECTION 02 — COLOR PALETTE
+         ============================================================ -->
+    <section class="animate-in animate-in-delay-2">
+      <div class="section-header">
+        <span class="section-number">02</span>
+        <h2 class="section-title">Color Palette</h2>
+        <span class="section-desc">CSS Custom Properties</span>
+      </div>
+
+      <div class="color-grid">
+        <!-- Primary -->
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #00c896;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Primary</div>
+            <div class="color-hex">#00c896 — --primary</div>
+          </div>
+        </div>
+
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #00a37a;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Primary Dark</div>
+            <div class="color-hex">#00a37a — --primary-dark</div>
+          </div>
+        </div>
+
+        <div class="color-swatch">
+          <div class="color-block">
+            <div class="color-block-checker"></div>
+            <div class="color-block-inner" style="background: rgba(0,200,150,0.15);"></div>
+          </div>
+          <div class="color-info">
+            <div class="color-name">Primary Dim</div>
+            <div class="color-hex">#00c896 @ 15% — --primary-dim</div>
+          </div>
+        </div>
+
+        <!-- Backgrounds dark -->
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #0a0a0f;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Background Dark</div>
+            <div class="color-hex">#0a0a0f — --bg (dark)</div>
+          </div>
+        </div>
+
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #0d1117;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Card Dark</div>
+            <div class="color-hex">#0d1117 — --bg-card (dark)</div>
+          </div>
+        </div>
+
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #070a0e;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Sidebar Dark</div>
+            <div class="color-hex">#070a0e — --sidebar-bg</div>
+          </div>
+        </div>
+
+        <!-- Backgrounds light -->
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #f5f7f5;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Background Light</div>
+            <div class="color-hex">#f5f7f5 — --bg (light)</div>
+          </div>
+        </div>
+
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #fafcfa;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Card Light</div>
+            <div class="color-hex">#fafcfa — --bg-card (light)</div>
+          </div>
+        </div>
+
+        <!-- Text -->
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #e6e6e6;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Text Dark Mode</div>
+            <div class="color-hex">#e6e6e6 — --text-primary (dark)</div>
+          </div>
+        </div>
+
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #1a1f2e;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Text Light Mode</div>
+            <div class="color-hex">#1a1f2e — --text-primary (light)</div>
+          </div>
+        </div>
+
+        <!-- Status -->
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #22c55e;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Success</div>
+            <div class="color-hex">#22c55e — --success</div>
+          </div>
+        </div>
+
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #ef4444;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Danger</div>
+            <div class="color-hex">#ef4444 — --danger</div>
+          </div>
+        </div>
+
+        <div class="color-swatch">
+          <div class="color-block"><div class="color-block-inner" style="background: #f59e0b;"></div></div>
+          <div class="color-info">
+            <div class="color-name">Warning</div>
+            <div class="color-hex">#f59e0b — --warning</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         SECTION 03 — TYPOGRAPHY
+         ============================================================ -->
+    <section class="animate-in animate-in-delay-3">
+      <div class="section-header">
+        <span class="section-number">03</span>
+        <h2 class="section-title">Typography</h2>
+        <span class="section-desc">JetBrains Mono — all weights</span>
+      </div>
+
+      <div class="type-table">
+        <div class="type-row">
+          <span class="type-row-label">Display</span>
+          <span class="type-h1">BotOps</span>
+          <span class="type-row-meta">40px</span>
+          <span class="type-row-meta">800</span>
+        </div>
+        <div class="type-row">
+          <span class="type-row-label">H2</span>
+          <span class="type-h2">Operations</span>
+          <span class="type-row-meta">28px</span>
+          <span class="type-row-meta">700</span>
+        </div>
+        <div class="type-row">
+          <span class="type-row-label">H3</span>
+          <span class="type-h3">Account Manager</span>
+          <span class="type-row-meta">20px</span>
+          <span class="type-row-meta">700</span>
+        </div>
+        <div class="type-row">
+          <span class="type-row-label">H4</span>
+          <span class="type-h4">Race scanner active</span>
+          <span class="type-row-meta">15px</span>
+          <span class="type-row-meta">600</span>
+        </div>
+        <div class="type-row">
+          <span class="type-row-label">Body</span>
+          <span class="type-body">Current EV threshold: 3.5% — scanning 6 books</span>
+          <span class="type-row-meta">14px</span>
+          <span class="type-row-meta">400</span>
+        </div>
+        <div class="type-row">
+          <span class="type-row-label">Small</span>
+          <span class="type-small">Race starts in 00:02:34 — Sportsbet, Ladbrokes, PointsBet</span>
+          <span class="type-row-meta">12px</span>
+          <span class="type-row-meta">400</span>
+        </div>
+        <div class="type-row">
+          <span class="type-row-label">Caption</span>
+          <span class="type-caption">Last updated 14:32:08 UTC+11</span>
+          <span class="type-row-meta">11px</span>
+          <span class="type-row-meta">500</span>
+        </div>
+        <div class="type-row">
+          <span class="type-row-label">Label</span>
+          <span class="type-label">Status: Live</span>
+          <span class="type-row-meta">10px</span>
+          <span class="type-row-meta">700</span>
+        </div>
+        <div class="type-row">
+          <span class="type-row-label">Code</span>
+          <span class="type-code">ev_model: "automb"</span>
+          <span class="type-row-meta">13px</span>
+          <span class="type-row-meta">400</span>
+        </div>
+      </div>
+
+      <div class="note">
+        Typeface: <strong>JetBrains Mono</strong> — loaded via Google Fonts. Fallback: 'Courier New', monospace.
+        All weights 100–800 available. Use 700–800 for headings, 400 for body, 600 for UI labels.
+      </div>
+    </section>
+
+    <!-- ============================================================
+         SECTION 04 — APP PREVIEW
+         ============================================================ -->
+    <section class="animate-in animate-in-delay-4">
+      <div class="section-header">
+        <span class="section-number">04</span>
+        <h2 class="section-title">UI in Context</h2>
+        <span class="section-desc">Logo in live interface</span>
+      </div>
+
+      <div class="sidebar-preview">
+        <!-- Sidebar -->
+        <div class="sidebar-preview-nav">
+          <div class="sidebar-preview-header">
+            <img src="icon-sidebar.svg" alt="BotOps" style="width: 24px; height: 24px;">
+            <span class="sidebar-preview-wordmark">BotOps</span>
+          </div>
+          <div class="sidebar-preview-items">
+            <div class="sidebar-item active">
+              <div class="sidebar-item-dot"></div>
+              Dashboard
+            </div>
+            <div class="sidebar-item">
+              <div class="sidebar-item-dot"></div>
+              Accounts
+            </div>
+            <div class="sidebar-item">
+              <div class="sidebar-item-dot"></div>
+              Scanner
+            </div>
+            <div class="sidebar-item">
+              <div class="sidebar-item-dot"></div>
+              Open Bets
+            </div>
+            <div class="sidebar-item">
+              <div class="sidebar-item-dot"></div>
+              Results
+            </div>
+            <div class="sidebar-item">
+              <div class="sidebar-item-dot"></div>
+              Profiles
+            </div>
+            <div class="sidebar-item">
+              <div class="sidebar-item-dot"></div>
+              Settings
+            </div>
+          </div>
+        </div>
+        <!-- Content -->
+        <div class="sidebar-preview-content">
+          <div class="preview-stat-row">
+            <div class="preview-stat">
+              <div class="preview-stat-label">Total EV</div>
+              <div class="preview-stat-value">+8.3%</div>
+              <div class="preview-stat-sub">+1.2% today</div>
+            </div>
+            <div class="preview-stat">
+              <div class="preview-stat-label">Active Bets</div>
+              <div class="preview-stat-value">14</div>
+              <div class="preview-stat-sub">3 settling</div>
+            </div>
+            <div class="preview-stat">
+              <div class="preview-stat-label">Accounts</div>
+              <div class="preview-stat-value">6</div>
+              <div class="preview-stat-sub">All logged in</div>
+            </div>
+          </div>
+
+          <div class="preview-table-card">
+            <div class="preview-table-header">
+              <span>Race</span>
+              <span>Book</span>
+              <span>Status</span>
+            </div>
+            <div class="preview-table-row">
+              <span>Flemington R3</span>
+              <span>Sportsbet</span>
+              <span><span class="badge badge-success">LIVE</span></span>
+            </div>
+            <div class="preview-table-row">
+              <span>Randwick R7</span>
+              <span>Ladbrokes</span>
+              <span><span class="badge badge-warning">PLACING</span></span>
+            </div>
+            <div class="preview-table-row">
+              <span>Caulfield R5</span>
+              <span>PointsBet</span>
+              <span><span class="badge badge-success">PLACED</span></span>
+            </div>
+            <div class="preview-table-row">
+              <span>Eagle Farm R2</span>
+              <span>TAB</span>
+              <span><span class="badge badge-danger">CLOSED</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         SECTION 05 — LOGO USAGE GUIDELINES
+         ============================================================ -->
+    <section class="animate-in animate-in-delay-5">
+      <div class="section-header">
+        <span class="section-number">05</span>
+        <h2 class="section-title">Logo Usage</h2>
+        <span class="section-desc">Do / Don't guidelines</span>
+      </div>
+
+      <!-- Clear space -->
+      <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 24px;">
+        Maintain minimum clear space of <strong style="color: var(--primary);">0.5× chip height</strong> on all sides.
+        At 120px, this equals 60px of breathing room.
+      </p>
+
+      <div class="clearspace-demo" style="margin-bottom: 32px;">
+        <div class="clearspace-inner">
+          <div class="clearspace-zone">
+            <span class="clearspace-label-top">0.5× height</span>
+            <span class="clearspace-label-left">0.5×</span>
+            <img src="logo-dark.svg" alt="BotOps" style="width: 96px; height: 96px; display: block;">
+          </div>
+        </div>
+      </div>
+
+      <!-- DO / DON'T -->
+      <div class="usage-grid">
+        <!-- DO 1 -->
+        <div class="usage-card usage-card-do">
+          <div class="usage-card-header">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            DO — Dark variant on dark background
+          </div>
+          <div class="usage-card-body" style="background: #0a0a0f;">
+            <img src="logo-dark.svg" style="width: 96px; height: 96px;" alt="">
+          </div>
+          <div class="usage-card-note">
+            Use dark variant on any surface with #0a0a0f or similar dark base.
+          </div>
+        </div>
+
+        <!-- DON'T 1 -->
+        <div class="usage-card usage-card-dont">
+          <div class="usage-card-header">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            DON'T — Dark variant on light background
+          </div>
+          <div class="usage-card-body" style="background: #ffffff;">
+            <div class="dont-example-white">
+              <img src="logo-dark.svg" style="width: 80px; height: 80px;" alt="">
+              <span class="dont-label">wrong variant</span>
+            </div>
+          </div>
+          <div class="usage-card-note">
+            Dark chip fill (#0d1117) disappears on white. Use light variant instead.
+          </div>
+        </div>
+
+        <!-- DO 2 -->
+        <div class="usage-card usage-card-do">
+          <div class="usage-card-header">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            DO — Light variant on light background
+          </div>
+          <div class="usage-card-body" style="background: #f5f7f5;">
+            <img src="logo-light.svg" style="width: 96px; height: 96px;" alt="">
+          </div>
+          <div class="usage-card-note">
+            Light variant uses #fafcfa chip fill with #00a37a stroke — readable on any light surface.
+          </div>
+        </div>
+
+        <!-- DON'T 2 -->
+        <div class="usage-card usage-card-dont">
+          <div class="usage-card-header">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            DON'T — Logo on colored/branded backgrounds
+          </div>
+          <div class="usage-card-body" style="background: #111;">
+            <div class="dont-example-colored">
+              <img src="logo-dark.svg" style="width: 80px; height: 80px;" alt="">
+              <span class="dont-label">clashing bg</span>
+            </div>
+          </div>
+          <div class="usage-card-note">
+            Never place the logo on colored backgrounds (purple, red, etc). Use only on brand bg colors.
+          </div>
+        </div>
+      </div>
+
+      <!-- Scale row -->
+      <h3 style="font-size: 14px; font-weight: 600; color: var(--text-secondary); margin: 40px 0 16px; letter-spacing: -0.01em;">Logo at every scale</h3>
+
+      <div class="scale-row">
+        <div class="scale-item">
+          <img src="logo-dark.svg" style="width: 128px; height: 128px;" alt="128px">
+          <div class="scale-label">128px<br>Full logo</div>
+        </div>
+        <div class="scale-item">
+          <img src="logo-dark.svg" style="width: 64px; height: 64px;" alt="64px">
+          <div class="scale-label">64px<br>Standard</div>
+        </div>
+        <div class="scale-item">
+          <img src="icon-sidebar.svg" style="width: 32px; height: 32px;" alt="32px">
+          <div class="scale-label">32px<br>Sidebar icon</div>
+        </div>
+        <div class="scale-item">
+          <img src="favicon.svg" style="width: 32px; height: 32px;" alt="32px favicon">
+          <div class="scale-label">32px<br>Favicon</div>
+        </div>
+        <div class="scale-item">
+          <img src="favicon.svg" style="width: 16px; height: 16px;" alt="16px">
+          <div class="scale-label">16px<br>Min size</div>
+        </div>
+      </div>
+
+      <div class="note" style="margin-top: 20px;">
+        Minimum logo size: <strong style="color: var(--primary);">16px</strong> for favicon use.
+        Below 32px, use the favicon variant (no traces, bold chip only).
+        Below 20px, only the favicon.svg should be used.
+      </div>
+    </section>
+
+    <!-- ============================================================
+         FOOTER
+         ============================================================ -->
+    <div class="ds-footer">
+      <span class="ds-footer-text">BotOps Design System — IC Chip identity</span>
+      <span class="ds-footer-version">v1.0.0</span>
+    </div>
+
+  </div>
+
+  <script>
+    function toggleTheme() {
+      const html = document.documentElement;
+      const btn = document.getElementById('theme-label');
+      const logo = document.getElementById('header-logo');
+      const current = html.getAttribute('data-theme');
+
+      if (current === 'dark') {
+        html.setAttribute('data-theme', 'light');
+        btn.textContent = 'Dark Mode';
+        logo.src = 'icon-sidebar.svg';
+      } else {
+        html.setAttribute('data-theme', 'dark');
+        btn.textContent = 'Light Mode';
+        logo.src = 'icon-sidebar.svg';
+      }
+    }
+  </script>
+</body>
+</html>

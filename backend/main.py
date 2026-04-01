@@ -22,7 +22,7 @@ from betting import (
     get_match_markets, get_sgm_propositions, price_check, place_sgm_bet,
     place_multi_bet, get_my_bets,
 )
-from resolver import resolve_and_price
+from resolver import resolve_and_price, resolve_csb_bet, _get_all_sport_props, _sport_props_cache
 from database import (
     init_db, close_db, get_accounts, upsert_account, delete_account, sync_accounts,
     save_app_session, get_app_session, delete_app_session, load_all_app_sessions,
@@ -777,6 +777,180 @@ async def api_quick_place(req: QuickBetRequest, _user: dict = Depends(_verify_ap
         results.append(resolved)
 
     return {"results": results}
+
+
+# ─── CSB (Resolve + Place) ────────────────────────────────────────────────────
+
+class CsbBet(_BM):
+    session_id: str
+    bet_type: str = "SGM"  # "SGM" or "Multi"
+    game_id: str = ""
+    bet: str = ""  # "Player1 N+ Stat/Player2 N+ Stat"
+    odds: float = 0
+    min_odds: float = 0
+    ev_pct: float = 0
+    units: float = 1
+    stake: float = 10
+    sport: str = "AFL Football"
+    competition: str = "AFL"
+
+
+class CsbWarmupRequest(_BM):
+    session_id: str
+    sports: list[dict] = []  # [{"sport": "AFL Football", "competition": "AFL"}, ...]
+
+
+@app.post("/api/csb-warmup")
+async def api_csb_warmup(req: CsbWarmupRequest, _user: dict = Depends(_verify_app_token)):
+    """Pre-fetch all SGM propositions for given sports so resolution is instant."""
+    import time as _t
+    s = _get_session(req.session_id)
+    results = []
+    for sp in req.sports:
+        sport = sp.get("sport", "AFL Football")
+        comp = sp.get("competition", "AFL")
+        start = _t.time()
+        try:
+            props = _get_all_sport_props(s["token"], s["proxy_url"], sport, comp)
+            elapsed = _t.time() - start
+            # Count unique matches
+            match_names = set(p.get("_match_name", "") for p in props if p.get("_match_name"))
+            results.append({
+                "sport": sport,
+                "competition": comp,
+                "props_count": len(props),
+                "matches_count": len(match_names),
+                "seconds": round(elapsed, 1),
+                "cached": elapsed < 1,  # If it came back fast, it was cached
+            })
+        except Exception as e:
+            results.append({
+                "sport": sport,
+                "competition": comp,
+                "error": str(e),
+            })
+    return {"results": results}
+
+
+@app.post("/api/csb-resolve-one")
+async def api_csb_resolve_one(req: CsbBet, _user: dict = Depends(_verify_app_token)):
+    """Resolve a single CSB bet (SGM or Multi) against TAB markets."""
+    s = _get_session(req.session_id)
+    resolved = resolve_csb_bet(
+        token=s["token"],
+        proxy_url=s["proxy_url"],
+        bet_type=req.bet_type,
+        game_id=req.game_id,
+        bet_description=req.bet,
+        stake=str(req.stake),
+        min_odds=req.min_odds,
+        sport=req.sport,
+        competition=req.competition,
+    )
+    return resolved
+
+
+@app.post("/api/csb-place-one")
+async def api_csb_place_one(req: CsbBet, _user: dict = Depends(_verify_app_token)):
+    """Resolve and place a single CSB bet."""
+    s = _get_session(req.session_id)
+    if not s.get("legacy_token"):
+        raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
+
+    resolved = resolve_csb_bet(
+        token=s["token"],
+        proxy_url=s["proxy_url"],
+        bet_type=req.bet_type,
+        game_id=req.game_id,
+        bet_description=req.bet,
+        stake=str(req.stake),
+        min_odds=req.min_odds,
+        sport=req.sport,
+        competition=req.competition,
+    )
+
+    if not resolved["resolved"] or not resolved["meets_minimum"]:
+        return {"success": False, "resolved": resolved, "error": resolved.get("error")}
+
+    try:
+        if req.bet_type.upper() == "SGM":
+            place_result = place_sgm_bet(
+                legacy_token=s["legacy_token"],
+                account_number=s["account_number"],
+                propositions=resolved["propositions"],
+                combined_odds=resolved["combined_odds"],
+                stake=str(req.stake),
+                proxy_url=s["proxy_url"],
+            )
+        else:
+            place_result = place_multi_bet(
+                legacy_token=s["legacy_token"],
+                account_number=s["account_number"],
+                legs=[{"propositionId": p["propositionId"], "odds": p["odds"]} for p in resolved["propositions"]],
+                stake=str(req.stake),
+                proxy_url=s["proxy_url"],
+            )
+
+        # Save to DB on success
+        if place_result.get("success"):
+            acct_label = ""
+            try:
+                accounts = await get_accounts(_user["username"])
+                for a in accounts:
+                    if a["account_number"] == s["account_number"] or a["email"] == s.get("email"):
+                        acct_label = a["label"]
+                        break
+            except Exception:
+                pass
+
+            tsn = place_result.get("ticket_number")
+            legs_data = [{"name": p.get("name", "")} for p in resolved["propositions"]]
+
+            # Try to get descriptive leg names from TAB
+            if tsn and s.get("legacy_token"):
+                try:
+                    import time as _t
+                    _t.sleep(1)
+                    tab_history = get_my_bets(s["legacy_token"], s["account_number"], s["proxy_url"], count=5)
+                    for tb in tab_history.get("bets", []):
+                        if tb.get("tsn") == tsn:
+                            tab_legs = tb.get("legs", [])
+                            if tab_legs:
+                                legs_data = [{"name": leg if isinstance(leg, str) else str(leg)} for leg in tab_legs]
+                            break
+                except Exception:
+                    pass
+
+            details = place_result.get("details", {})
+            combined = resolved.get("combined_odds", "0")
+            try:
+                combined = details.get("bets", [{}])[0].get("combinedPrice", combined)
+            except (IndexError, AttributeError):
+                pass
+
+            await save_bet(_user["username"], {
+                "account_number": s["account_number"],
+                "account_label": acct_label,
+                "tsn": tsn,
+                "bet_type": req.bet_type.upper(),
+                "legs": legs_data,
+                "combined_odds": str(combined),
+                "stake": str(req.stake),
+                "status": "Pending",
+                "raw_response": details,
+            })
+
+        return {
+            "success": place_result.get("success", False),
+            "ticket_number": place_result.get("ticket_number"),
+            "combined_odds": resolved.get("combined_odds"),
+            "stake": req.stake,
+            "account_balance": place_result.get("account_balance"),
+            "error": place_result.get("error"),
+            "resolved": resolved,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "resolved": resolved}
 
 
 # ─── Account Persistence ─────────────────────────────────────────────────────
