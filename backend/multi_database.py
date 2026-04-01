@@ -3,14 +3,14 @@ import json
 import logging
 import uuid as _uuid
 
-from database import pool
+import database as _db
 
 logger = logging.getLogger(__name__)
 
 
 async def init_multi_db():
     """Create multi-bookie tables if they don't exist."""
-    async with pool.acquire() as conn:
+    async with _db.pool.acquire() as conn:
         # Multi-bookie account registry
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS bookie_accounts (
@@ -87,7 +87,7 @@ async def init_multi_db():
 
 async def get_bookie_accounts(username: str) -> list[dict]:
     """List all bookie accounts for a user."""
-    async with pool.acquire() as conn:
+    async with _db.pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT * FROM bookie_accounts WHERE username = $1 ORDER BY created_at",
             username,
@@ -104,7 +104,7 @@ async def get_bookie_accounts(username: str) -> list[dict]:
 async def upsert_bookie_account(data: dict) -> dict:
     """Create or update a bookie account."""
     aid = data.get("id") or str(_uuid.uuid4())
-    async with pool.acquire() as conn:
+    async with _db.pool.acquire() as conn:
         await conn.execute(
             """
             INSERT INTO bookie_accounts
@@ -145,13 +145,13 @@ async def upsert_bookie_account(data: dict) -> dict:
 
 async def delete_bookie_account(account_id: str):
     """Delete a bookie account by ID."""
-    async with pool.acquire() as conn:
+    async with _db.pool.acquire() as conn:
         await conn.execute("DELETE FROM bookie_accounts WHERE id = $1", account_id)
 
 
 async def find_account_by_initials_brand(username: str, initials: str, brand: str) -> dict | None:
     """Find a bookie account by username + initials + brand (CSV lookup)."""
-    async with pool.acquire() as conn:
+    async with _db.pool.acquire() as conn:
         row = await conn.fetchrow(
             """SELECT * FROM bookie_accounts
                WHERE username = $1 AND initials = $2 AND brand = $3 AND is_active = TRUE""",
@@ -170,7 +170,7 @@ async def find_account_by_initials_brand(username: str, initials: str, brand: st
 
 async def create_csv_batch(batch_id: str, username: str, filename: str, total_rows: int):
     """Create a new CSV batch record."""
-    async with pool.acquire() as conn:
+    async with _db.pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO csv_batches (id, username, filename, total_rows, status)
                VALUES ($1, $2, $3, $4, 'pending')""",
@@ -182,7 +182,7 @@ async def insert_csv_rows(rows: list[dict]):
     """Bulk insert CSV bet rows."""
     if not rows:
         return
-    async with pool.acquire() as conn:
+    async with _db.pool.acquire() as conn:
         for r in rows:
             await conn.execute(
                 """INSERT INTO csv_bet_rows
@@ -217,13 +217,13 @@ async def update_csv_row(row_id: str, updates: dict):
         idx += 1
     params.append(row_id)
     query = f"UPDATE csv_bet_rows SET {', '.join(set_clauses)} WHERE id = ${idx}"
-    async with pool.acquire() as conn:
+    async with _db.pool.acquire() as conn:
         await conn.execute(query, *params)
 
 
 async def get_batch_status(batch_id: str) -> dict | None:
     """Get a batch with all its rows."""
-    async with pool.acquire() as conn:
+    async with _db.pool.acquire() as conn:
         batch_row = await conn.fetchrow(
             "SELECT * FROM csv_batches WHERE id = $1", batch_id,
         )
@@ -255,7 +255,7 @@ async def get_batch_status(batch_id: str) -> dict | None:
 
 async def update_batch_summary(batch_id: str, summary: dict):
     """Update a batch's summary and status."""
-    async with pool.acquire() as conn:
+    async with _db.pool.acquire() as conn:
         await conn.execute(
             "UPDATE csv_batches SET summary = $1::jsonb, status = $2 WHERE id = $3",
             json.dumps(summary),
@@ -266,7 +266,7 @@ async def update_batch_summary(batch_id: str, summary: dict):
 
 async def get_recent_batches(username: str, limit: int = 20) -> list[dict]:
     """List recent CSV batches for a user."""
-    async with pool.acquire() as conn:
+    async with _db.pool.acquire() as conn:
         rows = await conn.fetch(
             """SELECT id, username, filename, uploaded_at, total_rows, status, summary
                FROM csv_batches WHERE username = $1
