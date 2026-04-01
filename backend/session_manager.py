@@ -103,7 +103,17 @@ class SessionManager:
             return {"success": False, "error": str(e)}
 
         proxy_url = _generate_proxy(account.get("proxy_base", ""))
-        brand_config = account.get("brand_config", {})
+
+        # Look up brand config from platform registry (user DB doesn't store this)
+        brand_config = {}
+        if platform == "betmakers":
+            from platforms.betmakers import BETMAKERS_BRANDS
+            brand_config = BETMAKERS_BRANDS.get(brand, {}) or {}
+        elif platform == "amused":
+            from platforms.amused import AMUSED_BRANDS
+            brand_config = AMUSED_BRANDS.get(brand, {}) or {}
+        # Merge any user-level overrides from DB
+        brand_config = {**brand_config, **account.get("brand_config", {})}
 
         try:
             session = await client.login(
