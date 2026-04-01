@@ -143,6 +143,9 @@ async def api_test_login(account_id: str, user: dict = Depends(_verify_app_token
             proxy_url=proxy_url,
             brand_config=brand_config,
         )
+        if not session.get("success"):
+            raise HTTPException(400, f"Login failed: {session.get('error', 'Unknown error')}")
+
         balances = await client.get_balances(session)
         balance = balances.get("cash", 0.0)
         bonus = balances.get("bonus", 0.0)
