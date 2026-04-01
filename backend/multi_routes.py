@@ -5,7 +5,12 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Depends, Header
 
+from pydantic import BaseModel
 from multi_models import BookieAccountCreate, CsvUploadResponse, BatchStatusResponse
+
+
+class CsvUploadRequest(BaseModel):
+    csv_text: str
 from multi_database import (
     get_bookie_accounts, upsert_bookie_account, delete_bookie_account,
     create_csv_batch, insert_csv_rows, get_batch_status,
@@ -129,10 +134,11 @@ async def api_test_login(account_id: str, user: dict = Depends(_verify_app_token
 
 @multi_router.post("/csv/upload", response_model=CsvUploadResponse)
 async def api_csv_upload(
-    csv_text: str = "",
+    body: CsvUploadRequest,
     user: dict = Depends(_verify_app_token),
 ):
     """Upload CSV text, validate rows, return preview with validation results."""
+    csv_text = body.csv_text
     if not csv_text.strip():
         raise HTTPException(400, "Empty CSV text")
 

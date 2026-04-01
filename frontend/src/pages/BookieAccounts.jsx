@@ -307,8 +307,8 @@ export default function BookieAccounts() {
     setTestingId(id);
     setTestResult((prev) => ({ ...prev, [id]: null }));
     try {
-      await api.post(`/api/multi/accounts/${id}/test-login`);
-      setTestResult((prev) => ({ ...prev, [id]: { ok: true } }));
+      const data = await api.post(`/api/multi/accounts/${id}/test-login`);
+      setTestResult((prev) => ({ ...prev, [id]: { ok: true, balance: data.balance, message: data.message } }));
     } catch (err) {
       setTestResult((prev) => ({ ...prev, [id]: { ok: false, error: err.message } }));
     } finally {
@@ -373,7 +373,7 @@ export default function BookieAccounts() {
                         <span className="badge badge-neutral">Unknown</span>
                       ) : test.ok ? (
                         <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                          <Wifi size={10} /> OK
+                          <Wifi size={10} /> ${test.balance != null ? `$${Number(test.balance).toFixed(2)}` : 'OK'}
                         </span>
                       ) : (
                         <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }} title={test.error}>
