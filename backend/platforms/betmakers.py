@@ -169,11 +169,11 @@ mutation createBet($input: CreateBetInput!) {
 """
 
 BALANCE_QUERY = """
-query accountBalance {
-  accountBalance {
-    cash
-    bonus
-    total
+query getUser {
+  getUser {
+    account_balance
+    bonus_account_balance
+    withdrawal_balance
   }
 }
 """
@@ -535,13 +535,10 @@ class BetMakersClient(PlatformClient):
                 return 0.0
 
             data = resp.json()
-            balance_data = data.get("data", {}).get("accountBalance", {})
-            cash = balance_data.get("cash", 0)
-
-            # Cash might be in cents
-            if isinstance(cash, (int, float)):
-                # If cash > 10000, it's probably in cents
-                if cash > 10000:
-                    return cash / 100.0
-                return float(cash)
-            return 0.0
+            user_data = data.get("data", {}).get("getUser", {})
+            if not user_data:
+                logger.error(f"BetMakers balance: no getUser data: {data}")
+                return 0.0
+            # Balance is in cents
+            cash_cents = user_data.get("account_balance", 0) or 0
+            return cash_cents / 100.0
