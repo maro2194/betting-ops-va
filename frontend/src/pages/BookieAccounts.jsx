@@ -14,26 +14,35 @@ import {
   LogIn,
 } from 'lucide-react';
 
-const PLATFORMS = [
-  { value: 'betmakers', label: 'Betmakers' },
-  { value: 'amused', label: 'Amused' },
-  { value: 'tab', label: 'TAB' },
+// Single flat list — user just picks the bookie, platform is auto-detected
+const BOOKMAKERS = [
+  { name: 'Crownbet', platform: 'betmakers' },
+  { name: 'TerryBet', platform: 'betmakers' },
+  { name: 'PonyBet', platform: 'betmakers' },
+  { name: 'BetIt', platform: 'betmakers' },
+  { name: 'DiamondBet', platform: 'betmakers' },
+  { name: 'BetDash', platform: 'betmakers' },
+  { name: 'SwiftBet', platform: 'betmakers' },
+  { name: 'BetDeluxe', platform: 'amused' },
+  { name: 'BetNation', platform: 'amused' },
+  { name: 'Surge', platform: 'amused' },
+  { name: 'PulseBet', platform: 'amused' },
+  { name: 'BigBet', platform: 'amused' },
+  { name: 'YesBet', platform: 'amused' },
+  { name: 'MightyBet', platform: 'amused' },
+  { name: 'TAB', platform: 'tab' },
 ];
 
-const BRANDS_BY_PLATFORM = {
-  betmakers: ['Crownbet', 'TerryBet', 'PonyBet', 'BetIt', 'DiamondBet', 'BetDash', 'SwiftBet'],
-  amused: ['BetDeluxe', 'BetNation', 'Surge', 'PulseBet', 'BigBet', 'YesBet', 'MightyBet'],
-  tab: ['TAB'],
-};
+const PLATFORM_LABELS = { betmakers: 'BetMakers', amused: 'Amused', tab: 'TAB' };
 
 function AccountModal({ account, onClose, onSaved }) {
   const isEdit = !!account;
+  const defaultBookie = account ? BOOKMAKERS.find(b => b.name.toLowerCase() === (account.brand || '').toLowerCase()) : BOOKMAKERS[0];
   const [form, setForm] = useState({
     label: account?.label || '',
     initials: account?.initials || '',
     owner_name: account?.owner_name || '',
-    platform: account?.platform || 'betmakers',
-    brand: account?.brand || 'Crownbet',
+    bookmaker: defaultBookie?.name || 'Crownbet',
     email: account?.email || '',
     password: account?.password || '',
     proxy_base: account?.proxy_base || '',
@@ -42,23 +51,26 @@ function AccountModal({ account, onClose, onSaved }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const brands = BRANDS_BY_PLATFORM[form.platform] || [];
-
-  // Reset brand when platform changes
-  const handlePlatformChange = (platform) => {
-    const newBrands = BRANDS_BY_PLATFORM[platform] || [];
-    setForm({ ...form, platform, brand: newBrands[0] || '' });
-  };
+  // Auto-derive platform and brand from bookmaker selection
+  const selectedBookie = BOOKMAKERS.find(b => b.name === form.bookmaker) || BOOKMAKERS[0];
+  const platform = selectedBookie.platform;
+  const brand = selectedBookie.name;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
+      const payload = {
+        ...form,
+        platform,
+        brand,
+      };
+      delete payload.bookmaker;  // not a backend field
       if (isEdit) {
-        await api.put(`/api/multi/accounts/${account.id}`, form);
+        await api.put(`/api/multi/accounts/${account.id}`, payload);
       } else {
-        await api.post('/api/multi/accounts', form);
+        await api.post('/api/multi/accounts', payload);
       }
       onSaved();
       onClose();
@@ -152,33 +164,21 @@ function AccountModal({ account, onClose, onSaved }) {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Platform</label>
-              <select
-                value={form.platform}
-                onChange={(e) => handlePlatformChange(e.target.value)}
-                className="t-input"
-                style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
-              >
-                {PLATFORMS.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Brand</label>
-              <select
-                value={form.brand}
-                onChange={(e) => setForm({ ...form, brand: e.target.value })}
-                className="t-input"
-                style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
-              >
-                {brands.map((b) => (
-                  <option key={b} value={b}>{b}</option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Bookmaker</label>
+            <select
+              value={form.bookmaker}
+              onChange={(e) => setForm({ ...form, bookmaker: e.target.value })}
+              className="t-input"
+              style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
+            >
+              {BOOKMAKERS.map((b) => (
+                <option key={b.name} value={b.name}>{b.name}</option>
+              ))}
+            </select>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, display: 'block' }}>
+              Platform: {PLATFORM_LABELS[platform] || platform}
+            </span>
           </div>
 
           <div>
@@ -350,7 +350,7 @@ export default function BookieAccounts() {
               <tr>
                 <th>Label</th>
                 <th>Initials</th>
-                <th>Platform / Brand</th>
+                <th>Bookmaker</th>
                 <th>Email</th>
                 <th>Status</th>
                 <th style={{ textAlign: 'right' }}>Actions</th>
@@ -364,8 +364,8 @@ export default function BookieAccounts() {
                     <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{acc.label || `${acc.initials} - ${acc.brand}`}</td>
                     <td style={{ color: 'var(--text-secondary)' }}>{acc.initials}</td>
                     <td>
-                      <span className="badge badge-accent" style={{ marginRight: 4 }}>{acc.platform}</span>
-                      <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{acc.brand}</span>
+                      <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{acc.brand}</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>{PLATFORM_LABELS[acc.platform] || acc.platform}</span>
                     </td>
                     <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{acc.email}</td>
                     <td>
