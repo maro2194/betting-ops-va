@@ -206,6 +206,7 @@ def _make_headers(referer: str) -> dict:
         "sec-ch-ua-platform": '"Windows"',
         "user-agent": USER_AGENT,
         "referer": referer,
+        "accept-language": "en-AU,en-US;q=0.9,en;q=0.8",
     }
 
 

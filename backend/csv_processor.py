@@ -203,6 +203,9 @@ async def process_batch(batch_id: str, rows: list[dict], username: str):
                 # Update row status to in_progress
                 await update_csv_row(row["id"], {"status": "in_progress"})
 
+                # Human delay: simulate browsing to the race page
+                await asyncio.sleep(random.uniform(1.0, 2.5))
+
                 # Find the race
                 race_info = await client.find_race(session, row["track"], int(row["race"]))
                 if not race_info:
@@ -241,6 +244,9 @@ async def process_batch(batch_id: str, rows: list[dict], username: str):
                     continue
 
                 live_odds = str(matched_runner.get("win_price", ""))
+
+                # Human delay: simulate reviewing odds before betting
+                await asyncio.sleep(random.uniform(1.5, 3.0))
 
                 # Place the bet
                 brand_config = account.get("brand_config", {})
