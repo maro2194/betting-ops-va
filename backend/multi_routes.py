@@ -13,7 +13,7 @@ class CsvUploadRequest(BaseModel):
     csv_text: str
 from multi_database import (
     get_bookie_accounts, upsert_bookie_account, delete_bookie_account,
-    create_csv_batch, insert_csv_rows, get_batch_status,
+    find_account_by_id, create_csv_batch, insert_csv_rows, get_batch_status,
     get_recent_batches,
 )
 from csv_processor import parse_racing_csv, validate_csv_rows, process_batch
@@ -69,6 +69,26 @@ async def api_upsert_bookie_account(
     data["initials"] = data["initials"].upper()
     data["brand"] = data["brand"].lower()
     data["platform"] = data["platform"].lower()
+    result = await upsert_bookie_account(data)
+    return {"ok": True, "id": result["id"]}
+
+
+@multi_router.put("/accounts/{account_id}")
+async def api_update_bookie_account(
+    account_id: str, body: BookieAccountCreate, user: dict = Depends(_verify_app_token)
+):
+    """Update an existing bookie account."""
+    data = body.model_dump()
+    data["id"] = account_id
+    data["username"] = user["username"]
+    data["initials"] = data["initials"].upper()
+    data["brand"] = data["brand"].lower()
+    data["platform"] = data["platform"].lower()
+    # Don't overwrite password if blank (edit mode)
+    if not data.get("password"):
+        existing = await find_account_by_id(account_id)
+        if existing:
+            data["password"] = existing["password"]
     result = await upsert_bookie_account(data)
     return {"ok": True, "id": result["id"]}
 
