@@ -290,19 +290,28 @@ class AmusedClient(PlatformClient):
                 logger.error(f"Amused futures failed: {resp.status_code} {resp.text[:300]}")
                 return []
 
-            data = resp.json()
+            raw = resp.json()
 
-            # Extract runners and their fixed market prices
-            race_data = data if isinstance(data, dict) else {}
-            runners_raw = race_data.get("runners", race_data.get("outcomes", []))
+            # Response: {code, data: {meeting: {race: {runners: [...], raceFixedMarketPrices: [...]}}}}
+            data = raw.get("data", raw) if isinstance(raw, dict) else raw
+            meeting = data.get("meeting", data) if isinstance(data, dict) else {}
+            race_data = meeting.get("race", meeting) if isinstance(meeting, dict) else {}
+            runners_raw = race_data.get("runners", [])
             fixed_prices = race_data.get("raceFixedMarketPrices", [])
 
-            # Build lookup: runner name/id -> fixed price info
-            fixed_price_map = {}
+            # Build lookup: (outcomeId, marketTypeCode) -> price info
+            # raceFixedMarketPrices has separate WIN and PLC entries per runner
+            win_price_map = {}   # outcomeId -> {price, fixedMarketId}
+            place_price_map = {} # outcomeId -> {price, fixedMarketId}
             for fp in fixed_prices:
-                outcome_id = fp.get("outcomeId", fp.get("OutcomeId"))
-                if outcome_id is not None:
-                    fixed_price_map[outcome_id] = fp
+                oid = fp.get("outcomeId")
+                mtype = fp.get("marketTypeCode", "")
+                if oid is None:
+                    continue
+                if mtype == "WIN":
+                    win_price_map[oid] = fp
+                elif mtype == "PLC":
+                    place_price_map[oid] = fp
 
             runners = []
             for r in runners_raw:
@@ -315,20 +324,17 @@ class AmusedClient(PlatformClient):
                     continue
 
                 # Get fixed odds from raceFixedMarketPrices
-                win_price = None
-                place_price = None
-                fixed_market_id = None
-                fp_data = fixed_price_map.get(outcome_id, {})
-                if fp_data:
-                    win_price = fp_data.get("fixedPrice", fp_data.get("winPrice"))
-                    place_price = fp_data.get("placePrice")
-                    fixed_market_id = fp_data.get("fixedMarketId", fp_data.get("FixedMarketId"))
+                win_data = win_price_map.get(outcome_id, {})
+                place_data = place_price_map.get(outcome_id, {})
+                win_price = win_data.get("price")
+                place_price = place_data.get("price")
+                fixed_market_id = win_data.get("fixedMarketId")
 
-                # Fallback: try runner-level price fields
-                if win_price is None:
-                    win_price = r.get("fixedPrice", r.get("winPrice"))
-                if place_price is None:
-                    place_price = r.get("placePrice")
+                # Fallback: try runner-level price from runnerPrice array
+                if win_price is None and r.get("marketTypeCode") == "WIN":
+                    prices = r.get("runnerPrice", [])
+                    if prices:
+                        win_price = prices[-1]  # last entry is current price
 
                 runners.append({
                     "id": outcome_id,
@@ -363,7 +369,7 @@ class AmusedClient(PlatformClient):
         if not outcome_id or not fixed_market_id:
             return {"success": False, "error": "Missing outcome_id or fixed_market_id on runner"}
 
-        url = f"{API_BASE}/api/betting/v1/bets"
+        url = f"{API_BASE}/api/bet/v1/placebet/single/racing"
         headers = _api_post_headers(access_token, org_id, channel_id)
 
         payload = {
@@ -397,21 +403,22 @@ class AmusedClient(PlatformClient):
                 return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
 
             data = resp.json()
+            code = data.get("code", "")
+            message = data.get("message", "")
+            bet_data = data.get("data", {})
 
-            # Check for error responses
-            error = data.get("error", data.get("Error", data.get("message", "")))
-            if error:
-                return {"success": False, "error": str(error)}
+            # BetPlaced = success
+            if code == "BetPlaced":
+                bet_id = bet_data.get("betId", bet_data.get("ticketNumber", ""))
+                return {
+                    "success": True,
+                    "bet_id": str(bet_id),
+                    "status": "placed",
+                    "details": data,
+                }
 
-            bet_id = data.get("betId", data.get("BetId", data.get("id", "")))
-            status = data.get("status", data.get("Status", ""))
-
-            return {
-                "success": True,
-                "bet_id": str(bet_id) if bet_id else "",
-                "status": status,
-                "details": data,
-            }
+            # Any other code is an error
+            return {"success": False, "error": f"{code}: {message}", "details": data}
 
     async def get_balance(self, session: dict) -> float:
         """Get account cash balance."""

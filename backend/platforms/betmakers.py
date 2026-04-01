@@ -492,7 +492,7 @@ class BetMakersClient(PlatformClient):
             bets = result.get("bets", [])
 
             return {
-                "success": status.lower() in ("accepted", "placed", "pending"),
+                "success": status.lower() in ("accepted", "placed", "pending", "processing"),
                 "bet_id": bet_id,
                 "status": status,
                 "bets": bets,
