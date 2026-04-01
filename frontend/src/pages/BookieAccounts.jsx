@@ -308,7 +308,7 @@ export default function BookieAccounts() {
     setTestResult((prev) => ({ ...prev, [id]: null }));
     try {
       const data = await api.post(`/api/multi/accounts/${id}/test-login`);
-      setTestResult((prev) => ({ ...prev, [id]: { ok: true, balance: data.balance, message: data.message } }));
+      setTestResult((prev) => ({ ...prev, [id]: { ok: true, balance: data.balance, bonus: data.bonus, message: data.message } }));
     } catch (err) {
       setTestResult((prev) => ({ ...prev, [id]: { ok: false, error: err.message } }));
     } finally {
