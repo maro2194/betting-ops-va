@@ -84,22 +84,16 @@ BETMAKERS_BRANDS = {
 # ─── GraphQL Queries ────────────────────────────────────────────────────────
 
 NEXT_TO_JUMP_QUERY = """
-query nextToJumpRaces($first: Int, $raceType: [RaceType], $country: [String]) {
-  nextToJumpRaces(first: $first, raceType: $raceType, country: $country) {
-    id
-    name
-    number
-    status
-    start_at
-    meeting {
-      id
-      type
-      track {
-        name
-        state
-        country
-      }
-    }
+query nextToJumpRaces($limit: Int, $meeting_type: [MeetingType!], $track_country_include: [String!]) {
+  nextToJumpRaces(limit: $limit, meeting_type: $meeting_type, track_country_include: $track_country_include) {
+    id: race_id
+    race_number
+    meeting_id
+    meeting_name
+    meeting_type
+    fixed_odds_enabled
+    start_datetime
+    country
   }
 }
 """
@@ -306,18 +300,15 @@ class BetMakersClient(PlatformClient):
         payload = {
             "query": NEXT_TO_JUMP_QUERY,
             "variables": {
-                "first": 100,
-                "raceType": ["THOROUGHBRED", "HARNESS", "GREYHOUND"],
-                "country": ["AUS", "NZL"],
+                "limit": 200,
+                "meeting_type": ["THOROUGHBRED", "HARNESS", "GREYHOUND"],
+                "track_country_include": ["AU", "NZL"],
             },
         }
 
         async with AsyncSession(impersonate="chrome") as s:
-            if proxy_url:
-                s.proxies = {"http": proxy_url, "https": proxy_url}
-
             try:
-                resp = await s.post(url, json=payload, headers=headers, timeout=15)
+                resp = await s.post(url, json=payload, headers=headers, proxy=proxy_url, timeout=15)
             except Exception as e:
                 logger.error(f"BetMakers find_race request failed: {e}")
                 return None
@@ -330,19 +321,18 @@ class BetMakersClient(PlatformClient):
             races = data.get("data", {}).get("nextToJumpRaces", [])
 
             for race in races:
-                race_track = race.get("meeting", {}).get("track", {}).get("name", "")
-                race_num = race.get("number", 0)
+                race_track = race.get("meeting_name", "")
+                race_num = race.get("race_number", 0)
                 if _names_match(race_track, track) and race_num == race_number:
-                    meeting = race.get("meeting", {})
                     return {
                         "race_id": race["id"],
-                        "meeting_id": meeting.get("id", ""),
-                        "meeting_type": meeting.get("type", ""),
+                        "meeting_id": race.get("meeting_id", ""),
+                        "meeting_type": race.get("meeting_type", ""),
                         "track": race_track,
                         "race_number": race_num,
-                        "race_name": race.get("name", ""),
-                        "status": race.get("status", ""),
-                        "start_at": race.get("start_at", ""),
+                        "race_name": race_track,
+                        "status": "OPEN",
+                        "start_at": race.get("start_datetime", ""),
                     }
 
             logger.warning(f"BetMakers: race not found - {track} R{race_number}")

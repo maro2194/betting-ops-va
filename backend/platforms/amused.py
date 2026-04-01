@@ -230,29 +230,35 @@ class AmusedClient(PlatformClient):
                 logger.error(f"Amused nextup failed: {resp.status_code} {resp.text[:300]}")
                 return None
 
-            data = resp.json()
-            meetings = data if isinstance(data, list) else data.get("meetings", data.get("data", []))
+            raw = resp.json()
+            # Response: {code, data: {thoroughbred: [...], greyhound: [...], harness: [...]}}
+            # Each race type contains a flat list of race objects (NOT grouped by meeting)
+            data = raw.get("data", raw) if isinstance(raw, dict) else raw
 
-            for meeting in meetings:
-                venue = meeting.get("venueName", meeting.get("meetingName", ""))
-                if not _names_match(venue, track):
-                    continue
+            # Flatten all race types into one list
+            all_races = []
+            if isinstance(data, dict):
+                for race_type_key, races_list in data.items():
+                    if isinstance(races_list, list):
+                        all_races.extend(races_list)
+            elif isinstance(data, list):
+                all_races = data
 
-                meeting_id = meeting.get("meetingId", meeting.get("id"))
-                races = meeting.get("races", [])
-                for race in races:
-                    r_num = race.get("raceNumber", race.get("number", 0))
-                    if r_num == race_number:
-                        race_id = race.get("raceId", race.get("id"))
-                        return {
-                            "race_id": race_id,
-                            "meeting_id": meeting_id,
-                            "track": venue,
-                            "race_number": r_num,
-                            "race_name": race.get("raceName", race.get("name", "")),
-                            "status": race.get("raceStatus", race.get("status", "")),
-                            "start_time": race.get("startTime", race.get("advertisedStartTime", "")),
-                        }
+            for race in all_races:
+                venue = race.get("venue", race.get("venueName", ""))
+                r_num = race.get("raceNumber", race.get("number", 0))
+                if _names_match(venue, track) and r_num == race_number:
+                    race_id = race.get("raceId", race.get("id"))
+                    meeting_id = race.get("meetId", race.get("meetingId"))
+                    return {
+                        "race_id": race_id,
+                        "meeting_id": meeting_id,
+                        "track": venue,
+                        "race_number": r_num,
+                        "race_name": race.get("raceName", race.get("name", "")),
+                        "status": race.get("raceStatus", race.get("status", "")),
+                        "start_time": race.get("startTime", race.get("advertisedStartTime", "")),
+                    }
 
             logger.warning(f"Amused: race not found - {track} R{race_number}")
             return None
@@ -436,7 +442,8 @@ class AmusedClient(PlatformClient):
             data = resp.json()
             cash = 0.0
             bonus = 0.0
-            wallets = data.get("data", [])
+            # Response can be {code, data: [...]} or just [...]
+            wallets = data.get("data", data) if isinstance(data, dict) else data
             if isinstance(wallets, list):
                 for w in wallets:
                     if w.get("accountType") == 1:
