@@ -508,7 +508,12 @@ class BetMakersClient(PlatformClient):
             }
 
     async def get_balance(self, session: dict) -> float:
-        """Get account cash balance via accountBalance query."""
+        """Get account cash balance."""
+        b = await self.get_balances(session)
+        return b.get("cash", 0.0)
+
+    async def get_balances(self, session: dict) -> dict:
+        """Get cash + bonus balance. Returns {"cash": float, "bonus": float}."""
         access_token = session.get("access_token", "")
         brand_config = session["brand_config"]
         platform_host = brand_config["platform_host"]
@@ -521,24 +526,22 @@ class BetMakersClient(PlatformClient):
         payload = {"query": BALANCE_QUERY}
 
         async with AsyncSession(impersonate="chrome") as s:
-            if proxy_url:
-                s.proxies = {"http": proxy_url, "https": proxy_url}
-
             try:
-                resp = await s.post(url, json=payload, headers=headers, timeout=15)
+                resp = await s.post(url, json=payload, headers=headers, proxy=proxy_url, timeout=15)
             except Exception as e:
-                logger.error(f"BetMakers get_balance request failed: {e}")
-                return 0.0
+                logger.error(f"BetMakers get_balances failed: {e}")
+                return {"cash": 0.0, "bonus": 0.0}
 
             if resp.status_code != 200:
                 logger.error(f"BetMakers balance failed: {resp.status_code} {resp.text[:300]}")
-                return 0.0
+                return {"cash": 0.0, "bonus": 0.0}
 
             data = resp.json()
             user_data = data.get("data", {}).get("getUser", {})
             if not user_data:
                 logger.error(f"BetMakers balance: no getUser data: {data}")
-                return 0.0
-            # Balance is in cents
+                return {"cash": 0.0, "bonus": 0.0}
+
             cash_cents = user_data.get("account_balance", 0) or 0
-            return cash_cents / 100.0
+            bonus_cents = user_data.get("bonus_account_balance", 0) or 0
+            return {"cash": cash_cents / 100.0, "bonus": bonus_cents / 100.0}
