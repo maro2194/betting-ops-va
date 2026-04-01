@@ -353,6 +353,8 @@ export default function BookieAccounts() {
                 <th>Bookmaker</th>
                 <th>Email</th>
                 <th>Status</th>
+                <th style={{ textAlign: 'right' }}>Balance</th>
+                <th style={{ textAlign: 'right' }}>Bonus</th>
                 <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
@@ -370,16 +372,22 @@ export default function BookieAccounts() {
                     <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{acc.email}</td>
                     <td>
                       {test === undefined || test === null ? (
-                        <span className="badge badge-neutral">Unknown</span>
+                        <span className="badge badge-neutral">--</span>
                       ) : test.ok ? (
                         <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                          <Wifi size={10} /> ${test.balance != null ? `$${Number(test.balance).toFixed(2)}` : 'OK'}
+                          <Wifi size={10} /> Online
                         </span>
                       ) : (
                         <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }} title={test.error}>
                           <WifiOff size={10} /> Failed
                         </span>
                       )}
+                    </td>
+                    <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {test?.ok && test.balance != null ? `$${Number(test.balance).toFixed(2)}` : '--'}
+                    </td>
+                    <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>
+                      {test?.ok && test.bonus != null ? `$${Number(test.bonus).toFixed(2)}` : '--'}
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>

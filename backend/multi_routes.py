@@ -124,7 +124,36 @@ async def api_test_login(account_id: str, user: dict = Depends(_verify_app_token
             brand_config=brand_config,
         )
         balance = await client.get_balance(session)
-        return {"ok": True, "balance": balance, "message": f"Login OK. Balance: ${balance:.2f}"}
+
+        # Get bonus balance if available
+        bonus = 0.0
+        try:
+            if platform == "betmakers":
+                # getUser also has bonus_account_balance
+                from platforms.betmakers import BALANCE_QUERY, _platform_headers
+                import json as _json
+                from curl_cffi.requests import AsyncSession as _AS
+                bc = brand_config
+                async with _AS(impersonate="chrome") as _s:
+                    _url = f"https://{bc['platform_host']}/query"
+                    _h = _platform_headers(session["access_token"], bc["cognito_client_id"], bc["referer"])
+                    _r = await _s.post(_url, json={"query": "query { getUser { bonus_account_balance } }"}, headers=_h, proxy=proxy_url, timeout=15)
+                    _d = _r.json()
+                    bonus = (_d.get("data", {}).get("getUser", {}).get("bonus_account_balance", 0) or 0) / 100.0
+            elif platform == "amused":
+                from curl_cffi.requests import AsyncSession as _AS
+                from platforms.amused import API_BASE, _api_get_headers
+                async with _AS(impersonate="chrome") as _s:
+                    _r = await _s.get(f"{API_BASE}/api/account/v1/user/wallet",
+                                      headers=_api_get_headers(session["access_token"], brand_config["org_id"]),
+                                      proxy=proxy_url, timeout=15)
+                    for w in _r.json().get("data", []):
+                        if w.get("accountType") == 2:
+                            bonus = float(w.get("balance", 0))
+        except Exception:
+            pass  # bonus is nice-to-have, don't fail
+
+        return {"ok": True, "balance": balance, "bonus": bonus, "message": f"Login OK. Balance: ${balance:.2f}, Bonus: ${bonus:.2f}"}
     except Exception as e:
         logger.error(f"Test login failed for {account_id}: {e}")
         raise HTTPException(400, f"Login failed: {str(e)}")

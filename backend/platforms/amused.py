@@ -414,7 +414,7 @@ class AmusedClient(PlatformClient):
         org_id = brand_config["org_id"]
         proxy_url = session.get("proxy_url")
 
-        url = f"{API_BASE}/api/account/v1/balance"
+        url = f"{API_BASE}/api/account/v1/user/wallet"
         headers = _api_get_headers(access_token, org_id)
 
         async with AsyncSession(impersonate="chrome") as s:
@@ -432,16 +432,11 @@ class AmusedClient(PlatformClient):
                 return 0.0
 
             data = resp.json()
-            # Try common balance field names
-            balance = (
-                data.get("cashBalance")
-                or data.get("CashBalance")
-                or data.get("balance")
-                or data.get("Balance")
-                or data.get("availableBalance")
-                or 0
-            )
-
-            if isinstance(balance, str):
-                balance = float(balance.replace("$", "").replace(",", ""))
-            return float(balance)
+            # Response: {code, data: [{accountType: 1, balance: 2.65}, {accountType: 2, balance: 0}]}
+            # accountType 1 = cash, accountType 2 = bonus
+            wallets = data.get("data", [])
+            if isinstance(wallets, list):
+                for w in wallets:
+                    if w.get("accountType") == 1:
+                        return float(w.get("balance", 0))
+            return 0.0
