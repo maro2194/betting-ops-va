@@ -99,8 +99,8 @@ query nextToJumpRaces($limit: Int, $meeting_type: [MeetingType!], $track_country
 """
 
 RACE_CARD_QUERY = """
-query meetingRaces($meetingId: ID!) {
-  meetingRaces(meetingId: $meetingId) {
+query raceCard($race_ids: [ID!]!) {
+  meetingRaces(race_ids: $race_ids) {
     id
     type
     track {
@@ -116,7 +116,6 @@ query meetingRaces($meetingId: ID!) {
       start_at
       distance
       fixed_odds_enabled
-      places_to_pay
       runners {
         id
         tab_no
@@ -301,8 +300,6 @@ class BetMakersClient(PlatformClient):
             "query": NEXT_TO_JUMP_QUERY,
             "variables": {
                 "limit": 200,
-                "meeting_type": ["THOROUGHBRED", "HARNESS", "GREYHOUND"],
-                "track_country_include": ["AU", "NZL"],
             },
         }
 
@@ -352,7 +349,7 @@ class BetMakersClient(PlatformClient):
         headers = _racing_headers(api_key, referer)
         payload = {
             "query": RACE_CARD_QUERY,
-            "variables": {"meetingId": race_info["meeting_id"]},
+            "variables": {"race_ids": [race_info["race_id"]]},
         }
 
         async with AsyncSession(impersonate="chrome") as s:
