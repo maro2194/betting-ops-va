@@ -6,7 +6,7 @@ import re
 import logging
 from typing import Optional
 
-from betting import get_matches, get_sgm_propositions, price_check
+from betting import get_matches, get_match_markets, get_sgm_propositions, price_check
 
 logger = logging.getLogger(__name__)
 
@@ -394,7 +394,7 @@ def _flatten_sgm_props(sgm_data):
 
 
 def _fetch_match_props(token, proxy_url, match, sport, competition):
-    """Fetch SGM props for a single match. Used by thread pool."""
+    """Fetch SGM props for a single match. Used by thread pool for SGM resolution."""
     try:
         sgm_id = match.get("match_name_url", match["match_id"])
         sgm_data = get_sgm_propositions(token, sgm_id, proxy_url, sport, competition)
@@ -402,43 +402,78 @@ def _fetch_match_props(token, proxy_url, match, sport, competition):
         match_name = match.get("match_name", "")
         for p in props:
             p["_match_name"] = match_name
-        logger.info(f"Fetched {len(props)} props for {match_name}")
+        logger.info(f"Fetched {len(props)} SGM props for {match_name}")
         return props
     except Exception as e:
-        logger.warning(f"Props fetch failed for {match.get('match_name', '?')}: {e}")
+        logger.warning(f"SGM props fetch failed for {match.get('match_name', '?')}: {e}")
         return []
 
 
-def _get_all_sport_props(token, proxy_url, sport, competition, force_refresh=False):
-    """Get all SGM propositions across all matches for a sport, with caching.
-    Uses thread pool to fetch matches in parallel for speed."""
+def _fetch_match_regular_props(token, proxy_url, match, sport, competition):
+    """Fetch regular match market props (tab-info-service). Has ALL player props, not just SGM subset.
+    Used for cross-game Multi resolution."""
+    try:
+        match_id = match.get("match_name_url", match["match_id"])
+        data = get_match_markets(token, match_id, proxy_url, sport, competition)
+        match_name = match.get("match_name", "")
+        props = []
+        markets = data.get("markets", [])
+        for mkt in markets:
+            bet_option = mkt.get("betOption", "")
+            for p in mkt.get("propositions", []):
+                if not p.get("isOpen"):
+                    continue
+                props.append({
+                    "propositionId": p.get("number", p.get("id")),
+                    "name": p.get("name", ""),
+                    "selectionName": p.get("name", ""),
+                    "marketName": bet_option,
+                    "returnWin": p.get("returnWin", 0),
+                    "line": "",
+                    "_match_name": match_name,
+                })
+        logger.info(f"Fetched {len(props)} regular props for {match_name}")
+        return props
+    except Exception as e:
+        logger.warning(f"Regular props fetch failed for {match.get('match_name', '?')}: {e}")
+        return []
+
+
+def _get_all_sport_props(token, proxy_url, sport, competition, force_refresh=False, use_regular=True):
+    """Get all propositions across all matches for a sport, with caching.
+    Uses thread pool to fetch matches in parallel for speed.
+
+    use_regular=True: fetch from regular match markets (all player props — for Multis)
+    use_regular=False: fetch from SGM endpoint only (for SGM resolution)
+    """
     from concurrent.futures import ThreadPoolExecutor
 
-    cache_key = f"{sport}:{competition}"
+    cache_key = f"{sport}:{competition}:{'reg' if use_regular else 'sgm'}"
     now = _time.time()
     if not force_refresh and cache_key in _sport_props_cache:
         cached = _sport_props_cache[cache_key]
         if now - cached["ts"] < _CACHE_TTL:
-            logger.info(f"Using cached props for {sport}/{competition} ({len(cached['props'])} props)")
+            logger.info(f"Using cached props for {cache_key} ({len(cached['props'])} props)")
             return cached["props"]
 
     if force_refresh:
-        logger.info(f"Force-refreshing props for {sport}/{competition}")
+        logger.info(f"Force-refreshing props for {cache_key}")
 
     matches = get_matches(token, proxy_url, sport, competition)
-    logger.info(f"Fetching props for {len(matches)} {competition} matches in parallel...")
+    fetch_fn = _fetch_match_regular_props if use_regular else _fetch_match_props
+    logger.info(f"Fetching {'regular' if use_regular else 'SGM'} props for {len(matches)} {competition} matches in parallel...")
 
     all_props = []
     with ThreadPoolExecutor(max_workers=6) as executor:
         futures = [
-            executor.submit(_fetch_match_props, token, proxy_url, m, sport, competition)
+            executor.submit(fetch_fn, token, proxy_url, m, sport, competition)
             for m in matches
         ]
         for f in futures:
             all_props.extend(f.result())
 
     _sport_props_cache[cache_key] = {"props": all_props, "ts": now}
-    logger.info(f"Cached {len(all_props)} total props for {sport}/{competition}")
+    logger.info(f"Cached {len(all_props)} props for {cache_key}")
     return all_props
 
 
@@ -487,8 +522,8 @@ def resolve_csb_bet(
             sgm_data = get_sgm_propositions(token, sgm_id, proxy_url, sport, competition)
             all_props = _flatten_sgm_props(sgm_data)
         else:
-            # Multi: scan all matches for the sport
-            all_props = _get_all_sport_props(token, proxy_url, sport, competition)
+            # Multi: scan all matches using regular markets (has ALL player props, not just SGM subset)
+            all_props = _get_all_sport_props(token, proxy_url, sport, competition, use_regular=True)
 
         if not all_props:
             result["error"] = "No propositions found"
@@ -519,7 +554,7 @@ def resolve_csb_bet(
             was_cached = cache_key in _sport_props_cache
             if was_cached:
                 logger.info(f"Leg '{failed_leg}' failed with cached props — retrying with fresh data")
-                all_props = _get_all_sport_props(token, proxy_url, sport, competition, force_refresh=True)
+                all_props = _get_all_sport_props(token, proxy_url, sport, competition, force_refresh=True, use_regular=True)
                 if all_props:
                     resolved_props = []
                     matched_odds = []
