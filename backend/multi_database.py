@@ -16,6 +16,7 @@ async def init_multi_db():
             CREATE TABLE IF NOT EXISTS bookie_accounts (
                 id TEXT PRIMARY KEY,
                 username TEXT NOT NULL,
+                label TEXT NOT NULL DEFAULT '',
                 initials TEXT NOT NULL,
                 owner_name TEXT NOT NULL,
                 platform TEXT NOT NULL,
@@ -34,6 +35,11 @@ async def init_multi_db():
             CREATE UNIQUE INDEX IF NOT EXISTS idx_bookie_initials_brand
                 ON bookie_accounts(username, initials, brand)
         """)
+        # Migration: add label column if missing (table may already exist)
+        try:
+            await conn.execute("ALTER TABLE bookie_accounts ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass  # column already exists
 
         # CSV batch tracking
         await conn.execute("""
@@ -102,10 +108,11 @@ async def upsert_bookie_account(data: dict) -> dict:
         await conn.execute(
             """
             INSERT INTO bookie_accounts
-                (id, username, initials, owner_name, platform, brand, email, password,
+                (id, username, label, initials, owner_name, platform, brand, email, password,
                  proxy_base, brand_config, account_number, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
             ON CONFLICT (id) DO UPDATE SET
+                label = EXCLUDED.label,
                 initials = EXCLUDED.initials,
                 owner_name = EXCLUDED.owner_name,
                 platform = EXCLUDED.platform,
@@ -120,6 +127,7 @@ async def upsert_bookie_account(data: dict) -> dict:
             """,
             aid,
             data["username"],
+            data.get("label", ""),
             data["initials"],
             data["owner_name"],
             data["platform"],

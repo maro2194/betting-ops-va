@@ -4,6 +4,7 @@ from typing import Optional
 
 
 class BookieAccountCreate(BaseModel):
+    label: str = ""
     initials: str
     owner_name: str
     platform: str  # betmakers | amused | tab
@@ -16,6 +17,7 @@ class BookieAccountCreate(BaseModel):
 
 
 class BookieAccountUpdate(BaseModel):
+    label: Optional[str] = None
     initials: Optional[str] = None
     owner_name: Optional[str] = None
     platform: Optional[str] = None

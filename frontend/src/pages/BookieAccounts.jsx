@@ -21,21 +21,23 @@ const PLATFORMS = [
 ];
 
 const BRANDS_BY_PLATFORM = {
-  betmakers: ['Betmakers'],
-  amused: ['Amused'],
+  betmakers: ['Crownbet', 'TerryBet', 'PonyBet', 'BetIt', 'DiamondBet', 'BetDash', 'SwiftBet'],
+  amused: ['BetDeluxe', 'BetNation', 'Surge', 'PulseBet', 'BigBet', 'YesBet', 'MightyBet'],
   tab: ['TAB'],
 };
 
 function AccountModal({ account, onClose, onSaved }) {
   const isEdit = !!account;
   const [form, setForm] = useState({
+    label: account?.label || '',
     initials: account?.initials || '',
     owner_name: account?.owner_name || '',
-    platform: account?.platform || 'tab',
-    brand: account?.brand || 'TAB',
+    platform: account?.platform || 'betmakers',
+    brand: account?.brand || 'Crownbet',
     email: account?.email || '',
     password: account?.password || '',
     proxy_base: account?.proxy_base || '',
+    account_number: account?.account_number || '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -96,19 +98,44 @@ function AccountModal({ account, onClose, onSaved }) {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <form onSubmit={handleSubmit} autoComplete="off" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Hidden fields to block browser autofill */}
+          <input type="text" name="prevent_autofill" id="prevent_autofill" style={{ display: 'none' }} tabIndex={-1} />
+          <input type="password" name="prevent_autofill_pw" id="prevent_autofill_pw" style={{ display: 'none' }} tabIndex={-1} />
+
+          <div>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Label</label>
+            <input
+              type="text"
+              value={form.label}
+              onChange={(e) => setForm({ ...form, label: e.target.value })}
+              className="t-input"
+              style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
+              required
+              placeholder="GEW-JV - BetDeluxe"
+              autoComplete="off"
+            />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, display: 'block' }}>
+              e.g. "GEW-JV - BetDeluxe" or "SML - Crownbet"
+            </span>
+          </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div>
               <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Initials</label>
               <input
                 type="text"
                 value={form.initials}
-                onChange={(e) => setForm({ ...form, initials: e.target.value })}
+                onChange={(e) => setForm({ ...form, initials: e.target.value.toUpperCase() })}
                 className="t-input"
                 style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
                 required
-                placeholder="JD"
+                placeholder="GEW"
+                autoComplete="off"
               />
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, display: 'block' }}>
+                Must match CSV "Initials" column
+              </span>
             </div>
             <div>
               <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Owner Name</label>
@@ -119,7 +146,8 @@ function AccountModal({ account, onClose, onSaved }) {
                 className="t-input"
                 style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
                 required
-                placeholder="John Doe"
+                placeholder="Gene Wiggins"
+                autoComplete="off"
               />
             </div>
           </div>
@@ -154,40 +182,61 @@ function AccountModal({ account, onClose, onSaved }) {
           </div>
 
           <div>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Email</label>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Login Email</label>
             <input
-              type="email"
+              type="text"
+              name="bookie_email"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
               className="t-input"
               style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
               required
               placeholder="user@example.com"
+              autoComplete="new-password"
             />
           </div>
 
           <div>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Password</label>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Login Password</label>
             <input
               type="password"
+              name="bookie_password"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
               className="t-input"
               style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
               required={!isEdit}
-              placeholder={isEdit ? 'Leave blank to keep current' : ''}
+              placeholder={isEdit ? 'Leave blank to keep current' : 'Bookie login password'}
+              autoComplete="new-password"
             />
           </div>
 
           <div>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Proxy Base</label>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Proxy Base <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
             <input
               type="text"
               value={form.proxy_base}
               onChange={(e) => setForm({ ...form, proxy_base: e.target.value })}
               className="t-input"
               style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
-              placeholder="http://user:pass@host:port"
+              placeholder="http://customer-marolete_86olc-cc-au"
+              autoComplete="off"
+            />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, display: 'block' }}>
+              Oxylabs base URL (sessid added automatically)
+            </span>
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Account Number <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
+            <input
+              type="text"
+              value={form.account_number}
+              onChange={(e) => setForm({ ...form, account_number: e.target.value })}
+              className="t-input"
+              style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
+              placeholder="Auto-detected on login (required for TAB)"
+              autoComplete="off"
             />
           </div>
 
@@ -299,10 +348,9 @@ export default function BookieAccounts() {
           <table className="data-table">
             <thead>
               <tr>
+                <th>Label</th>
                 <th>Initials</th>
-                <th>Owner</th>
-                <th>Platform</th>
-                <th>Brand</th>
+                <th>Platform / Brand</th>
                 <th>Email</th>
                 <th>Status</th>
                 <th style={{ textAlign: 'right' }}>Actions</th>
@@ -313,12 +361,12 @@ export default function BookieAccounts() {
                 const test = testResult[acc.id];
                 return (
                   <tr key={acc.id}>
-                    <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{acc.initials}</td>
-                    <td style={{ color: 'var(--text-secondary)' }}>{acc.owner_name}</td>
+                    <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{acc.label || `${acc.initials} - ${acc.brand}`}</td>
+                    <td style={{ color: 'var(--text-secondary)' }}>{acc.initials}</td>
                     <td>
-                      <span className="badge badge-accent">{acc.platform}</span>
+                      <span className="badge badge-accent" style={{ marginRight: 4 }}>{acc.platform}</span>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{acc.brand}</span>
                     </td>
-                    <td style={{ color: 'var(--text-secondary)' }}>{acc.brand}</td>
                     <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{acc.email}</td>
                     <td>
                       {test === undefined || test === null ? (
