@@ -8,6 +8,7 @@ import {
   FileSpreadsheet,
   Layers,
   Upload,
+  Users,
   Sun,
   Moon,
   LogOut,
@@ -31,6 +32,13 @@ const NAV_GROUPS = [
     items: [
       { to: '/json', label: 'JSON Upload', icon: Upload },
       { to: '/csv', label: 'CSV Paste', icon: FileSpreadsheet },
+      { to: '/alloc', label: 'Allocation', icon: Upload },
+    ],
+  },
+  {
+    label: 'Multi-Bookie',
+    items: [
+      { to: '/bookie-accounts', label: 'Bookie Accounts', icon: Users },
     ],
   },
   {

@@ -10,6 +10,8 @@ import History from './pages/History';
 import CsvPaste from './pages/CsvPaste';
 import MultiBuilder from './pages/MultiBuilder';
 import JsonUpload from './pages/JsonUpload';
+import AllocUpload from './pages/AllocUpload';
+import BookieAccounts from './pages/BookieAccounts';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -41,6 +43,8 @@ function AppRoutes() {
         <Route path="/csv" element={<CsvPaste />} />
         <Route path="/multi" element={<MultiBuilder />} />
         <Route path="/json" element={<JsonUpload />} />
+        <Route path="/alloc" element={<AllocUpload />} />
+        <Route path="/bookie-accounts" element={<BookieAccounts />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

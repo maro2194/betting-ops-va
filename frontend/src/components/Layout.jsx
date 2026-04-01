@@ -10,6 +10,8 @@ const PAGE_TITLES = {
   '/csv': 'CSV Paste',
   '/multi': 'Multi Builder',
   '/json': 'JSON Upload',
+  '/alloc': 'Allocation Upload',
+  '/bookie-accounts': 'Bookie Accounts',
 };
 
 export default function Layout() {
