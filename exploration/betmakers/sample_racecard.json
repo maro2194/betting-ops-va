@@ -1,0 +1,4014 @@
+{
+  "meetingRaces": [
+    {
+      "id": "dffc846c-a337-59b3-93d2-1fbcc3cc6bfa",
+      "type": "THOROUGHBRED",
+      "has_vision": false,
+      "meeting_pools": [
+        {
+          "product_key": "3344d1a5-83e9-4890-98cd-fb25375e632d:SUP",
+          "bet_type": "quaddie",
+          "legs": [
+            {
+              "leg_number": 1,
+              "race_id": "12d15962-f3ec-522a-89d5-5c6b40a42986",
+              "race_number": 7
+            },
+            {
+              "leg_number": 2,
+              "race_id": "98f80699-1c9b-5c08-9eb9-006d8d2a79ec",
+              "race_number": 8
+            },
+            {
+              "leg_number": 3,
+              "race_id": "44fe28ba-4969-52ed-9041-1006bc0ff17c",
+              "race_number": 9
+            },
+            {
+              "leg_number": 4,
+              "race_id": "52da612e-c55c-5035-ac61-5f5727e7343f",
+              "race_number": 10
+            }
+          ]
+        },
+        {
+          "product_key": "3344d1a5-83e9-4890-98cd-fb25375e632d:SUP",
+          "bet_type": "dailyDouble",
+          "legs": [
+            {
+              "leg_number": 1,
+              "race_id": "98f80699-1c9b-5c08-9eb9-006d8d2a79ec",
+              "race_number": 8
+            },
+            {
+              "leg_number": 2,
+              "race_id": "52da612e-c55c-5035-ac61-5f5727e7343f",
+              "race_number": 10
+            }
+          ]
+        }
+      ],
+      "track": {
+        "name": "Pukekohe",
+        "state": "NZL",
+        "country": "NZL",
+        "meeting_grade": "PROVINCIAL"
+      },
+      "races": [
+        {
+          "id": "98590309-340d-5b5f-9fba-0a064a47a5b8",
+          "name": "Sistema Mdn",
+          "number": 1,
+          "status": "OPEN",
+          "start_at": "2026-03-31T23:05:00Z",
+          "distance": 1400,
+          "weather": "CLOUDY",
+          "track_condition": "HEAVY8",
+          "fixed_odds_enabled": true,
+          "sky_channel": 0,
+          "race_comments": [
+            {
+              "comment": "MOONBEAMS (15) Nice run when 3rd last run at Matamata. Will be pushing for a forward position early. Interesting to see the blinkers go on for the first time. Right in this. HOMAI TAPU (6) 3yo by Almanzor first starter for Grant Cooksley & Bruce Wallace. Watch the market. SUPREMELY (12) Looked outclassed when 6th last time at Matamata but facing a rise in trip. Ken Kelso & Bev Kelso has been training plenty of winners recently. Can take this out. CENTURIAL (4) Crept into 5th last time at this track and has drawn the rails. Will be hitting the line strongly. Will be around the mark at odds.",
+              "source": "ILB"
+            },
+            {
+              "comment": "MOONBEAMS (15) Nice run when 3rd last run at Matamata. Will be pushing for a forward position early. Interesting to see the blinkers go on for the first time. Right in this. HOMAI TAPU (6) 3yo by Almanzor first starter for Grant Cooksley & Bruce Wallace. Watch the market. SUPREMELY (12) Looked outclassed when 6th last time at Matamata but facing a rise in trip. Ken Kelso & Bev Kelso has been training plenty of winners recently. Can take this out. CENTURIAL (4) Crept into 5th last time at this track and has drawn the rails. Will be hitting the line strongly. Will be around the mark at odds.",
+              "source": "IRD"
+            },
+            {
+              "comment": "MOONBEAMS nice run when 3rd last time at Matamata. Should jump out and bowl along. Interesting to see the blinkers go on for the first time. Worth strong consideration. Homai Tapu 3yo first starter by Almanzor for Grant Cooksley & Bruce Wallace. Betting is the best guide. Supremely was well beaten when 6th last start at Matamata but going up in distance. Ken Kelso & Bev Kelso has been training plenty of winners recently. Goes close.",
+              "source": "RSIS"
+            }
+          ],
+          "runner_selections": [
+            {
+              "selections": "15,6,12,4",
+              "source": "ILB"
+            },
+            {
+              "selections": "15,6,12,4",
+              "source": "IRD"
+            },
+            {
+              "selections": "15,6,12",
+              "source": "RSIS"
+            }
+          ],
+          "results": [],
+          "result_product_price": [],
+          "race_products": [
+            {
+              "keyword": "FUT",
+              "name": "Racing Futures",
+              "is_external": false,
+              "is_fixed": true,
+              "bet_types": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "keyword": "FUT"
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "keyword": "FUT"
+                }
+              ],
+              "available": true
+            },
+            {
+              "keyword": "SUP",
+              "name": "SuperTab",
+              "is_external": false,
+              "is_fixed": false,
+              "bet_types": [
+                {
+                  "bet_type": "quinella",
+                  "keyword": "SUP"
+                },
+                {
+                  "bet_type": "exacta",
+                  "keyword": "SUP"
+                },
+                {
+                  "bet_type": "trifecta",
+                  "keyword": "SUP"
+                },
+                {
+                  "bet_type": "firstFour",
+                  "keyword": "SUP"
+                }
+              ],
+              "available": true
+            },
+            {
+              "keyword": "MID",
+              "name": "Mid Tote",
+              "is_external": false,
+              "is_fixed": false,
+              "bet_types": [
+                {
+                  "bet_type": "win",
+                  "keyword": "MID"
+                },
+                {
+                  "bet_type": "place",
+                  "keyword": "MID"
+                }
+              ],
+              "available": true
+            },
+            {
+              "keyword": "TBF",
+              "name": "TerryBet Fixed Odds",
+              "is_external": false,
+              "is_fixed": true,
+              "bet_types": [
+                {
+                  "bet_type": "win",
+                  "keyword": "TBF"
+                },
+                {
+                  "bet_type": "place",
+                  "keyword": "TBF"
+                }
+              ],
+              "available": true
+            },
+            {
+              "keyword": "SP",
+              "name": "Bookmaker Fixed SP",
+              "is_external": false,
+              "is_fixed": false,
+              "bet_types": [
+                {
+                  "bet_type": "win",
+                  "keyword": "SP"
+                },
+                {
+                  "bet_type": "place",
+                  "keyword": "SP"
+                }
+              ],
+              "available": true
+            },
+            {
+              "keyword": "SRM",
+              "name": "Same Race Multi",
+              "is_external": false,
+              "is_fixed": true,
+              "bet_types": [
+                {
+                  "bet_type": "srm",
+                  "keyword": "SRM"
+                }
+              ],
+              "available": true
+            }
+          ],
+          "deductions": [
+            {
+              "runner_id": "a9e239fe-c0fc-5fa1-bae5-3b7653963af6",
+              "win_deduction": 0,
+              "place_deduction": 0
+            },
+            {
+              "runner_id": "b7cba596-8070-5448-91a1-82d2fd283147",
+              "win_deduction": 0,
+              "place_deduction": 0
+            },
+            {
+              "runner_id": "9e4e8bc3-3b23-558a-8687-80d89143512d",
+              "win_deduction": 0,
+              "place_deduction": 0
+            },
+            {
+              "runner_id": "f0b535b4-e004-5d4b-aef5-b13798d90862",
+              "win_deduction": 0,
+              "place_deduction": 0
+            },
+            {
+              "runner_id": "1d761d53-afef-59c3-ba9a-8335b160f335",
+              "win_deduction": 0,
+              "place_deduction": 0
+            },
+            {
+              "runner_id": "728d7c91-cf30-5de0-a9ae-72c043ceeadd",
+              "win_deduction": 0.09,
+              "place_deduction": 0.09
+            },
+            {
+              "runner_id": "b8d077a6-5b10-5d54-a9d7-7db8f0a46858",
+              "win_deduction": 0,
+              "place_deduction": 0
+            },
+            {
+              "runner_id": "690584aa-98d1-533f-a5c5-0f2ad860b404",
+              "win_deduction": 0.02,
+              "place_deduction": 0.02
+            },
+            {
+              "runner_id": "eb385797-b5f7-51ab-b7b3-d4f39f365337",
+              "win_deduction": 0.05,
+              "place_deduction": 0.05
+            }
+          ],
+          "runners": [
+            {
+              "id": "b1cd4fd2-5bc0-5c53-bed4-bf6656f832a5",
+              "tab_no": 7,
+              "name": "King Patch",
+              "barrier": 3,
+              "weight_total": 58,
+              "jockey": "A Lawson-Carroll",
+              "trainer": "S L Crawford",
+              "status": "STARTER",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_7_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "OFFPACE",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "23.00",
+                  "fractional_price": {
+                    "numerator": 22,
+                    "denominator": 1
+                  },
+                  "price": 23,
+                  "srm_price": "{\"winPrice\": 23.00, \"top2Price\": 5.00, \"top3Price\": 2.70, \n\"top4Price\": 1.95, \"runnerNumber\": 7}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 22,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 4,
+                      "denominator": 1
+                    },
+                    "top_3_price": {
+                      "numerator": 17,
+                      "denominator": 10
+                    },
+                    "top_4_price": {
+                      "numerator": 20,
+                      "denominator": 21
+                    }
+                  }
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "4.20",
+                  "fractional_price": {
+                    "numerator": 16,
+                    "denominator": 5
+                  },
+                  "price": 4.199999809265137,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "23.00",
+                  "fractional_price": {
+                    "numerator": 22,
+                    "denominator": 1
+                  },
+                  "price": 23,
+                  "srm_price": "{\"winPrice\": 23.00, \"top2Price\": 5.00, \"top3Price\": 2.70, \n\"top4Price\": 1.95, \"runnerNumber\": 7}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 22,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 4,
+                      "denominator": 1
+                    },
+                    "top_3_price": {
+                      "numerator": 17,
+                      "denominator": 10
+                    },
+                    "top_4_price": {
+                      "numerator": 20,
+                      "denominator": 21
+                    }
+                  }
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "4.20",
+                  "fractional_price": {
+                    "numerator": 16,
+                    "denominator": 5
+                  },
+                  "price": 4.199999809265137,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 26,
+                  "display_price": "26.00",
+                  "fractional_price": {
+                    "numerator": 25,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 21,
+                  "display_price": "21.00",
+                  "fractional_price": {
+                    "numerator": 20,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_2": {
+                  "price": 21,
+                  "display_price": "21.00",
+                  "fractional_price": {
+                    "numerator": 20,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_3": {
+                  "price": 23,
+                  "display_price": "23.00",
+                  "fractional_price": {
+                    "numerator": 22,
+                    "denominator": 1
+                  }
+                }
+              },
+              "scratched_time": null,
+              "runner_row": null,
+              "apprentice_indicator": true,
+              "allowance_weight": 1,
+              "runner_comments": [
+                {
+                  "comment": "At $11.00 folded up in the straight when 8th last time at Waverley but was on debut last time. Will need its best to find a place.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "At $11.00 folded up in the straight when 8th last time at Waverley but was on debut last time. Will need its best to find a place.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Started 10/1 and gave away some ground when 8th last time at Waverley but having second career run.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 77
+                }
+              ],
+              "speed_map_position_value": 5.5,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 6,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 11,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 5.5,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 77,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": -2,
+                    "percentage": 40
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "lastRun",
+                    "category": "Last Run",
+                    "name": "Gave ground LS",
+                    "sentiment": "Negative",
+                    "comment": "Faded towards the finish last time out",
+                    "tab_number": 7,
+                    "display_order": 110
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "lastRun",
+                    "category": "Last Run",
+                    "name": "Gave ground LS",
+                    "sentiment": "Negative",
+                    "comment": "Faded towards the finish last time out",
+                    "tab_number": 7,
+                    "display_order": 110
+                  }
+                ]
+              }
+            },
+            {
+              "id": "458811d5-8789-50eb-af88-ed41d1a4d2f2",
+              "tab_no": 14,
+              "name": "Hey Burg",
+              "barrier": 16,
+              "weight_total": 58.5,
+              "jockey": "Courtney Barnes",
+              "trainer": "B K Pinny",
+              "status": "STARTER",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_14_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "BACKMARKER",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "41.00",
+                  "fractional_price": {
+                    "numerator": 40,
+                    "denominator": 1
+                  },
+                  "price": 41,
+                  "srm_price": "{\"winPrice\": 41.00, \"top2Price\": 6.50, \"top3Price\": 3.30, \n\"top4Price\": 2.25, \"runnerNumber\": 14}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 40,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 11,
+                      "denominator": 2
+                    },
+                    "top_3_price": {
+                      "numerator": 23,
+                      "denominator": 10
+                    },
+                    "top_4_price": {
+                      "numerator": 5,
+                      "denominator": 4
+                    }
+                  }
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "5.50",
+                  "fractional_price": {
+                    "numerator": 9,
+                    "denominator": 2
+                  },
+                  "price": 5.5,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "41.00",
+                  "fractional_price": {
+                    "numerator": 40,
+                    "denominator": 1
+                  },
+                  "price": 41,
+                  "srm_price": "{\"winPrice\": 41.00, \"top2Price\": 6.50, \"top3Price\": 3.30, \n\"top4Price\": 2.25, \"runnerNumber\": 14}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 40,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 11,
+                      "denominator": 2
+                    },
+                    "top_3_price": {
+                      "numerator": 23,
+                      "denominator": 10
+                    },
+                    "top_4_price": {
+                      "numerator": 5,
+                      "denominator": 4
+                    }
+                  }
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "5.50",
+                  "fractional_price": {
+                    "numerator": 9,
+                    "denominator": 2
+                  },
+                  "price": 5.5,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 51,
+                  "display_price": "51.00",
+                  "fractional_price": {
+                    "numerator": 50,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 41,
+                  "display_price": "41.00",
+                  "fractional_price": {
+                    "numerator": 40,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_2": null,
+                "fluctuation_3": null
+              },
+              "scratched_time": null,
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "Was $41.00 and ran 6th last start at Te Aroha. Expected to settle towards the rear. Could feature here.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Was $41.00 and ran 6th last start at Te Aroha. Expected to settle towards the rear. Could feature here.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Started 40/1 and came in 6th last run at Te Aroha. Prefers to settle towards the tail. Can't leave out of your calculations.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 81
+                }
+              ],
+              "speed_map_position_value": 10,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 11,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 6,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 10,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 81,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 5,
+                    "percentage": 100
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "closingSpeed",
+                    "category": "Closing Speed",
+                    "name": "Turn Of Foot",
+                    "sentiment": "Positive",
+                    "comment": "Had the fastest L200m sectionals last start",
+                    "tab_number": 14,
+                    "display_order": 5
+                  },
+                  {
+                    "key": "jockeyProfitable",
+                    "category": "Jockey Profitable",
+                    "name": "Jockey ROI",
+                    "sentiment": "Positive",
+                    "comment": "Rider outperforming Career Avg POT by 64% in Last 100 Rides",
+                    "tab_number": 14,
+                    "display_order": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Early Sectionals",
+                    "sentiment": "Negative",
+                    "comment": "Recent sectional data suggests slow early pace",
+                    "tab_number": 14,
+                    "display_order": 100
+                  },
+                  {
+                    "key": "barrier",
+                    "category": "Barrier",
+                    "name": "Awkward Draw",
+                    "sentiment": "Negative",
+                    "comment": "May find this draw awkward",
+                    "tab_number": 14,
+                    "display_order": 120
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "closingSpeed",
+                    "category": "Closing Speed",
+                    "name": "Turn Of Foot",
+                    "sentiment": "Positive",
+                    "comment": "Had the fastest L200m sectionals last start",
+                    "tab_number": 14,
+                    "display_order": 5
+                  },
+                  {
+                    "key": "jockeyProfitable",
+                    "category": "Jockey Profitable",
+                    "name": "Jockey ROI",
+                    "sentiment": "Positive",
+                    "comment": "Rider outperforming Career Avg POT by 64% in Last 100 Rides",
+                    "tab_number": 14,
+                    "display_order": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Early Sectionals",
+                    "sentiment": "Negative",
+                    "comment": "Recent sectional data suggests slow early pace",
+                    "tab_number": 14,
+                    "display_order": 100
+                  },
+                  {
+                    "key": "barrier",
+                    "category": "Barrier",
+                    "name": "Awkward Draw",
+                    "sentiment": "Negative",
+                    "comment": "May find this draw awkward",
+                    "tab_number": 14,
+                    "display_order": 120
+                  }
+                ]
+              }
+            },
+            {
+              "id": "728d7c91-cf30-5de0-a9ae-72c043ceeadd",
+              "tab_no": 9,
+              "name": "Letswishuponastar",
+              "barrier": 8,
+              "weight_total": 56.5,
+              "jockey": "Unknown",
+              "trainer": "P W Lock",
+              "status": "SCRATCHED",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_9_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "MIDFIELD",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 7.5,
+                  "display_price": "7.50",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 2
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 7.5,
+                  "display_price": "7.50",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 2
+                  }
+                },
+                "fluctuation_2": null,
+                "fluctuation_3": null
+              },
+              "scratched_time": "2026-03-31T18:00:38Z",
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "Close up last time at this track.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Close up last time at this track.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Narrowly denied a win last start at the track.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 88
+                }
+              ],
+              "speed_map_position_value": 6.1,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 1,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 14,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 6.1,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 88,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 1,
+                    "percentage": 80
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "venue",
+                    "category": "Venue",
+                    "name": "Track Exp",
+                    "sentiment": "Positive",
+                    "comment": "Knows this track well",
+                    "tab_number": 9,
+                    "display_order": 170
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "venue",
+                    "category": "Venue",
+                    "name": "Track Exp",
+                    "sentiment": "Positive",
+                    "comment": "Knows this track well",
+                    "tab_number": 9,
+                    "display_order": 170
+                  }
+                ]
+              }
+            },
+            {
+              "id": "9e4e8bc3-3b23-558a-8687-80d89143512d",
+              "tab_no": 10,
+              "name": "Pinky Pie",
+              "barrier": 18,
+              "weight_total": 56.5,
+              "jockey": "Jack Taplin",
+              "trainer": "S B Marsh",
+              "status": "SCRATCHED",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_10_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "LEADER",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": null,
+              "scratched_time": "2026-03-30T22:40:02Z",
+              "runner_row": null,
+              "apprentice_indicator": true,
+              "allowance_weight": 3,
+              "runner_comments": [
+                {
+                  "comment": "Started $13.00 and finished 7th last start at this track. Jack Taplin takes a large claim.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Started $13.00 and finished 7th last start at this track. Jack Taplin takes a large claim.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Started 12/1 and ran 7th last start here. Large claim helps.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 96
+                }
+              ],
+              "speed_map_position_value": 1,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 11,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 10,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 1,
+                    "percentage": 100
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 96,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 0,
+                    "percentage": 60
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "jockeyProfitable",
+                    "category": "Jockey Profitable",
+                    "name": "Jockey ROI",
+                    "sentiment": "Positive",
+                    "comment": "Rider outperforming Career Avg POT by 48% in Last 100 Rides",
+                    "tab_number": 10,
+                    "display_order": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Early Splits",
+                    "sentiment": "Positive",
+                    "comment": "Has early speed. An advantage on this circuit",
+                    "tab_number": 10,
+                    "display_order": 100
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "jockeyProfitable",
+                    "category": "Jockey Profitable",
+                    "name": "Jockey ROI",
+                    "sentiment": "Positive",
+                    "comment": "Rider outperforming Career Avg POT by 48% in Last 100 Rides",
+                    "tab_number": 10,
+                    "display_order": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Early Splits",
+                    "sentiment": "Positive",
+                    "comment": "Has early speed. An advantage on this circuit",
+                    "tab_number": 10,
+                    "display_order": 100
+                  }
+                ]
+              }
+            },
+            {
+              "id": "dba8d7c8-6fb1-55aa-86c5-9fcc4f75b6cd",
+              "tab_no": 6,
+              "name": "Homai Tapu",
+              "barrier": 15,
+              "weight_total": 58,
+              "jockey": "Sam Mcnab",
+              "trainer": "B Wallace & G Cooksley",
+              "status": "STARTER",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_6_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "FIRSTSTART",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "23.00",
+                  "fractional_price": {
+                    "numerator": 22,
+                    "denominator": 1
+                  },
+                  "price": 23,
+                  "srm_price": "{\"winPrice\": 23.00, \"top2Price\": 5.00, \"top3Price\": 2.70, \n\"top4Price\": 1.95, \"runnerNumber\": 6}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 22,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 4,
+                      "denominator": 1
+                    },
+                    "top_3_price": {
+                      "numerator": 17,
+                      "denominator": 10
+                    },
+                    "top_4_price": {
+                      "numerator": 20,
+                      "denominator": 21
+                    }
+                  }
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "4.20",
+                  "fractional_price": {
+                    "numerator": 16,
+                    "denominator": 5
+                  },
+                  "price": 4.199999809265137,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "23.00",
+                  "fractional_price": {
+                    "numerator": 22,
+                    "denominator": 1
+                  },
+                  "price": 23,
+                  "srm_price": "{\"winPrice\": 23.00, \"top2Price\": 5.00, \"top3Price\": 2.70, \n\"top4Price\": 1.95, \"runnerNumber\": 6}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 22,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 4,
+                      "denominator": 1
+                    },
+                    "top_3_price": {
+                      "numerator": 17,
+                      "denominator": 10
+                    },
+                    "top_4_price": {
+                      "numerator": 20,
+                      "denominator": 21
+                    }
+                  }
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "4.20",
+                  "fractional_price": {
+                    "numerator": 16,
+                    "denominator": 5
+                  },
+                  "price": 4.199999809265137,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 26,
+                  "display_price": "26.00",
+                  "fractional_price": {
+                    "numerator": 25,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 21,
+                  "display_price": "21.00",
+                  "fractional_price": {
+                    "numerator": 20,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_2": {
+                  "price": 23,
+                  "display_price": "23.00",
+                  "fractional_price": {
+                    "numerator": 22,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_3": null
+              },
+              "scratched_time": null,
+              "runner_row": null,
+              "apprentice_indicator": true,
+              "allowance_weight": 2,
+              "runner_comments": [
+                {
+                  "comment": "Almanzor 3yo having first start for trainer Grant Cooksley & Bruce Wallace. Watch the market moves.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Almanzor 3yo having first start for trainer Grant Cooksley & Bruce Wallace. Watch the market moves.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "3yo by Almanzor having first start for Grant Cooksley & Bruce Wallace. Respect the betting.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 98
+                }
+              ],
+              "speed_map_position_value": null,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 16,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 5,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 98,
+                    "percentage": 100
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 0,
+                    "percentage": 50
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "barrier",
+                    "category": "Barrier",
+                    "name": "Awkward Draw",
+                    "sentiment": "Negative",
+                    "comment": "Would have liked a better draw",
+                    "tab_number": 6,
+                    "display_order": 120
+                  },
+                  {
+                    "key": "experience",
+                    "category": "Experience",
+                    "name": "First Starter",
+                    "sentiment": "Positive",
+                    "comment": "Not raced previously",
+                    "tab_number": 6,
+                    "display_order": 210
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "barrier",
+                    "category": "Barrier",
+                    "name": "Awkward Draw",
+                    "sentiment": "Negative",
+                    "comment": "Would have liked a better draw",
+                    "tab_number": 6,
+                    "display_order": 120
+                  },
+                  {
+                    "key": "experience",
+                    "category": "Experience",
+                    "name": "First Starter",
+                    "sentiment": "Positive",
+                    "comment": "Not raced previously",
+                    "tab_number": 6,
+                    "display_order": 210
+                  }
+                ]
+              }
+            },
+            {
+              "id": "f0b535b4-e004-5d4b-aef5-b13798d90862",
+              "tab_no": 18,
+              "name": "Early Divine",
+              "barrier": 5,
+              "weight_total": 58,
+              "jockey": "Unknown",
+              "trainer": "P A Stevens",
+              "status": "SCRATCHED",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_18_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "OFFPACE",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 51,
+                  "display_price": "51.00",
+                  "fractional_price": {
+                    "numerator": 50,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 41,
+                  "display_price": "41.00",
+                  "fractional_price": {
+                    "numerator": 40,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_2": null,
+                "fluctuation_3": null
+              },
+              "scratched_time": "2026-03-31T18:00:37Z",
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "Unimpressive effort when 11th last time at this venue.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Unimpressive effort when 11th last time at this venue.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Underperformed when 11th last run at the track.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 70
+                }
+              ],
+              "speed_map_position_value": 4.4,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 1,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 6,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 4.4,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 70,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 1,
+                    "percentage": 80
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "trainer",
+                    "category": "Trainer",
+                    "name": "Trainer SR",
+                    "sentiment": "Negative",
+                    "comment": "P A Stevens striking at just 6%",
+                    "tab_number": 18,
+                    "display_order": 30
+                  },
+                  {
+                    "key": "trainerForm",
+                    "category": "Trainer Form",
+                    "name": "Trainer A2E",
+                    "sentiment": "Negative",
+                    "comment": "Stable currently underperforming market expectation",
+                    "tab_number": 18,
+                    "display_order": 60
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "trainer",
+                    "category": "Trainer",
+                    "name": "Trainer SR",
+                    "sentiment": "Negative",
+                    "comment": "P A Stevens striking at just 6%",
+                    "tab_number": 18,
+                    "display_order": 30
+                  },
+                  {
+                    "key": "trainerForm",
+                    "category": "Trainer Form",
+                    "name": "Trainer A2E",
+                    "sentiment": "Negative",
+                    "comment": "Stable currently underperforming market expectation",
+                    "tab_number": 18,
+                    "display_order": 60
+                  }
+                ]
+              }
+            },
+            {
+              "id": "ef2e72f7-6295-51b6-b94e-1bbb64f5cf89",
+              "tab_no": 1,
+              "name": "Starclan",
+              "barrier": 4,
+              "weight_total": 58.5,
+              "jockey": "Joe Doyle",
+              "trainer": "C R Mccarroll",
+              "status": "STARTER",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_1_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "OFFMIDFIELD",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "3.50",
+                  "fractional_price": {
+                    "numerator": 5,
+                    "denominator": 2
+                  },
+                  "price": 3.5,
+                  "srm_price": "{\"winPrice\": 3.50, \"top2Price\": 2.30, \"top3Price\": 1.75, \n\"top4Price\": 1.38, \"runnerNumber\": 1}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 5,
+                      "denominator": 2
+                    },
+                    "top_2_price": {
+                      "numerator": 13,
+                      "denominator": 10
+                    },
+                    "top_3_price": {
+                      "numerator": 3,
+                      "denominator": 4
+                    },
+                    "top_4_price": {
+                      "numerator": 19,
+                      "denominator": 50
+                    }
+                  }
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "1.36",
+                  "fractional_price": {
+                    "numerator": 4,
+                    "denominator": 11
+                  },
+                  "price": 1.3600000143051147,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "3.50",
+                  "fractional_price": {
+                    "numerator": 5,
+                    "denominator": 2
+                  },
+                  "price": 3.5,
+                  "srm_price": "{\"winPrice\": 3.50, \"top2Price\": 2.30, \"top3Price\": 1.75, \n\"top4Price\": 1.38, \"runnerNumber\": 1}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 5,
+                      "denominator": 2
+                    },
+                    "top_2_price": {
+                      "numerator": 13,
+                      "denominator": 10
+                    },
+                    "top_3_price": {
+                      "numerator": 3,
+                      "denominator": 4
+                    },
+                    "top_4_price": {
+                      "numerator": 19,
+                      "denominator": 50
+                    }
+                  }
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "1.36",
+                  "fractional_price": {
+                    "numerator": 4,
+                    "denominator": 11
+                  },
+                  "price": 1.3600000143051147,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 3.9000000953674316,
+                  "display_price": "3.90",
+                  "fractional_price": {
+                    "numerator": 29,
+                    "denominator": 10
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 3.5999999046325684,
+                  "display_price": "3.60",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 5
+                  }
+                },
+                "fluctuation_2": {
+                  "price": 3.5999999046325684,
+                  "display_price": "3.60",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 5
+                  }
+                },
+                "fluctuation_3": {
+                  "price": 3.5,
+                  "display_price": "3.50",
+                  "fractional_price": {
+                    "numerator": 5,
+                    "denominator": 2
+                  }
+                }
+              },
+              "scratched_time": null,
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "Overtook some late when 4th last run at Te Rapa and up against a less competitive field. Expected to be flashing home. Good chance in this.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Overtook some late when 4th last run at Te Rapa and up against a less competitive field. Expected to be flashing home. Good chance in this.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Hit the line well when 4th last time at Te Rapa and drops back to a suitable grade. Should get going late. Good chance in this.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 85
+                }
+              ],
+              "speed_map_position_value": 8.9,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 8,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 19,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 8.9,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 85,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 2,
+                    "percentage": 80
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Early Sectionals",
+                    "sentiment": "Negative",
+                    "comment": "Recent sectional data suggests slow early pace",
+                    "tab_number": 1,
+                    "display_order": 100
+                  },
+                  {
+                    "key": "grade",
+                    "category": "Grade",
+                    "name": "Well Placed",
+                    "sentiment": "Positive",
+                    "comment": "Drops back to a suitable class",
+                    "tab_number": 1,
+                    "display_order": 240
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Early Sectionals",
+                    "sentiment": "Negative",
+                    "comment": "Recent sectional data suggests slow early pace",
+                    "tab_number": 1,
+                    "display_order": 100
+                  },
+                  {
+                    "key": "grade",
+                    "category": "Grade",
+                    "name": "Well Placed",
+                    "sentiment": "Positive",
+                    "comment": "Drops back to a suitable class",
+                    "tab_number": 1,
+                    "display_order": 240
+                  }
+                ]
+              }
+            },
+            {
+              "id": "eb385797-b5f7-51ab-b7b3-d4f39f365337",
+              "tab_no": 2,
+              "name": "Force Of Law",
+              "barrier": 2,
+              "weight_total": 58.5,
+              "jockey": "George Rooke",
+              "trainer": "Ms P Gerard",
+              "status": "SCRATCHED",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_2_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "MIDFIELD",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 13,
+                  "display_price": "13.00",
+                  "fractional_price": {
+                    "numerator": 12,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 11,
+                  "display_price": "11.00",
+                  "fractional_price": {
+                    "numerator": 10,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_2": null,
+                "fluctuation_3": null
+              },
+              "scratched_time": "2026-03-31T19:00:46Z",
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "Picked up late ground when 3rd last run at Hawera and can find a nice position from the draw.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Picked up late ground when 3rd last run at Hawera and can find a nice position from the draw.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Produced an eye catching run when 3rd last start at Hawera and has a positive stall.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 94
+                }
+              ],
+              "speed_map_position_value": 7.8,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 9,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 2,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 7.8,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 94,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 1,
+                    "percentage": 80
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "trainer",
+                    "category": "Trainer",
+                    "name": "Trainer Form",
+                    "sentiment": "Negative",
+                    "comment": "Trainer under performing market expectations",
+                    "tab_number": 2,
+                    "display_order": 30
+                  },
+                  {
+                    "key": "trainerForm",
+                    "category": "Trainer Form",
+                    "name": "Trainer A2E",
+                    "sentiment": "Negative",
+                    "comment": "Stable currently underperforming market expectation",
+                    "tab_number": 2,
+                    "display_order": 60
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "trainer",
+                    "category": "Trainer",
+                    "name": "Trainer Form",
+                    "sentiment": "Negative",
+                    "comment": "Trainer under performing market expectations",
+                    "tab_number": 2,
+                    "display_order": 30
+                  },
+                  {
+                    "key": "trainerForm",
+                    "category": "Trainer Form",
+                    "name": "Trainer A2E",
+                    "sentiment": "Negative",
+                    "comment": "Stable currently underperforming market expectation",
+                    "tab_number": 2,
+                    "display_order": 60
+                  }
+                ]
+              }
+            },
+            {
+              "id": "60bf30b5-fa24-5018-b338-45e1e8c08f61",
+              "tab_no": 12,
+              "name": "Supremely",
+              "barrier": 14,
+              "weight_total": 56,
+              "jockey": "Masahiro Hashizume",
+              "trainer": "K & B Kelso",
+              "status": "STARTER",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_12_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "OFFPACE",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "6.00",
+                  "fractional_price": {
+                    "numerator": 5,
+                    "denominator": 1
+                  },
+                  "price": 6,
+                  "srm_price": "{\"winPrice\": 6.00, \"top2Price\": 3.00, \"top3Price\": 2.05, \n\"top4Price\": 1.55, \"runnerNumber\": 12}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 5,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 2,
+                      "denominator": 1
+                    },
+                    "top_3_price": {
+                      "numerator": 21,
+                      "denominator": 20
+                    },
+                    "top_4_price": {
+                      "numerator": 11,
+                      "denominator": 20
+                    }
+                  }
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "2.00",
+                  "fractional_price": {
+                    "numerator": 1,
+                    "denominator": 1
+                  },
+                  "price": 2,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "6.00",
+                  "fractional_price": {
+                    "numerator": 5,
+                    "denominator": 1
+                  },
+                  "price": 6,
+                  "srm_price": "{\"winPrice\": 6.00, \"top2Price\": 3.00, \"top3Price\": 2.05, \n\"top4Price\": 1.55, \"runnerNumber\": 12}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 5,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 2,
+                      "denominator": 1
+                    },
+                    "top_3_price": {
+                      "numerator": 21,
+                      "denominator": 20
+                    },
+                    "top_4_price": {
+                      "numerator": 11,
+                      "denominator": 20
+                    }
+                  }
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "2.00",
+                  "fractional_price": {
+                    "numerator": 1,
+                    "denominator": 1
+                  },
+                  "price": 2,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 7,
+                  "display_price": "7.00",
+                  "fractional_price": {
+                    "numerator": 6,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 6,
+                  "display_price": "6.00",
+                  "fractional_price": {
+                    "numerator": 5,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_2": null,
+                "fluctuation_3": null
+              },
+              "scratched_time": null,
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "At $4.33 was well beaten when 6th last time at Matamata but racing over extra ground. Ken Kelso & Bev Kelso stable are in good form of late. Must be considered here.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "At $4.33 was well beaten when 6th last time at Matamata but racing over extra ground. Ken Kelso & Bev Kelso stable are in good form of late. Must be considered here.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Started 10/3 and couldn't stay in touch when 6th last start at Matamata but facing a rise in trip. Ken Kelso & Bev Kelso stable are on a hot streak. Forward showing expected.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 95
+                }
+              ],
+              "speed_map_position_value": 5.5,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 10,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 20,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 5.5,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 95,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": -1,
+                    "percentage": 40
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "barrier",
+                    "category": "Barrier",
+                    "name": "Awkward Draw",
+                    "sentiment": "Negative",
+                    "comment": "Would have liked a better draw",
+                    "tab_number": 12,
+                    "display_order": 120
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "barrier",
+                    "category": "Barrier",
+                    "name": "Awkward Draw",
+                    "sentiment": "Negative",
+                    "comment": "Would have liked a better draw",
+                    "tab_number": 12,
+                    "display_order": 120
+                  }
+                ]
+              }
+            },
+            {
+              "id": "743f43f9-30ed-5ac7-aff2-7ea161108a29",
+              "tab_no": 5,
+              "name": "Lucky Dice",
+              "barrier": 11,
+              "weight_total": 58,
+              "jockey": "George Rooke",
+              "trainer": "Kelly Van Dyk",
+              "status": "STARTER",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_5_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "OFFPACE",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "3.60",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 5
+                  },
+                  "price": 3.5999999046325684,
+                  "srm_price": "{\"winPrice\": 3.60, \"top2Price\": 2.35, \"top3Price\": 1.80, \n\"top4Price\": 1.40, \"runnerNumber\": 5}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 13,
+                      "denominator": 5
+                    },
+                    "top_2_price": {
+                      "numerator": 27,
+                      "denominator": 20
+                    },
+                    "top_3_price": {
+                      "numerator": 4,
+                      "denominator": 5
+                    },
+                    "top_4_price": {
+                      "numerator": 2,
+                      "denominator": 5
+                    }
+                  }
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "1.38",
+                  "fractional_price": {
+                    "numerator": 19,
+                    "denominator": 50
+                  },
+                  "price": 1.3799999952316284,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "3.60",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 5
+                  },
+                  "price": 3.5999999046325684,
+                  "srm_price": "{\"winPrice\": 3.60, \"top2Price\": 2.35, \"top3Price\": 1.80, \n\"top4Price\": 1.40, \"runnerNumber\": 5}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 13,
+                      "denominator": 5
+                    },
+                    "top_2_price": {
+                      "numerator": 27,
+                      "denominator": 20
+                    },
+                    "top_3_price": {
+                      "numerator": 4,
+                      "denominator": 5
+                    },
+                    "top_4_price": {
+                      "numerator": 2,
+                      "denominator": 5
+                    }
+                  }
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "1.38",
+                  "fractional_price": {
+                    "numerator": 19,
+                    "denominator": 50
+                  },
+                  "price": 1.3799999952316284,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 3.9000000953674316,
+                  "display_price": "3.90",
+                  "fractional_price": {
+                    "numerator": 29,
+                    "denominator": 10
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 3.5999999046325684,
+                  "display_price": "3.60",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 5
+                  }
+                },
+                "fluctuation_2": {
+                  "price": 3.5,
+                  "display_price": "3.50",
+                  "fractional_price": {
+                    "numerator": 5,
+                    "denominator": 2
+                  }
+                },
+                "fluctuation_3": {
+                  "price": 3.5999999046325684,
+                  "display_price": "3.60",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 5
+                  }
+                }
+              },
+              "scratched_time": null,
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "At $2.50 ran 7th last run at this venue. Tongue tie go on for the first time. Solid chance.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "At $2.50 ran 7th last run at this venue. Tongue tie go on for the first time. Solid chance.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Started 6/4 and came in 7th last run here. Interesting gear change of tongue strap on first time. Win will not surprise.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 87
+                }
+              ],
+              "speed_map_position_value": 5.5,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 9,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 13,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 5.5,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 87,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": -1,
+                    "percentage": 40
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "barrier",
+                    "category": "Barrier",
+                    "name": "Awkward Draw",
+                    "sentiment": "Negative",
+                    "comment": "Would have liked a better draw",
+                    "tab_number": 5,
+                    "display_order": 120
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "barrier",
+                    "category": "Barrier",
+                    "name": "Awkward Draw",
+                    "sentiment": "Negative",
+                    "comment": "Would have liked a better draw",
+                    "tab_number": 5,
+                    "display_order": 120
+                  }
+                ]
+              }
+            },
+            {
+              "id": "f924dbe5-5158-5b7b-be35-ed34eb19b51b",
+              "tab_no": 3,
+              "name": "Tampa",
+              "barrier": 9,
+              "weight_total": 58.5,
+              "jockey": "Lynsey Satherley",
+              "trainer": "K G Harrison",
+              "status": "STARTER",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_3_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "LEADER",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "51.00",
+                  "fractional_price": {
+                    "numerator": 50,
+                    "denominator": 1
+                  },
+                  "price": 51,
+                  "srm_price": "{\"winPrice\": 51.00, \"top2Price\": 6.50, \"top3Price\": 3.60, \n\"top4Price\": 2.35, \"runnerNumber\": 3}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 50,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 11,
+                      "denominator": 2
+                    },
+                    "top_3_price": {
+                      "numerator": 13,
+                      "denominator": 5
+                    },
+                    "top_4_price": {
+                      "numerator": 27,
+                      "denominator": 20
+                    }
+                  }
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "6.00",
+                  "fractional_price": {
+                    "numerator": 5,
+                    "denominator": 1
+                  },
+                  "price": 6,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "51.00",
+                  "fractional_price": {
+                    "numerator": 50,
+                    "denominator": 1
+                  },
+                  "price": 51,
+                  "srm_price": "{\"winPrice\": 51.00, \"top2Price\": 6.50, \"top3Price\": 3.60, \n\"top4Price\": 2.35, \"runnerNumber\": 3}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 50,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 11,
+                      "denominator": 2
+                    },
+                    "top_3_price": {
+                      "numerator": 13,
+                      "denominator": 5
+                    },
+                    "top_4_price": {
+                      "numerator": 27,
+                      "denominator": 20
+                    }
+                  }
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "6.00",
+                  "fractional_price": {
+                    "numerator": 5,
+                    "denominator": 1
+                  },
+                  "price": 6,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 51,
+                  "display_price": "51.00",
+                  "fractional_price": {
+                    "numerator": 50,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 41,
+                  "display_price": "41.00",
+                  "fractional_price": {
+                    "numerator": 40,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_2": {
+                  "price": 51,
+                  "display_price": "51.00",
+                  "fractional_price": {
+                    "numerator": 50,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_3": null
+              },
+              "scratched_time": null,
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "Started at $71.00 and couldn't maintain the pace when 12th last time at this track. Won't be far away during the run. Looking at others.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Started at $71.00 and couldn't maintain the pace when 12th last time at this track. Won't be far away during the run. Looking at others.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Odds of 70/1 and lost ground in the run home when 12th last run at this venue. Should be going forward early.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 70
+                }
+              ],
+              "speed_map_position_value": 1,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 2,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 11,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 1,
+                    "percentage": 100
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 70,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": -4,
+                    "percentage": 40
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "jockeyProfitable",
+                    "category": "Jockey Profitable",
+                    "name": "Jockey Booking",
+                    "sentiment": "Negative",
+                    "comment": "Lynsey Satherley current POT is 46% below Career Avg.",
+                    "tab_number": 3,
+                    "display_order": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Early Splits",
+                    "sentiment": "Positive",
+                    "comment": "Has early speed. An advantage on this circuit",
+                    "tab_number": 3,
+                    "display_order": 100
+                  },
+                  {
+                    "key": "lastRun",
+                    "category": "Last Run",
+                    "name": "Gave ground LS",
+                    "sentiment": "Negative",
+                    "comment": "Faded towards the finish last time out",
+                    "tab_number": 3,
+                    "display_order": 110
+                  },
+                  {
+                    "key": "barrier",
+                    "category": "Barrier",
+                    "name": "Awkward Draw",
+                    "sentiment": "Negative",
+                    "comment": "May find this draw awkward",
+                    "tab_number": 3,
+                    "display_order": 120
+                  },
+                  {
+                    "key": "preparation",
+                    "category": "Preparation",
+                    "name": "Imprv Needed",
+                    "sentiment": "Negative",
+                    "comment": "Would need to lift here to feature",
+                    "tab_number": 3,
+                    "display_order": 250
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "jockeyProfitable",
+                    "category": "Jockey Profitable",
+                    "name": "Jockey Booking",
+                    "sentiment": "Negative",
+                    "comment": "Lynsey Satherley current POT is 46% below Career Avg.",
+                    "tab_number": 3,
+                    "display_order": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Early Splits",
+                    "sentiment": "Positive",
+                    "comment": "Has early speed. An advantage on this circuit",
+                    "tab_number": 3,
+                    "display_order": 100
+                  },
+                  {
+                    "key": "lastRun",
+                    "category": "Last Run",
+                    "name": "Gave ground LS",
+                    "sentiment": "Negative",
+                    "comment": "Faded towards the finish last time out",
+                    "tab_number": 3,
+                    "display_order": 110
+                  },
+                  {
+                    "key": "barrier",
+                    "category": "Barrier",
+                    "name": "Awkward Draw",
+                    "sentiment": "Negative",
+                    "comment": "May find this draw awkward",
+                    "tab_number": 3,
+                    "display_order": 120
+                  },
+                  {
+                    "key": "preparation",
+                    "category": "Preparation",
+                    "name": "Imprv Needed",
+                    "sentiment": "Negative",
+                    "comment": "Would need to lift here to feature",
+                    "tab_number": 3,
+                    "display_order": 250
+                  }
+                ]
+              }
+            },
+            {
+              "id": "a9e239fe-c0fc-5fa1-bae5-3b7653963af6",
+              "tab_no": 13,
+              "name": "Hip Flask",
+              "barrier": 12,
+              "weight_total": 58.5,
+              "jockey": "Elen Nicholas",
+              "trainer": "C R Mccarroll",
+              "status": "SCRATCHED",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_13_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": null,
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": null,
+              "scratched_time": "2026-03-29T23:40:57Z",
+              "runner_row": null,
+              "apprentice_indicator": true,
+              "allowance_weight": 1,
+              "runner_comments": [
+                {
+                  "comment": "First time at the races 5yo by Impending for C R Mccarroll. Respect the betting.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "First time at the races 5yo by Impending for C R Mccarroll. Respect the betting.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "First appearance at the races 5yo by Impending for trainer C R Mccarroll.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 20
+                }
+              ],
+              "speed_map_position_value": null,
+              "insights": null
+            },
+            {
+              "id": "a04628d2-a392-53dc-a54e-4ea2310d559d",
+              "tab_no": 4,
+              "name": "Centurial",
+              "barrier": 1,
+              "weight_total": 58,
+              "jockey": "Craig Grylls",
+              "trainer": "Mark Walker & Sam Bergerson",
+              "status": "STARTER",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_4_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "BACKMARKER",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "3.00",
+                  "fractional_price": {
+                    "numerator": 2,
+                    "denominator": 1
+                  },
+                  "price": 3,
+                  "srm_price": "{\"winPrice\": 3.00, \"top2Price\": 2.20, \"top3Price\": 1.70, \n\"top4Price\": 1.36, \"runnerNumber\": 4}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 2,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 6,
+                      "denominator": 5
+                    },
+                    "top_3_price": {
+                      "numerator": 7,
+                      "denominator": 10
+                    },
+                    "top_4_price": {
+                      "numerator": 4,
+                      "denominator": 11
+                    }
+                  }
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "1.30",
+                  "fractional_price": {
+                    "numerator": 3,
+                    "denominator": 10
+                  },
+                  "price": 1.2999999523162842,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "3.00",
+                  "fractional_price": {
+                    "numerator": 2,
+                    "denominator": 1
+                  },
+                  "price": 3,
+                  "srm_price": "{\"winPrice\": 3.00, \"top2Price\": 2.20, \"top3Price\": 1.70, \n\"top4Price\": 1.36, \"runnerNumber\": 4}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 2,
+                      "denominator": 1
+                    },
+                    "top_2_price": {
+                      "numerator": 6,
+                      "denominator": 5
+                    },
+                    "top_3_price": {
+                      "numerator": 7,
+                      "denominator": 10
+                    },
+                    "top_4_price": {
+                      "numerator": 4,
+                      "denominator": 11
+                    }
+                  }
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "1.30",
+                  "fractional_price": {
+                    "numerator": 3,
+                    "denominator": 10
+                  },
+                  "price": 1.2999999523162842,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 3.9000000953674316,
+                  "display_price": "3.90",
+                  "fractional_price": {
+                    "numerator": 29,
+                    "denominator": 10
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 3.5999999046325684,
+                  "display_price": "3.60",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 5
+                  }
+                },
+                "fluctuation_2": {
+                  "price": 3.0999999046325684,
+                  "display_price": "3.10",
+                  "fractional_price": {
+                    "numerator": 21,
+                    "denominator": 10
+                  }
+                },
+                "fluctuation_3": {
+                  "price": 3,
+                  "display_price": "3.00",
+                  "fractional_price": {
+                    "numerator": 2,
+                    "denominator": 1
+                  }
+                }
+              },
+              "scratched_time": null,
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "Started $6.00 and was making up some late ground when 5th last time at this track and will appreciate a good gate. Has a great burst of speed late. Good potential.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Started $6.00 and was making up some late ground when 5th last time at this track and will appreciate a good gate. Has a great burst of speed late. Good potential.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Started 5/1 and made up ground when 5th last start around here and drawn the rails. Should be swooping on the field late. Great chance.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 92
+                }
+              ],
+              "speed_map_position_value": 10,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 12,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 17,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 10,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 92,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 5,
+                    "percentage": 100
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "closingSpeed",
+                    "category": "Closing Speed",
+                    "name": "Attacks Line",
+                    "sentiment": "Positive",
+                    "comment": "Fastest L600m Sectionals Last Start in this field",
+                    "tab_number": 4,
+                    "display_order": 5
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Slow Early LS",
+                    "sentiment": "Negative",
+                    "comment": "Speed data from recent runs suggests slower early splits on avg",
+                    "tab_number": 4,
+                    "display_order": 100
+                  },
+                  {
+                    "key": "lastRun",
+                    "category": "Last Run",
+                    "name": "Ran On Hard LS",
+                    "sentiment": "Positive",
+                    "comment": "Ran on well last start",
+                    "tab_number": 4,
+                    "display_order": 110
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "closingSpeed",
+                    "category": "Closing Speed",
+                    "name": "Attacks Line",
+                    "sentiment": "Positive",
+                    "comment": "Fastest L600m Sectionals Last Start in this field",
+                    "tab_number": 4,
+                    "display_order": 5
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Slow Early LS",
+                    "sentiment": "Negative",
+                    "comment": "Speed data from recent runs suggests slower early splits on avg",
+                    "tab_number": 4,
+                    "display_order": 100
+                  },
+                  {
+                    "key": "lastRun",
+                    "category": "Last Run",
+                    "name": "Ran On Hard LS",
+                    "sentiment": "Positive",
+                    "comment": "Ran on well last start",
+                    "tab_number": 4,
+                    "display_order": 110
+                  }
+                ]
+              }
+            },
+            {
+              "id": "b8d077a6-5b10-5d54-a9d7-7db8f0a46858",
+              "tab_no": 16,
+              "name": "Chamberi",
+              "barrier": 13,
+              "weight_total": 56,
+              "jockey": "Unknown",
+              "trainer": "Debbie Sweeney",
+              "status": "SCRATCHED",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_16_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "FIRSTSTART",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 20,
+                  "display_price": "20.00",
+                  "fractional_price": {
+                    "numerator": 19,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 19,
+                  "display_price": "19.00",
+                  "fractional_price": {
+                    "numerator": 18,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_2": null,
+                "fluctuation_3": null
+              },
+              "scratched_time": "2026-03-31T18:00:38Z",
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "3yo first starter by Telperion for trainer Debbie Sweeney. Follow the money.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "3yo first starter by Telperion for trainer Debbie Sweeney. Follow the money.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "3yo first starter sired by Telperion for trainer Debbie Sweeney.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 92
+                }
+              ],
+              "speed_map_position_value": null,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 1,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 12,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 92,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 0,
+                    "percentage": 50
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "experience",
+                    "category": "Experience",
+                    "name": "On Debut",
+                    "sentiment": "Positive",
+                    "comment": "First race start",
+                    "tab_number": 16,
+                    "display_order": 210
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "experience",
+                    "category": "Experience",
+                    "name": "On Debut",
+                    "sentiment": "Positive",
+                    "comment": "First race start",
+                    "tab_number": 16,
+                    "display_order": 210
+                  }
+                ]
+              }
+            },
+            {
+              "id": "690584aa-98d1-533f-a5c5-0f2ad860b404",
+              "tab_no": 11,
+              "name": "Conscribe",
+              "barrier": 7,
+              "weight_total": 56,
+              "jockey": "Matthew Cameron",
+              "trainer": "Ms D Logan",
+              "status": "SCRATCHED",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_11_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "OFFMIDFIELD",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 26,
+                  "display_price": "26.00",
+                  "fractional_price": {
+                    "numerator": 25,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 21,
+                  "display_price": "21.00",
+                  "fractional_price": {
+                    "numerator": 20,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_2": null,
+                "fluctuation_3": null
+              },
+              "scratched_time": "2026-03-31T19:00:43Z",
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "Lacklustre showing when 9th last time at Tauranga. Might have to make up considerable ground.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Lacklustre showing when 9th last time at Tauranga. Might have to make up considerable ground.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Was nothing special when 9th last time at Tauranga. Likely to get back in the run.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 80
+                }
+              ],
+              "speed_map_position_value": 8.3,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 6,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 16,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 8.3,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 80,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 0,
+                    "percentage": 60
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Slow Early LS",
+                    "sentiment": "Negative",
+                    "comment": "Speed data from recent runs suggests slower early splits on avg",
+                    "tab_number": 11,
+                    "display_order": 100
+                  },
+                  {
+                    "key": "lastRun",
+                    "category": "Last Run",
+                    "name": "Well beaten LS",
+                    "sentiment": "Negative",
+                    "comment": "Not competitive last run",
+                    "tab_number": 11,
+                    "display_order": 110
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Slow Early LS",
+                    "sentiment": "Negative",
+                    "comment": "Speed data from recent runs suggests slower early splits on avg",
+                    "tab_number": 11,
+                    "display_order": 100
+                  },
+                  {
+                    "key": "lastRun",
+                    "category": "Last Run",
+                    "name": "Well beaten LS",
+                    "sentiment": "Negative",
+                    "comment": "Not competitive last run",
+                    "tab_number": 11,
+                    "display_order": 110
+                  }
+                ]
+              }
+            },
+            {
+              "id": "b7cba596-8070-5448-91a1-82d2fd283147",
+              "tab_no": 8,
+              "name": "Satono Star",
+              "barrier": 17,
+              "weight_total": 58,
+              "jockey": "Unknown",
+              "trainer": "K A Pertab",
+              "status": "SCRATCHED",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_8_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "FIRSTSTART",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": null,
+              "scratched_time": "2026-03-30T03:39:56Z",
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "Initial race appearance 3yo by Satono Aladdin for Kurtis Pertab. Betting is the best guide.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Initial race appearance 3yo by Satono Aladdin for Kurtis Pertab. Betting is the best guide.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Initial race appearance 3yo by Satono Aladdin for Kurtis Pertab.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 98
+                }
+              ],
+              "speed_map_position_value": null,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 1,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 7,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 0,
+                    "percentage": 50
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "experience",
+                    "category": "Experience",
+                    "name": "Debutant",
+                    "sentiment": "Positive",
+                    "comment": "First race day appearance",
+                    "tab_number": 8,
+                    "display_order": 210
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "experience",
+                    "category": "Experience",
+                    "name": "Debutant",
+                    "sentiment": "Positive",
+                    "comment": "First race day appearance",
+                    "tab_number": 8,
+                    "display_order": 210
+                  }
+                ]
+              }
+            },
+            {
+              "id": "1d761d53-afef-59c3-ba9a-8335b160f335",
+              "tab_no": 17,
+              "name": "Impetuous",
+              "barrier": 10,
+              "weight_total": 56.5,
+              "jockey": "Unknown",
+              "trainer": "Ms J Dalley",
+              "status": "SCRATCHED",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_17_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "FIRSTSTART",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "0.00",
+                  "fractional_price": null,
+                  "price": 0,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 41,
+                  "display_price": "41.00",
+                  "fractional_price": {
+                    "numerator": 40,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 34,
+                  "display_price": "34.00",
+                  "fractional_price": {
+                    "numerator": 33,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_2": null,
+                "fluctuation_3": null
+              },
+              "scratched_time": "2026-03-31T18:00:37Z",
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "Janenne Dalley trained 4yo by Ace High having first start. Market as guide.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Janenne Dalley trained 4yo by Ace High having first start. Market as guide.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Janenne Dstall 4yo by Ace High having first race appearance.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 87
+                }
+              ],
+              "speed_map_position_value": null,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 1,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 8,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 0,
+                    "percentage": 50
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 87,
+                    "percentage": 60
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 0,
+                    "percentage": 50
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "experience",
+                    "category": "Experience",
+                    "name": "Watch Betting",
+                    "sentiment": "Negative",
+                    "comment": "If supported, follow in",
+                    "tab_number": 17,
+                    "display_order": 210
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "experience",
+                    "category": "Experience",
+                    "name": "Watch Betting",
+                    "sentiment": "Negative",
+                    "comment": "If supported, follow in",
+                    "tab_number": 17,
+                    "display_order": 210
+                  }
+                ]
+              }
+            },
+            {
+              "id": "d6ab31e3-9789-5ca7-bc0f-14e118d833f9",
+              "tab_no": 15,
+              "name": "Moonbeams",
+              "barrier": 6,
+              "weight_total": 56,
+              "jockey": "Michael Mc Nab",
+              "trainer": "Andrew Forsman",
+              "status": "STARTER",
+              "silk_url_sixtyfour": "https://43ljiekn6trlh5r0at1kplo82q.silks.betmakers.com/579369_1_15_64x64.png",
+              "last_ten_starts": null,
+              "speed_map_position": "LEADER",
+              "prices": [
+                {
+                  "bet_type": "racingFutureWin",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "7.50",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 2
+                  },
+                  "price": 7.5,
+                  "srm_price": "{\"winPrice\": 7.50, \"top2Price\": 3.30, \"top3Price\": 2.15, \n\"top4Price\": 1.65, \"runnerNumber\": 15}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 13,
+                      "denominator": 2
+                    },
+                    "top_2_price": {
+                      "numerator": 23,
+                      "denominator": 10
+                    },
+                    "top_3_price": {
+                      "numerator": 23,
+                      "denominator": 20
+                    },
+                    "top_4_price": {
+                      "numerator": 13,
+                      "denominator": 20
+                    }
+                  }
+                },
+                {
+                  "bet_type": "racingFuturePlace",
+                  "product": {
+                    "keyword": "FUT",
+                    "is_fixed": true
+                  },
+                  "display_price": "2.25",
+                  "fractional_price": {
+                    "numerator": 5,
+                    "denominator": 4
+                  },
+                  "price": 2.25,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                },
+                {
+                  "bet_type": "win",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "7.50",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 2
+                  },
+                  "price": 7.5,
+                  "srm_price": "{\"winPrice\": 7.50, \"top2Price\": 3.30, \"top3Price\": 2.15, \n\"top4Price\": 1.65, \"runnerNumber\": 15}",
+                  "fractional_srm_price": {
+                    "win_price": {
+                      "numerator": 13,
+                      "denominator": 2
+                    },
+                    "top_2_price": {
+                      "numerator": 23,
+                      "denominator": 10
+                    },
+                    "top_3_price": {
+                      "numerator": 23,
+                      "denominator": 20
+                    },
+                    "top_4_price": {
+                      "numerator": 13,
+                      "denominator": 20
+                    }
+                  }
+                },
+                {
+                  "bet_type": "place",
+                  "product": {
+                    "keyword": "TBF",
+                    "is_fixed": true
+                  },
+                  "display_price": "2.25",
+                  "fractional_price": {
+                    "numerator": 5,
+                    "denominator": 4
+                  },
+                  "price": 2.25,
+                  "srm_price": null,
+                  "fractional_srm_price": null
+                }
+              ],
+              "price_fluctuation": {
+                "is_today_price": true,
+                "open_price": {
+                  "price": 9,
+                  "display_price": "9.00",
+                  "fractional_price": {
+                    "numerator": 8,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_1": {
+                  "price": 8,
+                  "display_price": "8.00",
+                  "fractional_price": {
+                    "numerator": 7,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_2": {
+                  "price": 8,
+                  "display_price": "8.00",
+                  "fractional_price": {
+                    "numerator": 7,
+                    "denominator": 1
+                  }
+                },
+                "fluctuation_3": {
+                  "price": 7.5,
+                  "display_price": "7.50",
+                  "fractional_price": {
+                    "numerator": 13,
+                    "denominator": 2
+                  }
+                }
+              },
+              "scratched_time": null,
+              "runner_row": null,
+              "apprentice_indicator": false,
+              "allowance_weight": 0,
+              "runner_comments": [
+                {
+                  "comment": "Finished 3rd last run at Matamata. Interesting gear change of blinkers on first time. Likely to be well placed early. Win will not surprise.",
+                  "source": "ILB"
+                },
+                {
+                  "comment": "Finished 3rd last run at Matamata. Interesting gear change of blinkers on first time. Likely to be well placed early. Win will not surprise.",
+                  "source": "IRD"
+                },
+                {
+                  "comment": "Competitive effort when 3rd last time at Matamata. Blinkers go on for the first time. Expecting to settle positively. Has a good chance.",
+                  "source": "RSIS"
+                }
+              ],
+              "runner_performance_rating": [
+                {
+                  "source": "IRD",
+                  "value": 100
+                }
+              ],
+              "speed_map_position_value": 1,
+              "insights": {
+                "quick": [
+                  {
+                    "key": "jockey",
+                    "name": "Jockey",
+                    "value": 16,
+                    "percentage": 80
+                  },
+                  {
+                    "key": "trainer",
+                    "name": "Trainer",
+                    "value": 10,
+                    "percentage": 40
+                  },
+                  {
+                    "key": "jockeyTrainerCombo",
+                    "name": "Jockey/Trainer Combo",
+                    "value": 0,
+                    "percentage": 20
+                  },
+                  {
+                    "key": "earlySpeed",
+                    "name": "Early Speed",
+                    "value": 1,
+                    "percentage": 100
+                  },
+                  {
+                    "key": "rating",
+                    "name": "Rating",
+                    "value": 100,
+                    "percentage": 100
+                  },
+                  {
+                    "key": "closingSpeed",
+                    "name": "Closing Speed",
+                    "value": 0,
+                    "percentage": 60
+                  }
+                ],
+                "pro": [
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Fast Early",
+                    "sentiment": "Positive",
+                    "comment": "Sectionals suggest goes hard early",
+                    "tab_number": 15,
+                    "display_order": 100
+                  }
+                ],
+                "top_pro": [
+                  {
+                    "key": "earlySpeed",
+                    "category": "Early Speed",
+                    "name": "Fast Early",
+                    "sentiment": "Positive",
+                    "comment": "Sectionals suggest goes hard early",
+                    "tab_number": 15,
+                    "display_order": 100
+                  }
+                ]
+              }
+            }
+          ],
+          "places_to_pay": [
+            {
+              "product_keyword": "FUT",
+              "places_to_pay": 3,
+              "description": "8 or More Runners"
+            },
+            {
+              "product_keyword": "SP",
+              "places_to_pay": 3,
+              "description": ""
+            },
+            {
+              "product_keyword": "SUP",
+              "places_to_pay": 3,
+              "description": ""
+            },
+            {
+              "product_keyword": "MID",
+              "places_to_pay": 3,
+              "description": ""
+            },
+            {
+              "product_keyword": "TBF",
+              "places_to_pay": 3,
+              "description": "8 or More Runners"
+            }
+          ],
+          "srm_status": "SrmActive",
+          "eachway_reduction": 5
+        }
+      ]
+    }
+  ]
+}

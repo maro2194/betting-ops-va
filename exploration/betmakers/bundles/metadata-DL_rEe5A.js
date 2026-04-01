@@ -1,0 +1,1 @@
+const a=t=>t,i=t=>`Bet on Racing and Sports with ${t}. Join Australia's most exciting new online betting experience today`,n=(t,e)=>({type:"website",title:a(t),description:i(t),images:e});export{n as d};

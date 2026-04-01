@@ -1,0 +1,1 @@
+import{j as t,O as o}from"./main-BL07p92A.js";import{F as r}from"./Footer-C2e9OWSG.js";import"./next-compat-CbEr3Ox0.js";import"./FeaturedSgmWidgetHeader-DA7kkoS1.js";import"./Tagline-Cznz4tQc.js";import"./Trans-eR_sBQ8e.js";function x(){return t.jsxs(t.Fragment,{children:[t.jsx("div",{children:t.jsx(o,{})}),t.jsx(r,{})]})}export{x as component};

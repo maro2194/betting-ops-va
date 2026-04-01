@@ -1,0 +1,1 @@
+import{j as s}from"./main-BL07p92A.js";import{I as t}from"./FeaturedSgmWidgetHeader-DA7kkoS1.js";const x=({title:e})=>s.jsxs("div",{className:"bg-surface-light flex flex-row gap-1 rounded-3xl px-2 py-1",children:[s.jsx(t,{name:"badge-deposit-match",size:"sm"}),s.jsx("span",{className:"text-xxs text-text-primary font-bold",children:e})]});export{x as D};

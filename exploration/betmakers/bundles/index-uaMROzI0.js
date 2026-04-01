@@ -1,0 +1,1 @@
+import{j as g,aO as i}from"./main-BL07p92A.js";const t=({variant:r="error",children:e,className:s})=>g.jsx("div",{className:i("flex gap-2 p-3",{"bg-ui-red-light":r==="error","bg-ui-green-light":r==="success","bg-ui-orange-light":r==="warning"},s),children:e});export{t as A};

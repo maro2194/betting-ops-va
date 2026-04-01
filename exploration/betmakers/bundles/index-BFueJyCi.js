@@ -1,0 +1,1 @@
+import{u as t}from"./next-compat-CbEr3Ox0.js";import{ft as o,r as n}from"./main-BL07p92A.js";function c(){const e=o.useParams(),r=t();return n.useEffect(()=>{r.replace(`/racing/meeting/${e.meetingId}/race/${e.raceId}/win`)},[r,e.meetingId,e.raceId]),null}export{c as component};

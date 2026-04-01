@@ -1,0 +1,1 @@
+import{j as e}from"./main-BL07p92A.js";const r=({children:s,label:t,rightSlot:l,...x})=>e.jsx("label",{...x,children:e.jsxs(e.Fragment,{children:[e.jsxs("div",{className:"mb-1 flex flex-row items-center justify-between",children:[e.jsx("span",{className:"text-text-secondary block text-xs font-semibold",children:t}),l]}),s]})});export{r as L};

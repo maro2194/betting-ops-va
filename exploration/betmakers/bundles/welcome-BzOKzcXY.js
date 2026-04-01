@@ -1,0 +1,1 @@
+import{a as t,r as s}from"./main-BL07p92A.js";import{u as o}from"./next-compat-CbEr3Ox0.js";function n(){const e=t(),r=o();return s.useEffect(()=>{e.features.firstTimeUserRedirectUrl?setTimeout(()=>{window.location.href=e.features.firstTimeUserRedirectUrl},500):r.replace("/")},[e.features.firstTimeUserRedirectUrl,r]),null}export{n as component};

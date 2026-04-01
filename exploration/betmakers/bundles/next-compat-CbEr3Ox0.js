@@ -1,0 +1,1 @@
+import{d9 as s,da as o,j as n,bz as r}from"./main-BL07p92A.js";function e(t){return s({select:a=>a.location})}const u=({href:t,...a})=>n.jsx(r,{to:t,...a}),i=()=>{const t=o();return{push:a=>t({to:a}),replace:a=>t({to:a,replace:!0}),back:()=>window.history.back()}},p=()=>e().pathname,h=()=>{const t=e();return new URLSearchParams(t.search)};export{u as L,p as a,h as b,i as u};

@@ -1,0 +1,1 @@
+import{ag as o,r as e,j as a,O as u}from"./main-BL07p92A.js";import{u as n}from"./next-compat-CbEr3Ox0.js";function c(){const{flags:s,isLoading:t}=o(),r=n();return e.useEffect(()=>{if(t)return;(s?.sportsEnabled??!0)||r.push("/")},[r,t,s]),a.jsx(u,{})}export{c as component};

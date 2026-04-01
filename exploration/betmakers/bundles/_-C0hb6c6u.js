@@ -1,0 +1,1 @@
+import{j as o}from"./main-BL07p92A.js";import"./FeaturedSgmWidgetHeader-DA7kkoS1.js";import{P as t}from"./ErrorState-BxPhkDLc.js";function e(){return o.jsx("div",{className:"flex h-full items-center justify-center",children:o.jsx(t,{})})}const i=e;export{i as component};

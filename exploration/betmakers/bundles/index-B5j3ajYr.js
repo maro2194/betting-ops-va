@@ -1,0 +1,1 @@
+import{u as t}from"./next-compat-CbEr3Ox0.js";import{r as o,h as e}from"./main-BL07p92A.js";function u(){const r=t();return o.useEffect(()=>{r.replace(`/racing/resulted/${e().subtract(1,"day").format("YYYY-MM-DD")}`)},[r]),null}export{u as component};

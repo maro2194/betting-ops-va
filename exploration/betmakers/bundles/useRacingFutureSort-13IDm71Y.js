@@ -1,0 +1,1 @@
+import{r}from"./main-BL07p92A.js";import{s as i}from"./futures-CdvAfHaN.js";const d=(a="win",c="asc")=>{const[t,u]=r.useState(a),[e,o]=r.useState(c),n=r.useCallback(s=>{s===t?o(S=>S==="asc"?"desc":"asc"):(u(s),o("asc"))},[t]),l=r.useCallback(s=>i(s,t,e),[t,e]);return{sortBy:t,sortOrder:e,toggleSort:n,sort:l}};export{d as u};
