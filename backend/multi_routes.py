@@ -77,6 +77,54 @@ async def api_delete_bookie_account(
     return {"ok": True}
 
 
+@multi_router.post("/accounts/{account_id}/test-login")
+async def api_test_login(account_id: str, user: dict = Depends(_verify_app_token)):
+    """Test login for a bookie account. Returns balance on success."""
+    from multi_database import find_account_by_id
+    account = await find_account_by_id(account_id)
+    if not account:
+        raise HTTPException(404, "Account not found")
+
+    from platforms.registry import get_client, normalize_bookmaker
+    import random
+
+    brand = normalize_bookmaker(account["brand"])
+    platform = account["platform"]
+    client = get_client(platform)
+    if not client:
+        raise HTTPException(400, f"Unsupported platform: {platform}")
+
+    # Build brand config from the platform's brand registry
+    brand_config = {}
+    if platform == "betmakers":
+        from platforms.betmakers import BETMAKERS_BRANDS
+        brand_config = BETMAKERS_BRANDS.get(brand, {}) or {}
+    elif platform == "amused":
+        from platforms.amused import AMUSED_BRANDS
+        brand_config = AMUSED_BRANDS.get(brand, {}) or {}
+
+    # Generate proxy with unique session
+    proxy_base = account.get("proxy_base", "")
+    if proxy_base:
+        sess_id = str(random.randint(1000000000, 9999999999))
+        proxy_url = f"{proxy_base}-sessid-{sess_id}-sesstime-10:K5E=2qcyhfyFZs~@pr.oxylabs.io:7777"
+    else:
+        proxy_url = ""
+
+    try:
+        session = await client.login(
+            email=account["email"],
+            password=account["password"],
+            proxy_url=proxy_url,
+            brand_config=brand_config,
+        )
+        balance = await client.get_balance(session)
+        return {"ok": True, "balance": balance, "message": f"Login OK. Balance: ${balance:.2f}"}
+    except Exception as e:
+        logger.error(f"Test login failed for {account_id}: {e}")
+        raise HTTPException(400, f"Login failed: {str(e)}")
+
+
 # ─── CSV Upload & Validation ──────────────────────────────────────────────
 
 @multi_router.post("/csv/upload", response_model=CsvUploadResponse)

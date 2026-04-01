@@ -149,6 +149,18 @@ async def delete_bookie_account(account_id: str):
         await conn.execute("DELETE FROM bookie_accounts WHERE id = $1", account_id)
 
 
+async def find_account_by_id(account_id: str) -> dict | None:
+    """Find a bookie account by its ID."""
+    async with _db.pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM bookie_accounts WHERE id = $1", account_id)
+        if not row:
+            return None
+        d = dict(row)
+        if isinstance(d.get("brand_config"), str):
+            d["brand_config"] = json.loads(d["brand_config"])
+        return d
+
+
 async def find_account_by_initials_brand(username: str, initials: str, brand: str) -> dict | None:
     """Find a bookie account by username + initials + brand (CSV lookup)."""
     async with _db.pool.acquire() as conn:
