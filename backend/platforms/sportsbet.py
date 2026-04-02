@@ -180,18 +180,31 @@ class SportsbetClient(PlatformClient):
         captured_token = None
 
         try:
+            import re as _re
             pw = await async_playwright().start()
+
+            # Parse proxy — Chromium needs server:port separate from auth
+            proxy_config = None
+            if proxy_url:
+                m = _re.match(r'https?://([^:]+):([^@]+)@([^:]+):(\d+)', proxy_url)
+                if m:
+                    proxy_config = {
+                        "server": f"http://{m.group(3)}:{m.group(4)}",
+                        "username": m.group(1),
+                        "password": m.group(2),
+                    }
+                else:
+                    proxy_config = {"server": proxy_url}
+
             browser = await pw.chromium.launch(
                 channel="chrome",
                 headless=True,
-                args=[
-                    f"--proxy-server={proxy_url}" if proxy_url else "",
-                    "--disable-blink-features=AutomationControlled",
-                ],
+                args=["--disable-blink-features=AutomationControlled"],
             )
             context = await browser.new_context(
                 user_agent=CHROME_UA,
                 viewport={"width": 1920, "height": 1080},
+                proxy=proxy_config,
             )
             page = await context.new_page()
 
