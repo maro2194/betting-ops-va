@@ -278,3 +278,20 @@ async def sb_upload_tokens(req: SBUploadTokens):
     }
     _save_tokens(tokens)
     return {"ok": True, "expires_at": exp}
+
+
+# ─── Live Stats ──────────────────────────────────────────────────────────────
+
+@router.get("/live-stats/{match_id}")
+async def sb_live_stats(match_id: int):
+    """Get live AFL player stats from Footywire."""
+    from live_stats import get_live_stats
+    return get_live_stats(match_id)
+
+
+@router.get("/live-stats/find/current")
+async def sb_find_current_match():
+    """Find the current live AFL match ID."""
+    from live_stats import find_current_match_id
+    mid = find_current_match_id()
+    return {"match_id": mid}

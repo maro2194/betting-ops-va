@@ -54,6 +54,7 @@ const NAV_GROUPS = [
   {
     label: 'Account',
     items: [
+      { to: '/live', label: 'Live Stats', icon: Zap },
       { to: '/csb-results', label: 'CSB Results', icon: Trophy },
       { to: '/history', label: 'History', icon: History },
       { to: '/ledger', label: 'Bet Ledger', icon: BookOpen },

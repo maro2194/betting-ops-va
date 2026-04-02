@@ -14,6 +14,7 @@ const PAGE_TITLES = {
   '/bookie-accounts': 'Bookie Accounts',
   '/bet365': 'bet365 Auto-Placer',
   '/sportsbet': 'Sportsbet',
+  '/live': 'Live Stats',
   '/csb-results': 'CSB Results',
   '/ledger': 'Bet Ledger',
   '/csb': 'CSB Upload',
