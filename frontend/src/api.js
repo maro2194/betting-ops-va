@@ -96,10 +96,12 @@ export const api = {
     }),
 
   // Bet History
-  getBetHistory: (status, accountNumber, limit = 50) => {
+  getBetHistory: (status, accountLabel, limit = 200, dateFrom, dateTo) => {
     const params = new URLSearchParams();
     if (status) params.set('status', status);
-    if (accountNumber) params.set('account_number', accountNumber);
+    if (accountLabel) params.set('account_label', accountLabel);
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
     params.set('limit', limit);
     return request(`/api/bet-history?${params}`);
   },
@@ -107,6 +109,14 @@ export const api = {
   // Check Results (loops all accounts server-side)
   checkResults: () =>
     request('/api/bets/check-results', { method: 'POST' }),
+
+  // Per-leg stat results from external sports APIs
+  getLegResults: (betIds) =>
+    request(`/api/leg-results?bet_ids=${betIds.join(',')}`),
+
+  // Sync Manual Bets (import TAB bets not in DB)
+  syncManualBets: () =>
+    request('/api/sync-manual-bets', { method: 'POST' }),
 
   // Session
   getActiveSessions: () => request('/api/active-sessions'),
@@ -138,6 +148,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ session_id: sessionId, ...bet }),
     }),
+
+  // ─── bet365 ────────────────────────────────────────────────────────
+  bet365Status: () => request('/api/bet365/status'),
+  bet365StartAll: () => request('/api/bet365/start-all', { method: 'POST' }),
+  bet365StopAll: () => request('/api/bet365/stop-all', { method: 'POST' }),
+  bet365BrowserStart: () => request('/api/bet365/browser/start', { method: 'POST' }),
+  bet365BrowserStop: () => request('/api/bet365/browser/stop', { method: 'POST' }),
+  bet365BrowserBalance: () => request('/api/bet365/browser/balance'),
+  bet365TelegramStart: () => request('/api/bet365/telegram/start', { method: 'POST' }),
+  bet365TelegramStop: () => request('/api/bet365/telegram/stop', { method: 'POST' }),
+  bet365TelegramMessages: () => request('/api/bet365/telegram/messages'),
+  bet365PipelineEnable: () => request('/api/bet365/pipeline/enable', { method: 'POST' }),
+  bet365PipelineDisable: () => request('/api/bet365/pipeline/disable', { method: 'POST' }),
+  bet365GetPicks: (limit = 50) => request(`/api/bet365/picks?limit=${limit}`),
+  bet365ManualPick: (pick) => request('/api/bet365/picks/manual', { method: 'POST', body: JSON.stringify(pick) }),
 
   // Health
   health: () => request('/api/health'),

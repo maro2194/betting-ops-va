@@ -444,51 +444,63 @@ def place_multi_bet(legacy_token: str, account_number: str, legs: list[dict],
 # ─── Bet History & Results ───────────────────────────────────────────────────
 
 def get_my_bets(legacy_token: str, account_number: str, proxy_url: Optional[str] = None,
-                count: int = 20, status: str = "ALL") -> dict:
+                count: int = 100, status: str = "ALL", max_pages: int = 1) -> dict:
     """Get bet history via the my-bets API endpoint.
+    Paginates up to max_pages to fetch older bets.
     Returns parsed list of bets with status, stake, odds, legs, etc."""
     session = _make_session(proxy_url)
     session.headers.update(_webapi_headers(legacy_token))
     try:
-        url = f"{MY_BETS_URL.format(account=account_number)}?count={count}&status={status}"
-        resp = session.get(url, timeout=15)
+        # TAB caps count at 100
+        fetch_count = min(count, 100)
+        url = f"{MY_BETS_URL.format(account=account_number)}?count={fetch_count}&status={status}"
+        all_bets = []
 
-        logger.info(f"My bets response: {resp.status_code}")
+        for page in range(max_pages):
+            resp = session.get(url, timeout=15)
+            logger.info(f"My bets response page {page}: {resp.status_code}")
 
-        if resp.status_code == 200:
-            data = resp.json()
-            transactions = data.get("transactions", [])
-            bets = []
-            for tx in transactions:
-                legs = []
-                for leg in tx.get("legs", []):
-                    legs.append(leg.get("eventName", ""))
+            if resp.status_code == 200:
+                data = resp.json()
+                transactions = data.get("transactions", [])
 
-                bets.append({
-                    "type": tx.get("betTypeDetails", "Unknown"),
-                    "status": tx.get("status", "Unknown"),
-                    "stake": tx.get("stake", "$0.00"),
-                    "odds": tx.get("odds", "0"),
-                    "payout": tx.get("return", "$0.00"),
-                    "description": tx.get("eventNameSummary", tx.get("eventName", "")),
-                    "timestamp": tx.get("transactionTime", ""),
-                    "event_date": tx.get("eventDate", ""),
-                    "tsn": tx.get("tsn", ""),
-                    "transaction_ref": tx.get("transactionReference"),
-                    "is_bonus_bet": tx.get("isBonusBet", False),
-                    "is_cash_out": tx.get("isCashOut", False),
-                    "legs": legs,
-                })
+                for tx in transactions:
+                    legs = []
+                    for leg in tx.get("legs", []):
+                        legs.append(leg.get("eventName", ""))
 
-            next_link = data.get("_links", {}).get("next", "")
-            return {
-                "bets": bets,
-                "has_more": bool(next_link),
-                "next_url": next_link,
-            }
-        elif resp.status_code == 401:
-            raise Exception("Legacy token expired or invalid (401)")
-        else:
-            raise Exception(f"My bets failed: {resp.status_code} - {resp.text[:300]}")
+                    all_bets.append({
+                        "type": tx.get("betTypeDetails", "Unknown"),
+                        "status": tx.get("status", "Unknown"),
+                        "stake": tx.get("stake", "$0.00"),
+                        "odds": tx.get("odds", "0"),
+                        "payout": tx.get("return", "$0.00"),
+                        "description": tx.get("eventNameSummary", tx.get("eventName", "")),
+                        "timestamp": tx.get("transactionTime", ""),
+                        "event_date": tx.get("eventDate", ""),
+                        "tsn": tx.get("tsn", ""),
+                        "transaction_ref": tx.get("transactionReference"),
+                        "is_bonus_bet": tx.get("isBonusBet", False),
+                        "is_cash_out": tx.get("isCashOut", False),
+                        "legs": legs,
+                    })
+
+                next_link = data.get("_links", {}).get("next", "")
+                if not next_link:
+                    break
+                # next_link is relative path — prepend base URL
+                if next_link.startswith("/"):
+                    url = f"https://webapi.tab.com.au{next_link}"
+                else:
+                    url = next_link
+            elif resp.status_code == 401:
+                raise Exception("Legacy token expired or invalid (401)")
+            else:
+                raise Exception(f"My bets failed: {resp.status_code} - {resp.text[:300]}")
+
+        return {
+            "bets": all_bets,
+            "has_more": False,
+        }
     finally:
         session.close()

@@ -67,47 +67,53 @@ export default function BetLedger() {
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams();
-      if (methodFilter) params.set('method', methodFilter);
-      if (brandFilter) params.set('brand', brandFilter);
-      if (statusFilter) params.set('status', statusFilter);
-      params.set('limit', '200');
-
-      const statsParams = new URLSearchParams();
-      if (methodFilter) statsParams.set('method', methodFilter);
-
-      const [betsResp, statsResp] = await Promise.all([
-        api.get(`/api/multi/bets?${params}`),
-        api.get(`/api/multi/bets/stats?${statsParams}`),
-      ]);
-      setBets(betsResp.bets || []);
-      setStats(statsResp);
+      const data = await api.getBetHistory(undefined, undefined, 2000);
+      const allBets = (data.bets || []).map((b) => ({
+        ...b,
+        brand: b.account_label || b.account_number || '',
+        method: b.source || (b.bet_type === 'Manual' ? 'manual' : ''),
+        status: (b.status || '').toLowerCase(),
+        _stake: parseFloat(String(b.stake || 0).replace(/[$,]/g, '')) || 0,
+        _payout: parseFloat(String(b.payout || 0).replace(/[$,]/g, '')) || 0,
+        _odds: parseFloat(String(b.combined_odds || 0).replace(/[$,]/g, '')) || 0,
+      }));
+      setBets(allBets);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [methodFilter, brandFilter, statusFilter]);
+  }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Collect unique brands from bets for filter dropdown
+  // Client-side filtering
+  const filteredBets = bets.filter((b) => {
+    if (statusFilter && b.status !== statusFilter) return false;
+    if (brandFilter && b.brand !== brandFilter) return false;
+    if (methodFilter && b.method !== methodFilter) return false;
+    return true;
+  });
+
+  // Collect unique brands from ALL bets for filter dropdown
   const brands = [...new Set(bets.map((b) => b.brand).filter(Boolean))].sort();
 
-  const totalStaked = stats?.total_staked || 0;
-  const totalWon = stats?.total_won || 0;
-  const pl = stats?.pl || 0;
-  const totalBets = stats?.total_bets || 0;
-  const wonCount = stats?.won_count || 0;
-  const lostCount = stats?.lost_count || 0;
-  const pendingCount = stats?.pending_count || 0;
+  // Stats from filtered bets
+  const totalStaked = filteredBets.reduce((s, b) => s + b._stake, 0);
+  const wonBets = filteredBets.filter((b) => b.status === 'won');
+  const lostBets = filteredBets.filter((b) => b.status === 'lost');
+  const totalWon = wonBets.reduce((s, b) => s + b._payout, 0);
+  const settledStake = [...wonBets, ...lostBets].reduce((s, b) => s + b._stake, 0);
+  const pl = totalWon - settledStake;
+  const totalBets = filteredBets.length;
+  const wonCount = wonBets.length;
+  const lostCount = lostBets.length;
+  const pendingCount = filteredBets.filter((b) => b.status === 'pending').length;
 
   return (
     <div className="animate-fade-in">
       {/* Stats strip */}
-      {stats && totalBets > 0 && (
+      {totalBets > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
           <div className="stat-card" style={{ padding: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', marginBottom: 6 }}>Total Bets</div>
@@ -136,24 +142,7 @@ export default function BetLedger() {
         </div>
       )}
 
-      {/* Method breakdown when "All" is selected */}
-      {stats && !methodFilter && stats.by_method && stats.by_method.length > 1 && (
-        <div className="card" style={{ padding: '12px 16px', marginBottom: 20 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>By Method</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, fontSize: 13 }}>
-            {stats.by_method.map((m) => (
-              <div key={m.method} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <MethodBadge method={m.method} />
-                <span style={{ color: 'var(--text-secondary)' }}>{m.total_bets} bets</span>
-                <span style={{ color: 'var(--text-muted)' }}>${m.total_staked.toFixed(2)} staked</span>
-                <span style={{ color: m.pl >= 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
-                  {m.pl >= 0 ? '+' : ''}${m.pl.toFixed(2)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Method breakdown */}
 
       {/* Filter bar */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 20 }}>
@@ -195,7 +184,7 @@ export default function BetLedger() {
               className="t-input"
               style={{ border: '1px solid var(--border)', padding: '6px 10px', fontSize: 12 }}
             >
-              <option value="">All Bookies</option>
+              <option value="">All Accounts</option>
               {brands.map((b) => (
                 <option key={b} value={b}>{b}</option>
               ))}
@@ -223,7 +212,7 @@ export default function BetLedger() {
           <Loader2 size={16} className="animate-spin" />
           Loading bets...
         </div>
-      ) : bets.length === 0 ? (
+      ) : filteredBets.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: '48px 24px', color: 'var(--text-muted)' }}>
           <BookOpen size={32} style={{ marginBottom: 12, opacity: 0.4 }} />
           <div>No bets found.</div>
@@ -234,56 +223,53 @@ export default function BetLedger() {
             <thead>
               <tr>
                 <th>Date</th>
-                <th>Track</th>
-                <th>Race</th>
-                <th>Horse</th>
-                <th>Bookie</th>
-                <th>Initials</th>
-                <th style={{ textAlign: 'right' }}>Stake</th>
+                <th>Account</th>
+                <th>Type</th>
+                <th>Legs</th>
                 <th style={{ textAlign: 'right' }}>Odds</th>
+                <th style={{ textAlign: 'right' }}>Stake</th>
                 <th>Status</th>
                 <th style={{ textAlign: 'right' }}>Payout</th>
-                <th>Method</th>
               </tr>
             </thead>
             <tbody>
-              {bets.map((bet) => (
-                <tr key={bet.id}>
-                  <td style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap', fontSize: 12 }}>
-                    {bet.placed_at ? new Date(bet.placed_at).toLocaleDateString() : '-'}
-                  </td>
-                  <td style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{bet.track || '-'}</td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{bet.race_number || '-'}</td>
-                  <td style={{ color: 'var(--text-primary)' }}>{bet.horse || '-'}</td>
-                  <td>
-                    <span className="badge badge-neutral" style={{ fontSize: 11 }}>{bet.brand || '-'}</span>
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{bet.initials || '-'}</td>
-                  <td style={{ textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                    ${(bet.stake || 0).toFixed(2)}
-                    {bet.stake_type && bet.stake_type !== 'cash' && (
-                      <span style={{ fontSize: 10, color: 'var(--warning)', marginLeft: 4 }}>{bet.stake_type}</span>
-                    )}
-                  </td>
-                  <td style={{ textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
-                    {bet.odds ? bet.odds.toFixed(2) : '-'}
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <StatusBadge status={bet.status} />
-                      {bet.bet_reference && (
-                        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>#{bet.bet_reference}</span>
-                      )}
-                    </div>
-                  </td>
-                  <td style={{ textAlign: 'right', color: bet.status === 'won' ? 'var(--success)' : 'var(--text-secondary)', fontWeight: bet.payout ? 600 : 400 }}>
-                    {bet.payout ? `$${bet.payout.toFixed(2)}` : '-'}
-                  </td>
-                  <td>
-                    <MethodBadge method={bet.method} />
-                  </td>
-                </tr>
-              ))}
+              {filteredBets.map((bet) => {
+                const stake = parseFloat(String(bet.stake || 0).replace(/[$,]/g, '')) || 0;
+                const odds = parseFloat(String(bet.combined_odds || 0).replace(/[$,]/g, '')) || 0;
+                const payout = parseFloat(String(bet.payout || 0).replace(/[$,]/g, '')) || 0;
+                const legs = bet.legs || [];
+                return (
+                  <tr key={bet.id}>
+                    <td style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap', fontSize: 12 }}>
+                      <div>{bet.placed_at ? new Date(bet.placed_at).toLocaleDateString() : '-'}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{bet.placed_at ? new Date(bet.placed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</div>
+                    </td>
+                    <td>
+                      <span className="badge badge-neutral" style={{ fontSize: 11 }}>{bet.account_label || bet.brand || '-'}</span>
+                    </td>
+                    <td>
+                      <span className={`badge ${bet.bet_type === 'SGM' ? 'badge-purple' : 'badge-accent'}`} style={{ fontSize: 11 }}>
+                        {bet.bet_type || '-'}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {legs.length > 0 ? legs.map((leg, j) => (
+                          <span key={j} style={{ fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280, display: 'block' }}>
+                            {typeof leg === 'string' ? leg : leg.name || `Leg ${j + 1}`}
+                          </span>
+                        )) : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>-</span>}
+                      </div>
+                    </td>
+                    <td style={{ textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>{odds > 0 ? odds.toFixed(2) : '-'}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>${stake.toFixed(2)}</td>
+                    <td><StatusBadge status={bet.status} /></td>
+                    <td style={{ textAlign: 'right', color: bet.status === 'won' ? 'var(--success)' : 'var(--text-secondary)', fontWeight: payout > 0 ? 600 : 400 }}>
+                      {payout > 0 ? `$${payout.toFixed(2)}` : '-'}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

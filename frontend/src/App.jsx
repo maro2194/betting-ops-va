@@ -14,6 +14,8 @@ import AllocUpload from './pages/AllocUpload';
 import BookieAccounts from './pages/BookieAccounts';
 import CsbUpload from './pages/CsbUpload';
 import BetLedger from './pages/BetLedger';
+import Bet365 from './pages/Bet365';
+import CsbResults from './pages/CsbResults';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -49,6 +51,8 @@ function AppRoutes() {
         <Route path="/alloc" element={<AllocUpload />} />
         <Route path="/bookie-accounts" element={<BookieAccounts />} />
         <Route path="/ledger" element={<BetLedger />} />
+        <Route path="/csb-results" element={<CsbResults />} />
+        <Route path="/bet365" element={<Bet365 />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

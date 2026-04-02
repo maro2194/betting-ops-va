@@ -33,12 +33,13 @@ const NAV_GROUPS = [
     label: 'Services',
     items: [
       { to: '/csb', label: 'CSB', icon: Zap },
+      { to: '/json', label: 'Expload', icon: Upload },
+      { to: '/bet365', label: 'bet365', icon: Zap },
     ],
   },
   {
     label: 'Tools',
     items: [
-      { to: '/json', label: 'Expload', icon: Upload },
       { to: '/csv', label: 'CSV Paste', icon: FileSpreadsheet },
       { to: '/alloc', label: 'Allocation', icon: Upload },
     ],
@@ -52,6 +53,7 @@ const NAV_GROUPS = [
   {
     label: 'Account',
     items: [
+      { to: '/csb-results', label: 'CSB Results', icon: Trophy },
       { to: '/history', label: 'History', icon: History },
       { to: '/ledger', label: 'Bet Ledger', icon: BookOpen },
     ],

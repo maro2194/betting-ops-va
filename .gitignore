@@ -20,3 +20,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+backend/.env
+backend/telegram_session.session
+backend/platforms/platforms/

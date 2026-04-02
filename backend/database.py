@@ -78,8 +78,16 @@ async def init_db():
                 payout TEXT,
                 placed_at TIMESTAMPTZ DEFAULT NOW(),
                 settled_at TIMESTAMPTZ,
-                raw_response JSONB
+                raw_response JSONB,
+                source TEXT
             )
+        """)
+        # Add source column if missing (migration for existing DBs)
+        await conn.execute("""
+            DO $$ BEGIN
+                ALTER TABLE bets ADD COLUMN IF NOT EXISTS source TEXT;
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
         """)
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_bets_username ON bets(username)
@@ -293,8 +301,8 @@ async def save_bet(username: str, bet: dict) -> str:
     async with pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO bets (id, username, account_number, account_label, tsn, bet_type,
-                   legs, combined_odds, stake, status, payout, raw_response)
-               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12::jsonb)""",
+                   legs, combined_odds, stake, status, payout, raw_response, source)
+               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12::jsonb, $13)""",
             bet_id,
             username,
             bet["account_number"],
@@ -307,12 +315,14 @@ async def save_bet(username: str, bet: dict) -> str:
             bet.get("status", "Pending"),
             bet.get("payout"),
             json.dumps(bet.get("raw_response")) if bet.get("raw_response") else None,
+            bet.get("source"),
         )
     return bet_id
 
 
 async def get_bets(username: str, status: str = None, account_number: str = None,
-                   limit: int = 50) -> list[dict]:
+                   account_label: str = None, date_from: str = None, date_to: str = None,
+                   limit: int = 2000) -> list[dict]:
     """Get bets from DB with optional filters."""
     import json
     query = "SELECT * FROM bets WHERE username = $1"
@@ -325,6 +335,25 @@ async def get_bets(username: str, status: str = None, account_number: str = None
     if account_number:
         query += f" AND account_number = ${idx}"
         params.append(account_number)
+        idx += 1
+    if account_label:
+        query += f" AND account_label = ${idx}"
+        params.append(account_label)
+        idx += 1
+    if date_from:
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        # Convert local AEST date to UTC (AEST = UTC+10)
+        aest = _tz(_td(hours=10))
+        dt_from = _dt.fromisoformat(date_from).replace(tzinfo=aest)
+        query += f" AND placed_at >= ${idx}"
+        params.append(dt_from)
+        idx += 1
+    if date_to:
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        aest = _tz(_td(hours=10))
+        dt_to = _dt.fromisoformat(date_to + "T23:59:59").replace(tzinfo=aest)
+        query += f" AND placed_at <= ${idx}"
+        params.append(dt_to)
         idx += 1
     query += f" ORDER BY placed_at DESC LIMIT ${idx}"
     params.append(limit)
@@ -358,6 +387,17 @@ async def update_bet_status(bet_id: str, status: str, payout: str = None):
                 "UPDATE bets SET status = $1 WHERE id = $2",
                 status, bet_id,
             )
+
+
+async def get_all_tsns(username: str = None) -> set:
+    """Return a set of all TSNs already recorded in the bets table.
+    Checks ALL users to prevent cross-user duplicates (e.g. Shadow places via BotOps,
+    Maro syncs the same account — same TSN, different username)."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT tsn FROM bets WHERE tsn IS NOT NULL AND tsn != 'None' AND tsn != ''",
+        )
+        return {r["tsn"] for r in rows}
 
 
 async def get_pending_bets(username: str = None) -> list[dict]:

@@ -10,10 +10,9 @@ logger = logging.getLogger(__name__)
 
 # Session validity buffers (seconds before expiry to consider invalid)
 VALIDITY_BUFFERS = {
-    "tab": 300,          # 5 min buffer
-    "betmakers": 120,    # 2 min buffer
-    "amused": 60,        # 1 min buffer (tokens only last 300s!)
-    "sportsbet": 120,    # 2 min buffer
+    "tab": 300,        # 5 min buffer
+    "betmakers": 120,  # 2 min buffer
+    "amused": 60,      # 1 min buffer (tokens only last 300s!)
 }
 
 
@@ -113,9 +112,6 @@ class SessionManager:
         elif platform == "amused":
             from platforms.amused import AMUSED_BRANDS
             brand_config = AMUSED_BRANDS.get(brand, {}) or {}
-        elif platform == "sportsbet":
-            from platforms.sportsbet import SPORTSBET_BRANDS
-            brand_config = SPORTSBET_BRANDS.get(brand, {}) or {}
         # Merge any user-level overrides from DB
         brand_config = {**brand_config, **account.get("brand_config", {})}
 

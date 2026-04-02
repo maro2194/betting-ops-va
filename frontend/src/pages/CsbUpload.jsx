@@ -133,10 +133,10 @@ export default function CsbUpload() {
 
   // Config
   const [sport, setSport] = useState(CSB_SPORTS[0]);
-  const [unitSize, setUnitSize] = useState('10');
-  const [stakingMode, setStakingMode] = useState('units');
-  const [fixedStake, setFixedStake] = useState('10');
-  const [maxLiability, setMaxLiability] = useState('500');
+  const [unitSize, setUnitSize] = useState(() => localStorage.getItem('csb_unitSize') || '10');
+  const [stakingMode, setStakingMode] = useState(() => localStorage.getItem('csb_stakingMode') || 'units');
+  const [fixedStake, setFixedStake] = useState(() => localStorage.getItem('csb_fixedStake') || '10');
+  const [maxLiability, setMaxLiability] = useState(() => localStorage.getItem('csb_maxLiability') || '500');
 
   // Account queue
   const [accountQueue, setAccountQueue] = useState([]);
@@ -145,9 +145,30 @@ export default function CsbUpload() {
   // Warmup state
   const [warmupStatus, setWarmupStatus] = useState(null); // null | 'warming' | {results: [...]}
 
+  // Selection state (checkboxes per bet)
+  const [selectedBets, setSelectedBets] = useState({}); // {index: true/false}
+
+  // Liability split config (persisted)
+  const [liabilitySplitEnabled, setLiabilitySplitEnabled] = useState(() => localStorage.getItem('csb_liabSplit') !== 'false');
+  const [liabilityCap, setLiabilityCap] = useState(() => localStorage.getItem('csb_liabCap') || '600');
+
+  // Odds drift staking (persisted)
+  const [oddsDriftEnabled, setOddsDriftEnabled] = useState(() => localStorage.getItem('csb_oddsDrift') !== 'false');
+
+
+  // Persist settings to localStorage
+  useEffect(() => { localStorage.setItem('csb_unitSize', unitSize); }, [unitSize]);
+  useEffect(() => { localStorage.setItem('csb_stakingMode', stakingMode); }, [stakingMode]);
+  useEffect(() => { localStorage.setItem('csb_fixedStake', fixedStake); }, [fixedStake]);
+  useEffect(() => { localStorage.setItem('csb_maxLiability', maxLiability); }, [maxLiability]);
+  useEffect(() => { localStorage.setItem('csb_liabSplit', liabilitySplitEnabled); }, [liabilitySplitEnabled]);
+  useEffect(() => { localStorage.setItem('csb_liabCap', liabilityCap); }, [liabilityCap]);
+  useEffect(() => { localStorage.setItem('csb_oddsDrift', oddsDriftEnabled); }, [oddsDriftEnabled]);
+
   // Placement state
   const [placing, setPlacing] = useState(false);
   const [resolving, setResolving] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [betStatuses, setBetStatuses] = useState({});
   const [currentBetIndex, setCurrentBetIndex] = useState(-1);
   const [currentAccountIdx, setCurrentAccountIdx] = useState(0);
@@ -191,18 +212,100 @@ export default function CsbUpload() {
 
   const enabledAccounts = accountQueue.filter((a) => a.enabled);
 
+  // ─── Liability Split (JS-side) ───
+  const splitBetsByLiability = (bets) => {
+    const cap = parseFloat(liabilityCap) || 600;
+    const increment = 10;
+    const numAccounts = enabledAccounts.length;
+    if (numAccounts < 1 || !liabilitySplitEnabled) return bets.map((b, i) => ({ ...b, _origIdx: i, _splitOf: 1, _splitN: 0 }));
+
+    const result = [];
+    for (let i = 0; i < bets.length; i++) {
+      const bet = bets[i];
+      const stake = getStakeForBet(bet);
+      const odds = bet.odds || 2;
+      const liability = (odds - 1) * stake;
+
+      if (liability <= cap || odds <= 1) {
+        result.push({ ...bet, _origIdx: i, _splitOf: 1, _splitN: 0 });
+        continue;
+      }
+
+      // Need to split
+      const maxStakePerBet = Math.floor((cap / (odds - 1)) / increment) * increment;
+      if (maxStakePerBet <= 0) {
+        result.push({ ...bet, _origIdx: i, _splitOf: 1, _splitN: 0 });
+        continue;
+      }
+
+      let numSplits = Math.max(1, Math.ceil(stake / maxStakePerBet));
+      numSplits = Math.min(numSplits, numAccounts);
+
+      const base = Math.floor(stake / numSplits / increment) * increment;
+      const remainderChunks = Math.round((stake - base * numSplits) / increment);
+
+      for (let j = 0; j < numSplits; j++) {
+        const splitStake = base + (j < remainderChunks ? increment : 0);
+        result.push({
+          ...bet,
+          _origIdx: i,
+          _splitOf: numSplits,
+          _splitN: j,
+          _splitStake: splitStake,
+        });
+      }
+    }
+    return result;
+  };
+
   const roundToTab = (amount) => {
     // TAB requires stakes in multiples of $0.50
     return Math.floor(amount * 2) / 2;
   };
 
-  const getStakeForBet = (bet) => {
+  // Dynamic Kelly odds drift — Shadow's formula
+  // Reverse-engineers true probability from min_odds, calculates Kelly fraction at both
+  // tipped and actual odds, scales units by the ratio of Kelly fractions.
+  const applyOddsDrift = (units, tippedOdds, actualOdds, minOdds) => {
+    if (!oddsDriftEnabled || !actualOdds || !tippedOdds) return units;
+    if (actualOdds >= tippedOdds) return units; // Odds same or better — full units
+    if (!minOdds || minOdds <= 1) return units; // No min odds — can't calculate
+    if (actualOdds <= minOdds) return 0; // Below min — no edge, skip
+
+    // Step 1: True probability from min odds (break-even point)
+    const p = 1 / minOdds;
+
+    // Step 2: EV at tipped and actual odds
+    const evTarget = (p * tippedOdds) - 1;
+    const evActual = (p * actualOdds) - 1;
+
+    if (evTarget <= 0 || evActual <= 0) return 0; // No edge
+
+    // Step 3: Kelly fractions
+    const kellyTarget = evTarget / (tippedOdds - 1);
+    const kellyActual = evActual / (actualOdds - 1);
+
+    // Step 4: Multiplier
+    const multiplier = kellyActual / kellyTarget;
+
+    return Math.max(0, units * multiplier);
+  };
+
+  const getStakeForBet = (bet, resolvedOdds) => {
+    let units = bet.units || 1;
+
+    // Apply odds drift if we have resolved odds
+    if (oddsDriftEnabled && resolvedOdds && bet.odds) {
+      units = applyOddsDrift(units, bet.odds, resolvedOdds, bet.min_odds || 0);
+      if (units <= 0) return 0; // Skip this bet
+    }
+
     let stake;
-    if (stakingMode === 'units') stake = bet.units * (parseFloat(unitSize) || 10);
+    if (stakingMode === 'units') stake = units * (parseFloat(unitSize) || 10);
     else if (stakingMode === 'fixed') stake = parseFloat(fixedStake) || 10;
     else if (stakingMode === 'liability') {
       const liab = parseFloat(maxLiability) || 500;
-      const odds = bet.odds || 2;
+      const odds = resolvedOdds || bet.odds || 2;
       stake = humanRoundDown(liab / odds);
     } else {
       stake = 10;
@@ -255,14 +358,32 @@ export default function CsbUpload() {
       return;
     }
     setParsedBets(bets);
+    // Select all by default
+    const sel = {};
+    bets.forEach((_, idx) => { sel[idx] = true; });
+    setSelectedBets(sel);
     // Auto-warmup the selected sport after parsing
     runWarmup(sport);
   };
+
+  const toggleBetSelection = (idx) => {
+    setSelectedBets((prev) => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
+  const toggleSelectAll = () => {
+    const allSelected = parsedBets.every((_, i) => selectedBets[i]);
+    const sel = {};
+    parsedBets.forEach((_, i) => { sel[i] = !allSelected; });
+    setSelectedBets(sel);
+  };
+
+  const selectedCount = Object.values(selectedBets).filter(Boolean).length;
 
   const handleReset = () => {
     setCsvText('');
     setParsedBets([]);
     setBetStatuses({});
+    setSelectedBets({});
     setError('');
     setCurrentBetIndex(-1);
     setPlacing(false);
@@ -382,9 +503,15 @@ export default function CsbUpload() {
 
     const initialStatuses = {};
     parsedBets.forEach((_, i) => {
-      initialStatuses[i] = { status: 'pending' };
+      if (selectedBets[i]) {
+        initialStatuses[i] = { status: 'pending' };
+      }
     });
-    setBetStatuses(initialStatuses);
+    setBetStatuses((prev) => ({ ...prev, ...initialStatuses }));
+
+    // Build placement queue: apply liability splitting if enabled
+    const selectedList = parsedBets.map((b, i) => selectedBets[i] ? b : null).filter(Boolean);
+    const placementQueue = splitBetsByLiability(selectedList);
 
     let accIdx = 0;
     const runningBalances = {};
@@ -395,11 +522,26 @@ export default function CsbUpload() {
     let betsSinceBreak = 0;
     let nextBreakAt = 15 + Math.floor(Math.random() * 11); // 15-25
 
-    for (let i = 0; i < parsedBets.length; i++) {
+    for (let qi = 0; qi < placementQueue.length; qi++) {
       if (abortRef.current) break;
 
+      const qBet = placementQueue[qi];
+      const i = qBet._origIdx; // Map back to original bet index for status
       const bet = parsedBets[i];
-      const stake = getStakeForBet(bet);
+      // Use resolved combined odds for drift adjustment if available
+      const resolvedOdds = betStatuses[i]?.combined_odds ? parseFloat(betStatuses[i].combined_odds) : null;
+      const stake = qBet._splitStake || getStakeForBet(bet, resolvedOdds);
+
+      // Skip bets where drift reduced stake to 0 (below min odds)
+      if (stake <= 0) {
+        setBetStatuses((prev) => ({ ...prev, [i]: { status: 'failed', error: 'Odds drifted below minimum — skipped' } }));
+        continue;
+      }
+
+      // For split bets, cycle to next account for each split
+      if (qBet._splitOf > 1 && qBet._splitN > 0) {
+        accIdx = Math.min(accIdx + 1, enabledAccounts.length - 1);
+      }
 
       // Find account with sufficient balance
       while (accIdx < enabledAccounts.length && runningBalances[enabledAccounts[accIdx].id] < stake) {
@@ -421,9 +563,10 @@ export default function CsbUpload() {
 
       setCurrentBetIndex(i);
       setCurrentAccountIdx(accIdx);
+      const splitLabel = qBet._splitOf > 1 ? ` (split ${qBet._splitN + 1}/${qBet._splitOf})` : '';
       setBetStatuses((prev) => ({
         ...prev,
-        [i]: { status: 'placing', account: currentAcc.id },
+        [i]: { ...(qBet._splitOf > 1 ? prev[i] : {}), status: 'placing', account: currentAcc.id, splitLabel },
       }));
 
       try {
@@ -460,12 +603,12 @@ export default function CsbUpload() {
           }));
         } else {
           const errMsg = result.error || 'Unknown error';
-          if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.includes('insufficient')) {
+          if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.toLowerCase().includes('insufficient')) {
             runningBalances[currentAcc.id] = 0;
             setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: 0 }));
             accIdx++;
-            i--;
-            setBetStatuses((prev) => ({ ...prev, [i + 1]: { status: 'pending' } }));
+            qi--;
+            setBetStatuses((prev) => ({ ...prev, [i]: { status: 'pending' } }));
           } else {
             setBetStatuses((prev) => ({
               ...prev,
@@ -481,11 +624,11 @@ export default function CsbUpload() {
         }
       } catch (err) {
         const errMsg = err.message || 'Network error';
-        if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.includes('insufficient')) {
+        if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.toLowerCase().includes('insufficient')) {
           runningBalances[currentAcc.id] = 0;
           setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: 0 }));
           accIdx++;
-          i--;
+          qi--;
         } else {
           setBetStatuses((prev) => ({
             ...prev,
@@ -516,6 +659,83 @@ export default function CsbUpload() {
 
     setPlacing(false);
     setCurrentBetIndex(-1);
+  };
+
+  // ─── Retry Failed ───
+  const handleRetryFailed = async () => {
+    if (enabledAccounts.length === 0) return;
+
+    const failedIndices = Object.entries(betStatuses)
+      .filter(([, s]) => s.status === 'failed')
+      .map(([idx]) => parseInt(idx));
+
+    if (failedIndices.length === 0) return;
+
+    setRetrying(true);
+    setError('');
+    abortRef.current = false;
+
+    let accIdx = 0;
+    const runningBalances = {};
+    for (const acc of enabledAccounts) {
+      runningBalances[acc.id] = accountBalances[acc.id] ?? 0;
+    }
+
+    for (const i of failedIndices) {
+      if (abortRef.current) break;
+
+      const bet = parsedBets[i];
+      const stake = getStakeForBet(bet);
+
+      while (accIdx < enabledAccounts.length && runningBalances[enabledAccounts[accIdx].id] < stake) {
+        accIdx++;
+      }
+      if (accIdx >= enabledAccounts.length) {
+        setBetStatuses((prev) => ({ ...prev, [i]: { ...prev[i], error: 'No accounts with sufficient balance' } }));
+        continue;
+      }
+
+      const currentAcc = enabledAccounts[accIdx];
+      const sessionId = sessions[currentAcc.id]?.session_id;
+
+      setBetStatuses((prev) => ({ ...prev, [i]: { status: 'placing', account: currentAcc.id } }));
+
+      try {
+        const result = await api.csbPlaceOne(sessionId, {
+          bet_type: bet.bet_type, game_id: bet.game_id, bet: bet.bet,
+          odds: bet.odds, min_odds: bet.min_odds, ev_pct: bet.ev_pct,
+          units: bet.units, stake: stake,
+          sport: sport.sport, competition: sport.competition,
+        });
+
+        if (result.success) {
+          const rawBal = result.account_balance || '';
+          const newBal = rawBal ? parseFloat(String(rawBal).replace(/[$,]/g, '')) : runningBalances[currentAcc.id] - stake;
+          runningBalances[currentAcc.id] = newBal;
+          setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: newBal }));
+          setBetStatuses((prev) => ({
+            ...prev,
+            [i]: { status: 'placed', account: currentAcc.id, ticket_number: result.ticket_number, combined_odds: result.combined_odds, matched_odds: result.resolved?.matched_odds },
+          }));
+        } else {
+          const errMsg = result.error || 'Unknown error';
+          if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.toLowerCase().includes('insufficient')) {
+            runningBalances[currentAcc.id] = 0;
+            setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: 0 }));
+            accIdx++;
+          }
+          setBetStatuses((prev) => ({ ...prev, [i]: { status: 'failed', account: currentAcc.id, error: errMsg } }));
+        }
+      } catch (err) {
+        setBetStatuses((prev) => ({ ...prev, [i]: { status: 'failed', account: currentAcc.id, error: err.message || 'Network error' } }));
+      }
+
+      if (!abortRef.current) {
+        await new Promise((r) => setTimeout(r, randomDelay()));
+      }
+    }
+
+    setRetrying(false);
   };
 
   const handleAbort = () => {
@@ -755,6 +975,45 @@ export default function CsbUpload() {
                     )}
                   </div>
                 </div>
+
+                {/* Odds Drift */}
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>Odds Drift</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={oddsDriftEnabled}
+                        onChange={() => setOddsDriftEnabled((v) => !v)} />
+                      Scale stake
+                    </label>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      Reduce units when TAB odds &lt; tipped odds (profit ratio)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Liability Split */}
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>Liability Split</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={liabilitySplitEnabled}
+                        onChange={() => setLiabilitySplitEnabled((v) => !v)} />
+                      Auto-split
+                    </label>
+                    {liabilitySplitEnabled && (
+                      <>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Cap $</span>
+                        <input type="number" value={liabilityCap}
+                          onChange={(e) => setLiabilityCap(e.target.value)} min="100" step="100"
+                          className="t-input"
+                          style={{ width: 80, border: '1px solid var(--border)', padding: '6px 10px', fontSize: 13 }} />
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                          Split across {enabledAccounts.length} accounts, $10 increments
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -857,26 +1116,32 @@ export default function CsbUpload() {
           )}
 
           {/* Action buttons */}
-          <div style={{ display: 'flex', gap: 12 }}>
-            {!placing && (
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            {!placing && !retrying && (
               <>
                 <button onClick={handleResolveAll} disabled={resolving || enabledAccounts.length === 0} className="btn btn-secondary">
                   {resolving ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
                   {resolving ? 'Resolving...' : 'Resolve All'}
                 </button>
-                <button onClick={handlePlaceAll} disabled={placing || enabledAccounts.length === 0} className="btn btn-success">
+                <button onClick={handlePlaceAll} disabled={placing || enabledAccounts.length === 0 || selectedCount === 0} className="btn btn-success">
                   <Play size={16} />
-                  Place All
+                  {selectedCount < parsedBets.length ? `Place Selected (${selectedCount})` : 'Place All'}
                 </button>
+                {failedCount > 0 && (
+                  <button onClick={handleRetryFailed} disabled={retrying || enabledAccounts.length === 0} className="btn btn-primary">
+                    <RotateCcw size={16} />
+                    Retry Failed ({failedCount})
+                  </button>
+                )}
               </>
             )}
-            {placing && (
+            {(placing || retrying) && (
               <button onClick={handleAbort} className="btn btn-danger">
                 <StopCircle size={16} />
-                Abort
+                {retrying ? 'Abort Retry' : 'Abort'}
               </button>
             )}
-            <button onClick={handleReset} className="btn btn-secondary" disabled={placing}>
+            <button onClick={handleReset} className="btn btn-secondary" disabled={placing || retrying}>
               <RotateCcw size={16} />
               Reset
             </button>
@@ -887,6 +1152,10 @@ export default function CsbUpload() {
             <table className="data-table">
               <thead>
                 <tr>
+                  <th style={{ width: 32 }}>
+                    <input type="checkbox" checked={selectedCount === parsedBets.length && parsedBets.length > 0}
+                      onChange={toggleSelectAll} disabled={placing || retrying} style={{ borderRadius: 4 }} />
+                  </th>
                   <th style={{ width: 32 }}>#</th>
                   <th>Type</th>
                   <th>Game</th>
@@ -896,6 +1165,8 @@ export default function CsbUpload() {
                   <th style={{ textAlign: 'right' }}>EV%</th>
                   <th style={{ textAlign: 'right' }}>Units</th>
                   <th style={{ textAlign: 'right' }}>Stake</th>
+                  {oddsDriftEnabled && <th style={{ textAlign: 'right' }}>Adj.</th>}
+                  <th style={{ textAlign: 'right' }}>Liability</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -903,9 +1174,18 @@ export default function CsbUpload() {
                 {parsedBets.map((bet, i) => {
                   const st = betStatuses[i];
                   const legs = bet.bet.split('/').map((l) => l.trim());
-                  const stake = getStakeForBet(bet);
+                  const resolvedOdds = st?.combined_odds ? parseFloat(st.combined_odds) : null;
+                  const baseStake = getStakeForBet(bet);
+                  const adjStake = resolvedOdds ? getStakeForBet(bet, resolvedOdds) : baseStake;
+                  const stake = adjStake > 0 ? adjStake : baseStake;
+                  const driftApplied = oddsDriftEnabled && resolvedOdds && resolvedOdds < bet.odds;
                   return (
-                    <tr key={i} style={{ background: st ? statusRowBg(st.status) : undefined }}>
+                    <tr key={i} style={{ background: st ? statusRowBg(st.status) : undefined, opacity: selectedBets[i] === false ? 0.4 : 1 }}>
+                      <td>
+                        <input type="checkbox" checked={!!selectedBets[i]}
+                          onChange={() => toggleBetSelection(i)} disabled={placing || retrying}
+                          style={{ borderRadius: 4 }} />
+                      </td>
                       <td style={{ color: 'var(--text-muted)' }}>{i + 1}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>
                         <span className={`badge ${bet.bet_type === 'SGM' ? 'badge-purple' : 'badge-accent'}`}>
@@ -953,8 +1233,35 @@ export default function CsbUpload() {
                       <td style={{ textAlign: 'right', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                         {bet.units}
                       </td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                      <td style={{ textAlign: 'right', color: driftApplied ? 'var(--warning)' : 'var(--text-primary)', fontWeight: 500, whiteSpace: 'nowrap' }}>
                         ${stake.toFixed(2)}
+                        {driftApplied && <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 2 }}>↓</span>}
+                      </td>
+                      {oddsDriftEnabled && (
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontSize: 11 }}>
+                          {driftApplied ? (
+                            <span style={{ color: 'var(--warning)' }}>
+                              {((resolvedOdds - 1) / (bet.odds - 1) * 100).toFixed(0)}%
+                            </span>
+                          ) : resolvedOdds ? (
+                            <span style={{ color: 'var(--success)', fontSize: 11 }}>100%</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)' }}>—</span>
+                          )}
+                        </td>
+                      )}
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {(() => {
+                          const liab = (bet.odds - 1) * stake;
+                          const cap = parseFloat(liabilityCap) || 600;
+                          const over = liabilitySplitEnabled && liab > cap;
+                          return (
+                            <span style={{ color: over ? 'var(--danger)' : liab > cap * 0.8 ? 'var(--warning)' : 'var(--text-muted)', fontWeight: over ? 600 : 400, fontSize: 12 }}>
+                              ${liab.toFixed(0)}
+                              {over && <span style={{ fontSize: 10, marginLeft: 2 }}>⚡</span>}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

@@ -37,22 +37,32 @@ export default function History() {
   const [bets, setBets] = useState([]);
   const [filter, setFilter] = useState('');
   const [accountFilter, setAccountFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [viewMode, setViewMode] = useState('table'); // 'table' or 'card'
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
   const [error, setError] = useState('');
 
   const fetchBets = useCallback(async () => {
     try {
-      const data = await api.getBetHistory(filter || undefined, accountFilter || undefined, 200);
+      const data = await api.getBetHistory(
+        filter || undefined,
+        accountFilter || undefined,
+        500,
+        dateFrom || undefined,
+        dateTo || undefined,
+      );
       setBets(data.bets || []);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [filter, accountFilter]);
+  }, [filter, accountFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     setLoading(true);
@@ -71,6 +81,21 @@ export default function History() {
       setError(err.message);
     } finally {
       setChecking(false);
+    }
+  };
+
+  const handleSyncManualBets = async () => {
+    setSyncing(true);
+    setError('');
+    setSyncResult(null);
+    try {
+      const result = await api.syncManualBets();
+      setSyncResult(result);
+      if (result.imported > 0) await fetchBets();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -150,12 +175,12 @@ export default function History() {
         ))}
 
         {/* Account filter */}
-        {accounts.length > 1 && (
+        {accounts.length > 0 && (
           <>
             <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
             <select
               value={accountFilter}
-              onChange={(e) => setAccountFilter(e.target.value)}
+              onChange={(e) => { setAccountFilter(e.target.value); setLoading(true); }}
               className="t-input"
               style={{ border: '1px solid var(--border)', padding: '6px 10px', fontSize: 12 }}
             >
@@ -165,6 +190,35 @@ export default function History() {
               ))}
             </select>
           </>
+        )}
+
+        {/* Date filter */}
+        <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
+        <input
+          type="date"
+          value={dateFrom}
+          onChange={(e) => { setDateFrom(e.target.value); setLoading(true); }}
+          className="t-input"
+          style={{ border: '1px solid var(--border)', padding: '6px 10px', fontSize: 12, width: 130 }}
+          title="From date"
+        />
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>to</span>
+        <input
+          type="date"
+          value={dateTo}
+          onChange={(e) => { setDateTo(e.target.value); setLoading(true); }}
+          className="t-input"
+          style={{ border: '1px solid var(--border)', padding: '6px 10px', fontSize: 12, width: 130 }}
+          title="To date"
+        />
+        {(dateFrom || dateTo) && (
+          <button
+            onClick={() => { setDateFrom(''); setDateTo(''); setLoading(true); }}
+            className="btn btn-ghost"
+            style={{ padding: '4px 8px', fontSize: 11 }}
+          >
+            Clear dates
+          </button>
         )}
 
         {/* Right side: view toggle + check results */}
@@ -193,6 +247,15 @@ export default function History() {
               <LayoutGrid size={14} style={{ color: viewMode === 'card' ? 'var(--text-primary)' : 'var(--text-muted)' }} />
             </button>
           </div>
+          <button
+            onClick={handleSyncManualBets}
+            disabled={syncing}
+            className="btn btn-secondary"
+            style={{ padding: '6px 14px', fontSize: 12 }}
+          >
+            {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            {syncing ? 'Syncing...' : 'Sync Manual Bets'}
+          </button>
           <button
             onClick={handleCheckResults}
             disabled={checking}
@@ -235,6 +298,31 @@ export default function History() {
         </div>
       )}
 
+      {/* Sync manual bets feedback */}
+      {syncResult && (
+        <div className="card" style={{ padding: '12px 16px', marginBottom: 16, fontSize: 12 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
+            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
+              {syncResult.imported > 0 ? (
+                <><CheckCircle size={14} style={{ color: 'var(--success)', verticalAlign: 'middle', marginRight: 4 }} />{syncResult.imported} manual bet{syncResult.imported !== 1 ? 's' : ''} imported</>
+              ) : (
+                'No new manual bets found'
+              )}
+            </span>
+            {syncResult.accounts_checked?.length > 0 && (
+              <span style={{ color: 'var(--text-muted)' }}>
+                Checked: {syncResult.accounts_checked.join(', ')}
+              </span>
+            )}
+            {syncResult.accounts_failed?.length > 0 && (
+              <span style={{ color: 'var(--warning)' }}>
+                Failed: {syncResult.accounts_failed.map((a) => `${a.account} (${a.error})`).join(', ')}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {error && (
         <div style={{ background: 'var(--danger-muted)', color: 'var(--danger)', padding: '10px 12px', borderRadius: 'var(--radius)', fontSize: 13, marginBottom: 16 }}>
           {error}
@@ -270,7 +358,8 @@ export default function History() {
               {bets.map((bet) => (
                 <tr key={bet.id}>
                   <td style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                    {new Date(bet.placed_at).toLocaleDateString()}
+                    <div>{new Date(bet.placed_at).toLocaleDateString()}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{new Date(bet.placed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                   </td>
                   <td>
                     <span className="badge badge-neutral">{bet.account_label || bet.account_number || '-'}</span>

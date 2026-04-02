@@ -311,7 +311,7 @@ export default function JsonUpload() {
           }));
         } else {
           const errMsg = result.error || 'Unknown error';
-          if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.includes('insufficient')) {
+          if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.toLowerCase().includes('insufficient')) {
             runningBalances[currentAcc.id] = 0;
             setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: 0 }));
             accIdx++;
@@ -333,7 +333,7 @@ export default function JsonUpload() {
         }
       } catch (err) {
         const errMsg = err.message || 'Network error';
-        if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.includes('insufficient')) {
+        if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.toLowerCase().includes('insufficient')) {
           runningBalances[currentAcc.id] = 0;
           setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: 0 }));
           accIdx++;
@@ -365,6 +365,90 @@ export default function JsonUpload() {
   const placedCount = Object.values(betStatuses).filter((s) => s.status === 'placed').length;
   const failedCount = Object.values(betStatuses).filter((s) => s.status === 'failed').length;
   const progressPct = parsedBets.length > 0 ? ((placedCount + failedCount) / parsedBets.length) * 100 : 0;
+
+  const [retrying, setRetrying] = useState(false);
+
+  const handleRetryFailed = async () => {
+    if (enabledAccounts.length === 0) {
+      setError('Enable at least one account.');
+      return;
+    }
+
+    const failedIndices = Object.entries(betStatuses)
+      .filter(([, s]) => s.status === 'failed')
+      .map(([idx]) => parseInt(idx));
+
+    if (failedIndices.length === 0) return;
+
+    setRetrying(true);
+    setError('');
+    abortRef.current = false;
+
+    // Use the first enabled account with balance
+    let accIdx = 0;
+    const runningBalances = {};
+    for (const acc of enabledAccounts) {
+      runningBalances[acc.id] = accountBalances[acc.id] ?? 0;
+    }
+
+    for (const i of failedIndices) {
+      if (abortRef.current) break;
+
+      while (accIdx < enabledAccounts.length && runningBalances[enabledAccounts[accIdx].id] < (parsedBets[i]?.stake || 1)) {
+        accIdx++;
+      }
+      if (accIdx >= enabledAccounts.length) {
+        setBetStatuses((prev) => ({ ...prev, [i]: { ...prev[i], error: 'No accounts with sufficient balance' } }));
+        continue;
+      }
+
+      const currentAcc = enabledAccounts[accIdx];
+      const sessionId = sessions[currentAcc.id]?.session_id;
+
+      setBetStatuses((prev) => ({ ...prev, [i]: { status: 'placing', account: currentAcc.id } }));
+
+      try {
+        const bet = { ...parsedBets[i] };
+        if (stakingMode === 'fixed') bet.stake = parseFloat(fixedStake) || 10;
+        else if (stakingMode === 'liability') {
+          bet.max_liability = parseFloat(maxLiability) || 500;
+          if (!bet.stake) bet.stake = 10;
+        }
+        if (!bet.stake || bet.stake <= 0) bet.stake = 10;
+
+        const result = await api.placeJson(sessionId, bet);
+
+        if (result.success) {
+          const rawBal = result.account_balance || '';
+          const newBal = rawBal ? parseFloat(String(rawBal).replace(/[$,]/g, '')) : runningBalances[currentAcc.id] - bet.stake;
+          runningBalances[currentAcc.id] = newBal;
+          setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: newBal }));
+          setBetStatuses((prev) => ({
+            ...prev,
+            [i]: { status: 'placed', account: currentAcc.id, ticket_number: result.ticket_number, combined_odds: result.combined_odds },
+          }));
+        } else {
+          const errMsg = result.error || 'Unknown error';
+          if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.toLowerCase().includes('insufficient')) {
+            runningBalances[currentAcc.id] = 0;
+            setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: 0 }));
+            accIdx++;
+          }
+          setBetStatuses((prev) => ({ ...prev, [i]: { status: 'failed', account: currentAcc.id, error: errMsg } }));
+        }
+      } catch (err) {
+        setBetStatuses((prev) => ({ ...prev, [i]: { status: 'failed', account: currentAcc.id, error: err.message || 'Network error' } }));
+      }
+
+      // Human delay between retries
+      if (!abortRef.current) {
+        const delay = randomDelay();
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+
+    setRetrying(false);
+  };
 
   const currentAccountLabel = () => {
     if (currentAccountIdx < 0 || currentAccountIdx >= enabledAccounts.length) return '';
@@ -640,16 +724,26 @@ export default function JsonUpload() {
           )}
 
           {/* Action buttons */}
-          <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <button
               onClick={handlePlaceAll}
-              disabled={placing || enabledAccounts.length === 0}
+              disabled={placing || retrying || enabledAccounts.length === 0}
               className="btn btn-success"
             >
               {placing ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
               {placing ? 'Placing...' : 'Place All'}
             </button>
-            <button onClick={handleReset} className="btn btn-secondary">
+            {failedCount > 0 && !placing && (
+              <button
+                onClick={handleRetryFailed}
+                disabled={retrying || enabledAccounts.length === 0}
+                className="btn btn-primary"
+              >
+                {retrying ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
+                {retrying ? `Retrying...` : `Retry Failed (${failedCount})`}
+              </button>
+            )}
+            <button onClick={handleReset} disabled={placing || retrying} className="btn btn-secondary">
               <RotateCcw size={16} />
               Reset
             </button>

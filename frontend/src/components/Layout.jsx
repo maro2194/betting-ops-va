@@ -12,6 +12,10 @@ const PAGE_TITLES = {
   '/json': 'JSON Upload',
   '/alloc': 'Allocation Upload',
   '/bookie-accounts': 'Bookie Accounts',
+  '/bet365': 'bet365 Auto-Placer',
+  '/csb-results': 'CSB Results',
+  '/ledger': 'Bet Ledger',
+  '/csb': 'CSB Upload',
 };
 
 export default function Layout() {

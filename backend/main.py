@@ -27,7 +27,7 @@ from database import (
     init_db, close_db, get_accounts, upsert_account, delete_account, sync_accounts,
     save_app_session, get_app_session, delete_app_session, load_all_app_sessions,
     save_tab_session, load_all_tab_sessions, delete_tab_session,
-    save_bet, get_bets, update_bet_status, get_pending_bets,
+    save_bet, get_bets, update_bet_status, get_pending_bets, get_all_tsns,
 )
 
 from models import (
@@ -62,6 +62,12 @@ async def startup():
     await init_db()
     from multi_database import init_multi_db
     await init_multi_db()
+    # Init bet365 tables
+    from bet365_routes import init_bet365_tables, save_pick_to_db
+    await init_bet365_tables()
+    # Wire DB save into pipeline
+    from pick_pipeline import pick_pipeline
+    pick_pipeline._save_pick_fn = save_pick_to_db
     # Restore sessions from DB
     global app_tokens, sessions
     app_tokens.update(await load_all_app_sessions())
@@ -71,6 +77,10 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    from bet365_service import bet365_service
+    from telegram_monitor import telegram_monitor
+    await telegram_monitor.stop()
+    await bet365_service.stop()
     await close_db()
 
 # ─── App Auth (user accounts for accessing this app) ────────────────────────
@@ -79,6 +89,7 @@ APP_USERS = {
     "maro": {"password_hash": "aeb2f863f78934afccf548e82d786e0ed39fb52c2dfb23663d8333dd6b608ca5", "name": "Maro"},
     "diji": {"password_hash": "0489c36a7155b8b671acbab078697dd365e1da635343fa63fee1415b7af516e8", "name": "Diji"},
     "shadow": {"password_hash": "224e690ddf7786edfd76b8cc372fffad88be3c5694268e1e439fa9740080bd18", "name": "Shadow"},
+    "smd": {"password_hash": "758dcca888a1f019019cde2f3f127107590de40e344a1b2dd0dc566baad9d009", "name": "SMD"},
 }
 
 # Active app auth tokens: token -> {username, name, created_at}
@@ -422,6 +433,7 @@ async def api_place_sgm(req: PlaceBetRequest, _user: dict = Depends(_verify_app_
                 "stake": req.stake,
                 "status": "Pending",
                 "raw_response": result.get("details"),
+                "source": "sgm_builder",
             })
         return PlaceBetResponse(**result)
     except Exception as e:
@@ -486,23 +498,79 @@ async def api_place_multi(req: PlaceMultiRequest, _user: dict = Depends(_verify_
                 "stake": req.stake,
                 "status": "Pending",
                 "raw_response": details,
+                "source": "multi_builder",
             })
         return PlaceBetResponse(**result)
     except Exception as e:
         raise HTTPException(500, f"Multi bet placement failed: {str(e)}")
 
 
+# ─── Leg Results ─────────────────────────────────────────────────────────────
+
+@app.get("/api/leg-results")
+async def api_leg_results(bet_ids: str, _user: dict = Depends(_verify_app_token)):
+    """
+    Check per-leg results for one or more bets.
+    Query param: bet_ids=id1,id2,id3
+    Returns: {bet_id: [leg_result, ...], ...}
+    """
+    from leg_results import check_leg_results
+
+    ids = [i.strip() for i in bet_ids.split(",") if i.strip()]
+    if not ids:
+        raise HTTPException(400, "bet_ids required")
+
+    # Fetch the bets
+    try:
+        bets = await get_bets(_user["username"], limit=500)
+    except Exception as e:
+        raise HTTPException(500, f"DB error: {e}")
+
+    bets_by_id = {b["id"]: b for b in bets}
+
+    # Collect all legs from requested bets
+    response = {}
+    for bet_id in ids:
+        bet = bets_by_id.get(bet_id)
+        if not bet:
+            response[bet_id] = []
+            continue
+
+        legs = bet.get("legs", [])
+        if not legs:
+            response[bet_id] = []
+            continue
+
+        try:
+            leg_results_list = await check_leg_results(legs)
+            response[bet_id] = leg_results_list
+        except Exception as e:
+            logger.error(f"leg_results error for bet {bet_id}: {e}")
+            response[bet_id] = [
+                {"name": (l.get("name", "") if isinstance(l, dict) else str(l)),
+                 "result": "pending", "note": str(e)}
+                for l in legs
+            ]
+
+    return response
+
+
 # ─── Bet History ─────────────────────────────────────────────────────────────
 
 @app.get("/api/bet-history")
 async def api_bet_history(status: str = None, account_number: str = None,
-                          limit: int = 50, _user: dict = Depends(_verify_app_token)):
+                          account_label: str = None, date_from: str = None,
+                          date_to: str = None,
+                          limit: int = 2000, _user: dict = Depends(_verify_app_token)):
     """Get OUR bet history from PostgreSQL — only bets placed through this app."""
     try:
         bets = await get_bets(
             _user["username"],
             status=status if status and status != "ALL" else None,
             account_number=account_number,
+            account_label=account_label,
+            date_from=date_from,
+            date_to=date_to,
             limit=limit,
         )
         return {"bets": bets}
@@ -543,22 +611,20 @@ async def api_check_results(session_id: str = None, _user: dict = Depends(_verif
             accounts_failed.append({"account": acct_num, "error": "No active session — login required"})
             continue
 
-        # Fetch TAB bets for this account
+        # Fetch TAB bets for this account — paginate up to 5 pages (500 bets) to find older ones
+        tab_by_tsn = {}
         try:
             tab_bets = get_my_bets(
                 session_found["legacy_token"], acct_num,
-                session_found["proxy_url"], count=50, status="ALL"
+                session_found["proxy_url"], count=100, status="ALL", max_pages=5
             )
+            for tb in tab_bets.get("bets", []):
+                if tb.get("tsn"):
+                    tab_by_tsn[tb["tsn"]] = tb
             accounts_checked.append(acct_num)
         except Exception as e:
             accounts_failed.append({"account": acct_num, "error": str(e)})
             continue
-
-        # Build TSN lookup
-        tab_by_tsn = {}
-        for tb in tab_bets.get("bets", []):
-            if tb.get("tsn"):
-                tab_by_tsn[tb["tsn"]] = tb
 
         # Match and update
         for bet in acct_bets:
@@ -584,6 +650,121 @@ async def api_check_results(session_id: str = None, _user: dict = Depends(_verif
         "accounts_checked": accounts_checked,
         "accounts_failed": accounts_failed,
         "pending_remaining": len(pending) - updated_count,
+    }
+
+
+@app.post("/api/sync-manual-bets")
+async def api_sync_manual_bets(_user: dict = Depends(_verify_app_token)):
+    """Scan TAB bet history for all active sessions and import bets not already in DB as Manual entries."""
+    username = _user["username"]
+
+    # Fetch all TSNs already stored for this user
+    known_tsns = await get_all_tsns(username)
+
+    imported = []
+    accounts_checked = []
+    accounts_failed = []
+
+    # Build account ownership: only sync accounts that belong to this user
+    # Match by email since account_number may be null in tab_accounts
+    user_accounts = await get_accounts(username)
+    user_emails = {a["email"].lower() for a in user_accounts if a.get("email")}
+    account_label_map = {}
+    for a in user_accounts:
+        if a.get("account_number"):
+            account_label_map[a["account_number"]] = a["label"]
+        if a.get("email"):
+            account_label_map[a["email"].lower()] = a["label"]
+
+    # Loop only sessions that belong to this user (matched by email)
+    for sid, s in sessions.items():
+        acct_num = s.get("account_number", "")
+        legacy_token = s.get("legacy_token", "")
+        email = s.get("email", "").lower()
+        if not acct_num or not legacy_token:
+            continue
+        # Only sync if this session's email matches one of the user's accounts
+        if email and email not in user_emails:
+            continue
+
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda _s=s, _a=acct_num: get_my_bets(
+                    _s["legacy_token"], _a, _s.get("proxy_url"), count=50, status="ALL"
+                )
+            )
+            accounts_checked.append(acct_num)
+        except Exception as e:
+            accounts_failed.append({"account": acct_num, "error": str(e)})
+            continue
+
+        acct_label = account_label_map.get(acct_num, account_label_map.get(email, acct_num))
+
+        for tb in result.get("bets", []):
+            tsn = tb.get("tsn", "")
+            if not tsn or tsn in known_tsns:
+                continue
+
+            # Normalise legs: TAB returns list of strings (eventName already extracted in get_my_bets)
+            raw_legs = tb.get("legs", [])
+            legs = []
+            for leg in raw_legs:
+                if isinstance(leg, dict):
+                    legs.append({"name": leg.get("eventName") or leg.get("name") or str(leg)})
+                else:
+                    legs.append({"name": str(leg)})
+
+            # Only import player prop bets (skip team handicaps, singles with no legs, racing)
+            if not legs:
+                continue
+            legs_text = " ".join(l.get("name", "") for l in legs).lower()
+            is_player_prop = any(kw in legs_text for kw in ["pts", "disp", "reb", "ast", "goal", "tackle", "mark", "hit", "point"])
+            if not is_player_prop:
+                continue
+
+            # Parse money strings (strip $ and commas)
+            def _money(v):
+                return str(round(float(str(v or "0").replace("$", "").replace(",", "") or 0), 2))
+
+            stake = _money(tb.get("stake", "0"))
+            payout = tb.get("payout", "$0.00")
+
+            # Map TAB status to our schema
+            tab_status = tb.get("status", "Unknown")
+            if tab_status.lower() in ("won", "win"):
+                status = "Won"
+            elif tab_status.lower() in ("lost", "lose", "loser"):
+                status = "Lost"
+            else:
+                status = "Pending"
+
+            bet = {
+                "account_number": acct_num,
+                "account_label": acct_label,
+                "tsn": tsn,
+                "bet_type": "Manual",
+                "legs": legs,
+                "combined_odds": str(tb.get("odds", "0")),
+                "stake": stake,
+                "status": status,
+                "payout": payout if status == "Won" else None,
+                "raw_response": tb,
+                "source": "manual",
+            }
+
+            try:
+                bet_id = await save_bet(username, bet)
+                known_tsns.add(tsn)
+                imported.append({"id": bet_id, "tsn": tsn, "account": acct_num})
+            except Exception as e:
+                logger.warning(f"Failed to import manual bet TSN={tsn}: {e}")
+
+    return {
+        "imported": len(imported),
+        "bets": imported,
+        "accounts_checked": accounts_checked,
+        "accounts_failed": accounts_failed,
     }
 
 
@@ -764,6 +945,7 @@ async def api_quick_place(req: QuickBetRequest, _user: dict = Depends(_verify_ap
                         "stake": stake,
                         "status": "Pending",
                         "raw_response": place_result.get("details"),
+                        "source": "csb",
                     })
             except Exception as e:
                 resolved["placed"] = False
@@ -938,6 +1120,7 @@ async def api_csb_place_one(req: CsbBet, _user: dict = Depends(_verify_app_token
                 "stake": str(req.stake),
                 "status": "Pending",
                 "raw_response": details,
+                "source": "expload",
             })
 
         return {
@@ -1281,6 +1464,16 @@ def _resolve_json_bet(token: str, legacy_token: str, proxy_url: str, bet: JsonBe
         price_result = price_check(token, props_for_price, str(bet.stake), bet_type, proxy_url)
         result["combined_odds"] = price_result.get("combined_odds")
 
+        # For non-SGM (Multi), if pricing didn't return combined odds, calculate from individual legs
+        if not result["combined_odds"] and not bet.is_same_event_multi:
+            try:
+                combined = 1.0
+                for l in resolved_legs:
+                    combined *= float(l["odds"])
+                result["combined_odds"] = f"{combined:.2f}"
+            except (ValueError, TypeError):
+                pass
+
         return result
 
     except Exception as e:
@@ -1302,6 +1495,17 @@ async def api_place_json(req: JsonBet, _user: dict = Depends(_verify_app_token))
     if not resolved["resolved"]:
         return {"success": False, "resolved": resolved}
 
+    if not resolved.get("combined_odds"):
+        return {"success": False, "error": "No combined odds from price check", "resolved": resolved}
+
+    # Round stake to nearest $0.50 (TAB rejects non-multiples)
+    import math as _math
+    stake_val = float(req.stake)
+    stake_val = _math.floor(stake_val * 2) / 2  # Round down to nearest $0.50
+    if stake_val < 0.50:
+        stake_val = 0.50
+    stake_str = f"{stake_val:.2f}"
+
     # Place the bet
     try:
         if req.is_same_event_multi:
@@ -1310,7 +1514,7 @@ async def api_place_json(req: JsonBet, _user: dict = Depends(_verify_app_token))
                 account_number=s["account_number"],
                 propositions=resolved["propositions"],
                 combined_odds=resolved["combined_odds"],
-                stake=str(req.stake),
+                stake=stake_str,
                 proxy_url=s["proxy_url"],
             )
         else:
@@ -1318,7 +1522,7 @@ async def api_place_json(req: JsonBet, _user: dict = Depends(_verify_app_token))
                 legacy_token=s["legacy_token"],
                 account_number=s["account_number"],
                 legs=[{"propositionId": l["propositionId"], "odds": l["odds"]} for l in resolved["propositions"]],
-                stake=str(req.stake),
+                stake=stake_str,
                 proxy_url=s["proxy_url"],
             )
 
@@ -1364,16 +1568,17 @@ async def api_place_json(req: JsonBet, _user: dict = Depends(_verify_app_token))
                 "bet_type": "SGM" if req.is_same_event_multi else "Multi",
                 "legs": legs_data,
                 "combined_odds": str(combined),
-                "stake": str(req.stake),
+                "stake": stake_str,
                 "status": "Pending",
                 "raw_response": details,
+                "source": "expload",
             })
 
         return {
             "success": place_result.get("success", False),
             "ticket_number": place_result.get("ticket_number"),
             "combined_odds": resolved.get("combined_odds"),
-            "stake": req.stake,
+            "stake": stake_val,
             "account_balance": place_result.get("account_balance"),
             "error": place_result.get("error"),
             "resolved": resolved,
@@ -1475,6 +1680,7 @@ async def api_place_json_batch(req: JsonBetBatch, _user: dict = Depends(_verify_
                     "stake": str(bet.stake),
                     "status": "Pending",
                     "raw_response": details,
+                    "source": "csv_paste",
                 })
 
             results.append({
@@ -1497,6 +1703,10 @@ async def api_place_json_batch(req: JsonBetBatch, _user: dict = Depends(_verify_
 # ─── Multi-Bookie Routes ────────────────────────────────────────────────────
 from multi_routes import multi_router
 app.include_router(multi_router)
+
+# ─── bet365 Routes ──────────────────────────────────────────────────────────
+from bet365_routes import router as bet365_router
+app.include_router(bet365_router)
 
 # ─── Health ──────────────────────────────────────────────────────────────────
 
