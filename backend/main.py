@@ -1708,6 +1708,10 @@ app.include_router(multi_router)
 from bet365_routes import router as bet365_router
 app.include_router(bet365_router)
 
+# ─── Sportsbet Routes ──────────────────────────────────────────────────────
+from sportsbet_routes import router as sportsbet_router
+app.include_router(sportsbet_router)
+
 # ─── Health ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")

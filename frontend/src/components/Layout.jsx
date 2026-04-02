@@ -13,6 +13,7 @@ const PAGE_TITLES = {
   '/alloc': 'Allocation Upload',
   '/bookie-accounts': 'Bookie Accounts',
   '/bet365': 'bet365 Auto-Placer',
+  '/sportsbet': 'Sportsbet',
   '/csb-results': 'CSB Results',
   '/ledger': 'Bet Ledger',
   '/csb': 'CSB Upload',

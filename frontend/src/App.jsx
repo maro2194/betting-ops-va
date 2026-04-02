@@ -16,6 +16,7 @@ import CsbUpload from './pages/CsbUpload';
 import BetLedger from './pages/BetLedger';
 import Bet365 from './pages/Bet365';
 import CsbResults from './pages/CsbResults';
+import Sportsbet from './pages/Sportsbet';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -53,6 +54,7 @@ function AppRoutes() {
         <Route path="/ledger" element={<BetLedger />} />
         <Route path="/csb-results" element={<CsbResults />} />
         <Route path="/bet365" element={<Bet365 />} />
+        <Route path="/sportsbet" element={<Sportsbet />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

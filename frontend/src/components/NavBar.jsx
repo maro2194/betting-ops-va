@@ -35,6 +35,7 @@ const NAV_GROUPS = [
       { to: '/csb', label: 'CSB', icon: Zap },
       { to: '/json', label: 'Expload', icon: Upload },
       { to: '/bet365', label: 'bet365', icon: Zap },
+      { to: '/sportsbet', label: 'Sportsbet', icon: Zap },
     ],
   },
   {
