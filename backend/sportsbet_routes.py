@@ -6,12 +6,16 @@ VPS refreshes token via proxy).
 import json
 import logging
 import os
+import re
 import time
+from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel
 from typing import Optional
 from curl_cffi.requests import Session
+
+from database import get_app_session, get_bets
 
 logger = logging.getLogger("sportsbet_routes")
 
@@ -295,3 +299,222 @@ async def sb_find_current_match():
     from live_stats import find_current_match_id
     mid = find_current_match_id()
     return {"match_id": mid}
+
+
+# ─── Auth dependency (mirrors multi_routes.py pattern) ──────────────────────
+
+async def _verify_app_token(authorization: str = Header(None)) -> dict:
+    """Verify app auth token from Authorization header."""
+    if not authorization:
+        raise HTTPException(401, "Missing authorization. Please login to the app first.")
+    token = authorization.replace("Bearer ", "").replace("bearer ", "")
+    from main import app_tokens
+    if token in app_tokens:
+        return app_tokens[token]
+    session = await get_app_session(token)
+    if session:
+        app_tokens[token] = {
+            "username": session["username"],
+            "name": session["name"],
+            "created_at": session["created_at"],
+        }
+        return app_tokens[token]
+    raise HTTPException(401, "Invalid or expired app token. Please login again.")
+
+
+# ─── Leg parsing helpers ─────────────────────────────────────────────────────
+
+# Patterns for disposal lines in bet leg names:
+# "AFL Brs-Col 20Disps Nick Daicos (COL)"
+# "AFL Brs-Col 15Disps Harry Perryman (COL) @Price:1.48"
+# "Nick Daicos (COL) — 20+ Disposals"
+_AFL_DISPS_RE = re.compile(
+    r'(\d+)\s*Disps?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z\']+)+)\s*\(',
+    re.IGNORECASE,
+)
+_ALT_DISPS_RE = re.compile(
+    r'([A-Z][a-z]+(?:\s+[A-Z][a-z\']+)+)\s*\([^)]+\)\s*[—\-]+\s*(\d+)\+?\s*Disposals',
+    re.IGNORECASE,
+)
+
+
+def _parse_disposal_leg(leg_name: str) -> Optional[dict]:
+    """Return {player, line} for a disposal leg, or None if not parseable."""
+    # Strip @Price suffix first
+    name = re.sub(r'\s*@Price:[^\s]+', '', leg_name).strip()
+
+    m = _AFL_DISPS_RE.search(name)
+    if m:
+        return {"player": m.group(2).strip(), "line": int(m.group(1))}
+
+    m = _ALT_DISPS_RE.search(name)
+    if m:
+        return {"player": m.group(1).strip(), "line": int(m.group(2))}
+
+    return None
+
+
+def _match_player(full_name: str, live_players: list[dict]) -> Optional[dict]:
+    """Match a full name like 'Nick Daicos' against Footywire abbreviated names like 'N Daicos'.
+    Returns the matching live player dict or None."""
+    parts = full_name.strip().split()
+    if len(parts) < 2:
+        return None
+    first_initial = parts[0][0].upper()
+    last_name = parts[-1].lower()
+
+    for p in live_players:
+        lname = p.get("name", "")
+        p_parts = lname.strip().split()
+        if len(p_parts) < 2:
+            continue
+        p_initial = p_parts[0][0].upper()
+        p_last = p_parts[-1].lower()
+        if p_last == last_name and p_initial == first_initial:
+            return p
+    return None
+
+
+# ─── Live P/L endpoint ───────────────────────────────────────────────────────
+
+@router.get("/live-pnl")
+async def sb_live_pnl(match_id: int, user: dict = Depends(_verify_app_token)):
+    """Cross-reference today's pending bets with live disposal counts for a match.
+
+    Returns per-bet status (winning/losing/partial/unknown) and summary P/L projections.
+    """
+    from live_stats import get_live_stats
+
+    # Fetch live stats for the match
+    stats_data = get_live_stats(match_id)
+    live_players = stats_data.get("players", [])
+
+    # Fetch today's pending bets for this user (AEST)
+    aest = timezone(timedelta(hours=10))
+    today_str = datetime.now(aest).strftime("%Y-%m-%d")
+    all_bets = await get_bets(
+        user["username"],
+        status="Pending",
+        date_from=today_str,
+        date_to=today_str,
+    )
+
+    # Analyse each bet
+    bet_results = []
+    for bet in all_bets:
+        legs = bet.get("legs") or []
+        leg_analyses = []
+        has_disposal_leg = False
+
+        for leg in legs:
+            leg_name = leg.get("name", "") if isinstance(leg, dict) else str(leg)
+            parsed = _parse_disposal_leg(leg_name)
+
+            if parsed is None:
+                # Not a disposal leg — skip but record
+                leg_analyses.append({
+                    "name": leg_name,
+                    "type": "other",
+                    "hitting": None,
+                    "current": None,
+                    "line": None,
+                    "player_found": False,
+                })
+                continue
+
+            has_disposal_leg = True
+            live_player = _match_player(parsed["player"], live_players)
+            if live_player is None:
+                leg_analyses.append({
+                    "name": leg_name,
+                    "type": "disposal",
+                    "player": parsed["player"],
+                    "line": parsed["line"],
+                    "hitting": None,
+                    "current": None,
+                    "player_found": False,
+                })
+                continue
+
+            current = live_player.get("disposals", 0)
+            hitting = current >= parsed["line"]
+            leg_analyses.append({
+                "name": leg_name,
+                "type": "disposal",
+                "player": parsed["player"],
+                "player_name_live": live_player.get("name"),
+                "line": parsed["line"],
+                "current": current,
+                "hitting": hitting,
+                "player_found": True,
+            })
+
+        # Determine overall bet status from disposal legs only
+        disposal_legs = [l for l in leg_analyses if l["type"] == "disposal" and l["player_found"]]
+        unknown_legs = [l for l in leg_analyses if l["type"] == "disposal" and not l["player_found"]]
+
+        if not has_disposal_leg:
+            status = "unknown"
+        elif not disposal_legs and unknown_legs:
+            status = "unknown"
+        else:
+            hitting_count = sum(1 for l in disposal_legs if l["hitting"])
+            total_known = len(disposal_legs)
+            if total_known == 0:
+                status = "unknown"
+            elif hitting_count == total_known:
+                status = "winning"
+            elif hitting_count == 0:
+                status = "losing"
+            else:
+                status = "partial"
+
+        try:
+            combined_odds = float(bet.get("combined_odds", 0))
+            stake = float(bet.get("stake", 0))
+        except (TypeError, ValueError):
+            combined_odds = 0.0
+            stake = 0.0
+
+        potential_return = round(stake * combined_odds, 2)
+
+        bet_results.append({
+            "id": bet["id"],
+            "bet_type": bet.get("bet_type"),
+            "account_label": bet.get("account_label"),
+            "combined_odds": combined_odds,
+            "stake": stake,
+            "potential_return": potential_return,
+            "placed_at": bet.get("placed_at"),
+            "status": status,
+            "legs": leg_analyses,
+        })
+
+    # Summary totals
+    projected_win = sum(b["potential_return"] for b in bet_results if b["status"] == "winning")
+    projected_loss_stake = sum(b["stake"] for b in bet_results if b["status"] == "losing")
+    total_stake = sum(b["stake"] for b in bet_results)
+    # Floor = if all partial/winning bets lose, ceiling = if all partial bets also win
+    partial_bets = [b for b in bet_results if b["status"] == "partial"]
+    ceiling = projected_win + sum(b["potential_return"] for b in partial_bets)
+    floor_loss = projected_loss_stake + sum(b["stake"] for b in partial_bets)
+
+    return {
+        "match_id": match_id,
+        "match_title": stats_data.get("title", ""),
+        "live_players_count": len(live_players),
+        "bets": bet_results,
+        "summary": {
+            "total_bets": len(bet_results),
+            "winning": sum(1 for b in bet_results if b["status"] == "winning"),
+            "losing": sum(1 for b in bet_results if b["status"] == "losing"),
+            "partial": sum(1 for b in bet_results if b["status"] == "partial"),
+            "unknown": sum(1 for b in bet_results if b["status"] == "unknown"),
+            "total_stake": round(total_stake, 2),
+            "projected_win": round(projected_win, 2),
+            "projected_loss": round(projected_loss_stake, 2),
+            "ceiling": round(ceiling, 2),
+            "floor_loss": round(floor_loss, 2),
+            "live_pnl": round(projected_win - projected_loss_stake, 2),
+        },
+    }

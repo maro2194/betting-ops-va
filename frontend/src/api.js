@@ -164,6 +164,9 @@ export const api = {
   bet365GetPicks: (limit = 50) => request(`/api/bet365/picks?limit=${limit}`),
   bet365ManualPick: (pick) => request('/api/bet365/picks/manual', { method: 'POST', body: JSON.stringify(pick) }),
 
+  // Live P/L (bet tracker cross-referenced with live disposal counts)
+  getLivePnl: (matchId) => request(`/api/sportsbet/live-pnl?match_id=${matchId}`),
+
   // Health
   health: () => request('/api/health'),
 };

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
-import { RefreshCw, Loader2 } from 'lucide-react';
+import { RefreshCw, Loader2, CheckCircle, XCircle, AlertCircle, TrendingUp, TrendingDown, DollarSign, Activity } from 'lucide-react';
 
 const DEFAULT_MATCH_ID = 11433; // Brisbane v Collingwood
 
@@ -24,6 +24,236 @@ function DisposalBar({ current, target, max }) {
     </div>
   );
 }
+
+// ─── Bet Tracker ─────────────────────────────────────────────────────────────
+
+function StatusBadge({ status }) {
+  const cfg = {
+    winning: { bg: 'var(--success)', label: 'Winning' },
+    losing:  { bg: 'var(--danger)',  label: 'Losing'  },
+    partial: { bg: 'var(--warning)', label: 'Partial' },
+    unknown: { bg: 'var(--text-muted)', label: 'Unknown' },
+  }[status] || { bg: 'var(--text-muted)', label: status };
+
+  return (
+    <span style={{
+      background: cfg.bg,
+      color: '#fff',
+      fontSize: 10,
+      fontWeight: 700,
+      padding: '2px 7px',
+      borderRadius: 10,
+      textTransform: 'uppercase',
+      letterSpacing: '0.04em',
+    }}>
+      {cfg.label}
+    </span>
+  );
+}
+
+function LegRow({ leg }) {
+  if (leg.type === 'other') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12, color: 'var(--text-muted)' }}>
+        <AlertCircle size={13} style={{ flexShrink: 0 }} />
+        <span style={{ fontStyle: 'italic' }}>{leg.name}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 11 }}>non-disposal</span>
+      </div>
+    );
+  }
+
+  if (!leg.player_found) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12, color: 'var(--text-muted)' }}>
+        <AlertCircle size={13} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+        <span>{leg.player} — {leg.line}+ disps</span>
+        <span style={{ marginLeft: 'auto', fontSize: 11 }}>player not in live data</span>
+      </div>
+    );
+  }
+
+  const Icon = leg.hitting ? CheckCircle : XCircle;
+  const color = leg.hitting ? 'var(--success)' : 'var(--danger)';
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13 }}>
+      <Icon size={15} style={{ color, flexShrink: 0 }} />
+      <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{leg.player}</span>
+      <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+        {leg.current} / {leg.line}+ disps
+      </span>
+      {leg.hitting && (
+        <span style={{ fontSize: 10, color: 'var(--success)', fontWeight: 700 }}>HIT</span>
+      )}
+    </div>
+  );
+}
+
+function BetCard({ bet }) {
+  const borderColor = {
+    winning: 'var(--success)',
+    losing:  'var(--danger)',
+    partial: 'var(--warning)',
+    unknown: 'var(--border)',
+  }[bet.status] || 'var(--border)';
+
+  const bgColor = {
+    winning: 'var(--success-muted, rgba(46,204,113,0.08))',
+    losing:  'rgba(239,68,68,0.06)',
+    partial: 'rgba(245,158,11,0.06)',
+    unknown: 'var(--bg-card)',
+  }[bet.status] || 'var(--bg-card)';
+
+  return (
+    <div style={{
+      background: bgColor,
+      borderLeft: `3px solid ${borderColor}`,
+      borderRadius: 6,
+      padding: '10px 14px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6,
+    }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <StatusBadge status={bet.status} />
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{bet.account_label}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {bet.placed_at ? new Date(bet.placed_at).toLocaleTimeString() : ''}
+        </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            Stake <strong style={{ color: 'var(--text-primary)' }}>${bet.stake.toFixed(2)}</strong>
+          </span>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            @ <strong style={{ color: 'var(--accent)' }}>{bet.combined_odds.toFixed(2)}</strong>
+          </span>
+          <span style={{ fontSize: 12 }}>
+            Return <strong style={{
+              color: bet.status === 'winning' ? 'var(--success)' : 'var(--text-primary)',
+              fontSize: 14,
+            }}>${bet.potential_return.toFixed(2)}</strong>
+          </span>
+        </div>
+      </div>
+
+      {/* Legs */}
+      <div style={{ paddingLeft: 4, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+        {bet.legs.map((leg, i) => <LegRow key={i} leg={leg} />)}
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({ icon: Icon, label, value, color }) {
+  return (
+    <div style={{
+      background: 'var(--bg-card)',
+      border: '1px solid var(--border)',
+      borderRadius: 8,
+      padding: '10px 14px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      flex: '1 1 160px',
+    }}>
+      <Icon size={18} style={{ color: color || 'var(--text-muted)', flexShrink: 0 }} />
+      <div>
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{label}</div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: color || 'var(--text-primary)', lineHeight: 1.2 }}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function BetTracker({ matchId }) {
+  const [pnl, setPnl] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const fetchPnl = useCallback(async () => {
+    if (!matchId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const d = await api.getLivePnl(matchId);
+      setPnl(d);
+    } catch (e) {
+      setError(e.message);
+    }
+    setLoading(false);
+  }, [matchId]);
+
+  useEffect(() => {
+    fetchPnl();
+  }, [fetchPnl]);
+
+  const s = pnl?.summary;
+  const bets = pnl?.bets || [];
+  const pnlValue = s?.live_pnl ?? 0;
+  const pnlColor = pnlValue > 0 ? 'var(--success)' : pnlValue < 0 ? 'var(--danger)' : 'var(--text-primary)';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* Section title */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Activity size={15} style={{ color: 'var(--accent)' }} />
+        <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Bet Tracker</span>
+        {loading && <Loader2 size={13} className="animate-spin" style={{ color: 'var(--text-muted)' }} />}
+        {s && (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            {s.total_bets} bet{s.total_bets !== 1 ? 's' : ''} today
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <div style={{ padding: '7px 12px', background: 'var(--danger)', color: '#fff', borderRadius: 6, fontSize: 12 }}>
+          {error}
+        </div>
+      )}
+
+      {s && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <SummaryCard icon={DollarSign} label="Total Stake" value={`$${s.total_stake.toFixed(2)}`} />
+          <SummaryCard icon={TrendingUp} label="Projected Win" value={`$${s.projected_win.toFixed(2)}`} color={s.projected_win > 0 ? 'var(--success)' : undefined} />
+          <SummaryCard icon={TrendingDown} label="At Risk" value={`$${s.projected_loss.toFixed(2)}`} color={s.projected_loss > 0 ? 'var(--danger)' : undefined} />
+          <SummaryCard icon={Activity} label="Live P/L" value={`${pnlValue >= 0 ? '+' : ''}$${pnlValue.toFixed(2)}`} color={pnlColor} />
+        </div>
+      )}
+
+      {s && s.total_bets > 0 && (
+        <div style={{ display: 'flex', gap: 6, fontSize: 11, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
+          <span>Ceiling: <strong style={{ color: 'var(--success)' }}>${s.ceiling.toFixed(2)}</strong></span>
+          <span style={{ opacity: 0.4 }}>|</span>
+          <span>Max Loss: <strong style={{ color: 'var(--danger)' }}>${s.floor_loss.toFixed(2)}</strong></span>
+          <span style={{ opacity: 0.4 }}>|</span>
+          <span style={{ color: 'var(--success)' }}>{s.winning} winning</span>
+          <span style={{ opacity: 0.4 }}>|</span>
+          <span style={{ color: 'var(--danger)' }}>{s.losing} losing</span>
+          <span style={{ opacity: 0.4 }}>|</span>
+          <span style={{ color: 'var(--warning)' }}>{s.partial} partial</span>
+          <span style={{ opacity: 0.4 }}>|</span>
+          <span>{s.unknown} unknown</span>
+        </div>
+      )}
+
+      {bets.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {bets.map(bet => <BetCard key={bet.id} bet={bet} />)}
+        </div>
+      )}
+
+      {!loading && !error && s && s.total_bets === 0 && (
+        <div style={{ padding: '12px 16px', background: 'var(--bg-card)', borderRadius: 6, fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' }}>
+          No pending bets placed today.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function LiveStats() {
   const [matchId, setMatchId] = useState(DEFAULT_MATCH_ID);
@@ -102,6 +332,18 @@ export default function LiveStats() {
       {data?.error && (
         <div style={{ padding: '8px 12px', background: 'var(--danger)', color: '#fff', borderRadius: 6, fontSize: 13 }}>
           {data.error}
+        </div>
+      )}
+
+      {/* Bet Tracker — shown above player table once a match is loaded */}
+      {matchId && (
+        <div style={{
+          background: 'var(--bg-surface, var(--bg-input))',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          padding: '12px 14px',
+        }}>
+          <BetTracker matchId={matchId} />
         </div>
       )}
 

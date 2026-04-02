@@ -101,7 +101,8 @@ def get_live_stats(match_id: int) -> dict:
                                     except ValueError:
                                         stats[col_name] = 0
 
-                        if stats.get("name") and (stats.get("disposals", 0) > 0 or stats.get("kicks", 0) > 0 or stats.get("handballs", 0) > 0 or True):
+                        name = stats.get("name", "")
+                        if name and len(name) > 2 and name not in ("No", "Yes", "Total", "Totals") and not name.isdigit():
                             stats["team_idx"] = team_count
                             players.append(stats)
                     except Exception:
