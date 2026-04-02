@@ -1,0 +1,57 @@
+[
+  {
+    "url": "https://c.go-mpulse.net/api/config.json?key=NCXFY-3NGJE-U84CA-LZQ8C-KLNSQ&d=www.sportsbet.com.au&t=5917041&v=1.792.70&sl=0&si=4b93e192-25dd-45db-8bb3-f57425228d4a-tcutfn&plugins=AK,ConfigOverride,Cont",
+    "status": 200,
+    "size": 3099
+  },
+  {
+    "url": "https://www.sportsbet.com.au/apigw/sportsbook-racing/Sportsbook/Racing/NextEvents?racingFilters=HR_DOMESTIC,HR_INTERNATIONAL,GH_DOMESTIC,GH_INTERNATIONAL,HA_DOMESTIC,HA_INTERNATIONAL&groupByFilters=tr",
+    "status": 200,
+    "size": 162529
+  },
+  {
+    "url": "https://www.sportsbet.com.au/apigw/page-content/safer_gambling_message",
+    "status": 200,
+    "size": 301
+  },
+  {
+    "url": "https://www.sportsbet.com.au/apigw/time",
+    "status": 200,
+    "size": 2
+  },
+  {
+    "url": "https://www.sportsbet.com.au/apigw/cms/app/messages?loggedIn=false&platform=cxp_web",
+    "status": 200,
+    "size": 2
+  },
+  {
+    "url": "https://www.sportsbet.com.au/apigw/cms/app/page?competitionId=4165&loggedIn=false",
+    "status": 200,
+    "size": 2
+  },
+  {
+    "url": "https://www.sportsbet.com.au/apigw/sports-form/league-ladder-status/4165",
+    "status": 200,
+    "size": 331
+  },
+  {
+    "url": "https://sc-static.net/scevent.min.js",
+    "status": 200,
+    "size": 58518
+  },
+  {
+    "url": "https://analytics.google.com/g/collect?v=2&tid=G-RKBY49TXN5&gtm=45je63v0v9170922745za200zd9170922745&_p=1775112331842&_gaz=1&gcd=13l3l3l3l1l1&npa=0&dma=0&gdid=dYmQxMT&cid=1633986464.1775112333&ul=en-u",
+    "status": 204,
+    "size": 0
+  },
+  {
+    "url": "https://connect.facebook.net/en_US/fbevents.js",
+    "status": 200,
+    "size": 365683
+  },
+  {
+    "url": "https://analytics.tiktok.com/i18n/pixel/events.js?sdkid=CC7DJTRC77U6DSA11FIG&lib=ttq",
+    "status": 200,
+    "size": 8875
+  }
+]

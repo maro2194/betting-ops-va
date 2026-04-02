@@ -259,7 +259,8 @@ export default function CsbUpload() {
   };
 
   const roundToTab = (amount) => {
-    // TAB requires stakes in multiples of $0.50
+    // Human-like rounding: $50+ rounds to nearest $5 down, under $50 to $0.50
+    if (amount >= 50) return Math.floor(amount / 5) * 5;
     return Math.floor(amount * 2) / 2;
   };
 
@@ -538,9 +539,10 @@ export default function CsbUpload() {
         continue;
       }
 
-      // For split bets, cycle to next account for each split
-      if (qBet._splitOf > 1 && qBet._splitN > 0) {
-        accIdx = Math.min(accIdx + 1, enabledAccounts.length - 1);
+      // For split bets, assign each split to a different account (round-robin from first enabled)
+      if (qBet._splitOf > 1) {
+        // Reset to spread across accounts: split 0 → account 0, split 1 → account 1, etc.
+        accIdx = qBet._splitN % enabledAccounts.length;
       }
 
       // Find account with sufficient balance

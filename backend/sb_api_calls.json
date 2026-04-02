@@ -1,0 +1,38 @@
+[
+  {
+    "url": "https://www.sportsbet.com.au/apigw/sportsbook-racing/Sportsbook/Racing/NextEvents?racingFilters=HR_DOMESTIC,HR_INTERNATIONAL,GH_DOMESTIC,GH_INTERNATIONAL,HA_DOMESTIC,HA_INTERNATIONAL&groupByFilters=tr",
+    "status": 200,
+    "size": 162608,
+    "method": "GET"
+  },
+  {
+    "url": "https://www.sportsbet.com.au/apigw/cms/app/messages?loggedIn=false&platform=cxp_web",
+    "status": 200,
+    "size": 2,
+    "method": "GET"
+  },
+  {
+    "url": "https://www.sportsbet.com.au/apigw/cms/app/page?competitionId=4165&loggedIn=false",
+    "status": 200,
+    "size": 2,
+    "method": "GET"
+  },
+  {
+    "url": "https://www.sportsbet.com.au/apigw/sports-form/league-ladder-status/4165",
+    "status": 200,
+    "size": 331,
+    "method": "GET"
+  },
+  {
+    "url": "https://www.sportsbet.com.au/apigw/page-content/safer_gambling_message",
+    "status": 200,
+    "size": 301,
+    "method": "GET"
+  },
+  {
+    "url": "https://www.sportsbet.com.au/apigw/time",
+    "status": 200,
+    "size": 2,
+    "method": "GET"
+  }
+]
