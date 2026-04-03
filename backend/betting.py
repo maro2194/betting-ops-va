@@ -188,28 +188,54 @@ def get_matches(token: str, proxy_url: Optional[str] = None,
 def get_match_markets(token: str, match_id: str, proxy_url: Optional[str] = None,
                       sport: str = "AFL Football", competition: str = "AFL") -> dict:
     """Get regular match markets (H2H, Line, Totals, etc.) from tab-info-service.
-    match_id can be short ID (MiavPhi) or full name (Miami v Philadelphia)."""
-    session = _make_session(proxy_url)
-    session.headers.update({"Accept": "application/json", "User-Agent": USER_AGENT})
-    try:
-        url = f"https://api.beta.tab.com.au/v1/tab-info-service/sports/{sport.replace(' ', '%20')}/competitions/{competition}/matches/{match_id.replace(' ', '%20')}?jurisdiction=QLD"
-        resp = session.get(url, timeout=15)
+    match_id can be short ID (MiavPhi) or full name (Miami v Philadelphia).
+    Falls back to Oxylabs proxy if session proxy is blocked."""
+    import random as _rand
 
-        # If 404 with short ID, look up full match name
-        if resp.status_code == 404 and " " not in match_id and "%20" not in match_id:
-            matches = get_matches(token, proxy_url, sport, competition)
-            for m in matches:
-                if m["match_id"] == match_id:
-                    url = f"https://api.beta.tab.com.au/v1/tab-info-service/sports/{sport.replace(' ', '%20')}/competitions/{competition}/matches/{m['match_name_url']}?jurisdiction=QLD"
-                    resp = session.get(url, timeout=15)
-                    break
+    url = f"https://api.beta.tab.com.au/v1/tab-info-service/sports/{sport.replace(' ', '%20')}/competitions/{competition}/matches/{match_id.replace(' ', '%20')}?jurisdiction=QLD"
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": USER_AGENT,
+    }
 
-        if resp.status_code == 200:
-            return resp.json()
-        else:
-            raise Exception(f"Match markets fetch failed: {resp.status_code} - {resp.text[:300]}")
-    finally:
-        session.close()
+    # Build proxy list: session proxy first, then Oxylabs fallback
+    # Fallback proxies — try multiple to handle Akamai blocks
+    iproyal = "http://FuTUVMvrSTa9cYM8:XZbc7POb6z75bzCb_country-au@geo.iproyal.com:12321"
+    oxylabs = f"http://customer-marolete_86olc-cc-au-sessid-{_rand.randint(1000000000,9999999999)}-sesstime-10:K5E=2qcyhfyFZs~@pr.oxylabs.io:7777"
+    proxies = [proxy_url, iproyal, oxylabs] if proxy_url else [iproyal, oxylabs]
+
+    last_error = None
+    for px in proxies:
+        session = _make_session(px)
+        session.headers.update(headers)
+        try:
+            resp = session.get(url, timeout=15)
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    return data
+                except Exception:
+                    logger.warning(f"get_match_markets: 200 but not JSON from proxy {px[:30]}")
+                    continue
+            elif resp.status_code == 404 and " " not in match_id and "%20" not in match_id:
+                # Short ID — look up full name
+                matches = get_matches(token, proxy_url, sport, competition)
+                for m in matches:
+                    if m["match_id"] == match_id:
+                        full_url = f"https://api.beta.tab.com.au/v1/tab-info-service/sports/{sport.replace(' ', '%20')}/competitions/{competition}/matches/{m['match_name_url']}?jurisdiction=QLD"
+                        resp2 = session.get(full_url, timeout=15)
+                        if resp2.status_code == 200:
+                            return resp2.json()
+                        break
+            last_error = f"{resp.status_code} - {resp.text[:200]}"
+            logger.warning(f"get_match_markets: {resp.status_code} from proxy {px[:30]}, trying next")
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(f"get_match_markets: exception from proxy {px[:30]}: {e}")
+        finally:
+            session.close()
+
+    raise Exception(f"Match markets fetch failed: {last_error}")
 
 
 def get_sgm_propositions(token: str, match_id: str, proxy_url: Optional[str] = None,

@@ -41,6 +41,7 @@ const NAV_GROUPS = [
   {
     label: 'Tools',
     items: [
+      { to: '/disposals', label: 'Disposals', icon: FileSpreadsheet },
       { to: '/csv', label: 'CSV Paste', icon: FileSpreadsheet },
       { to: '/alloc', label: 'Allocation', icon: Upload },
     ],

@@ -1014,6 +1014,88 @@ async def api_csb_warmup(req: CsbWarmupRequest, _user: dict = Depends(_verify_ap
     return {"results": results}
 
 
+@app.get("/api/csb-props")
+async def api_csb_props(session_id: str, sport: str = "AFL Football", competition: str = "AFL",
+                        _user: dict = Depends(_verify_app_token)):
+    """Export all cached/fetched props for a sport — player names, markets, prop IDs, odds."""
+    s = _get_session(session_id)
+    props = _get_all_sport_props(s["token"], s["proxy_url"], sport, competition, use_regular=True)
+    export = []
+    for p in props:
+        export.append({
+            "propositionId": p.get("propositionId"),
+            "player": p.get("selectionName", p.get("name", "")),
+            "market": p.get("marketName", ""),
+            "odds": p.get("returnWin", 0),
+            "match": p.get("_match_name", ""),
+        })
+    return {"props": export, "count": len(export), "sport": sport, "competition": competition}
+
+
+@app.get("/api/disposals/{match_id}")
+async def api_disposals(match_id: str, session_id: str = None, sport: str = "AFL Football",
+                        competition: str = "AFL", _user: dict = Depends(_verify_app_token)):
+    """Get disposal lines (15+, 20+, 25+, 30+) per player for a match with proposition IDs."""
+    # Find any valid session (don't rely on the one passed — it might be expired)
+    s = None
+    if session_id:
+        try:
+            s = _get_session(session_id)
+        except Exception:
+            pass
+    if not s:
+        for sid, sess in sessions.items():
+            claims = decode_token_claims(sess.get("token", ""))
+            exp = claims.get("exp", 0)
+            if exp and time.time() < exp - 300 and sess.get("proxy_url"):
+                s = sess
+                break
+    if not s:
+        raise HTTPException(401, "No valid TAB session. Please login on the Dashboard.")
+
+    # Try match_id as-is first; if it's a short ID, look up the full match name
+    match_name_url = match_id.replace(" ", "%20")
+    if not "%" in match_name_url and " " not in match_id:
+        # Short ID like NMlvCrl0 — look up full name
+        try:
+            all_matches = get_matches(s["token"], s["proxy_url"], sport, competition)
+            for m in all_matches:
+                if m["match_id"] == match_id:
+                    match_name_url = m.get("match_name_url", match_id)
+                    break
+        except Exception:
+            pass
+
+    # Get regular match markets (has all player props)
+    try:
+        data = get_match_markets(s["token"], match_name_url, s["proxy_url"], sport, competition)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fetch match markets: {e}")
+
+    markets = data.get("markets", [])
+    LINES = [15, 20, 25, 30]
+
+    # Build player -> {15+: odds, 15+_propId: id, 20+: odds, ...}
+    player_map = {}
+    for mkt in markets:
+        bet_option = mkt.get("betOption", "")
+        for line in LINES:
+            if bet_option == f"{line}+ Disposals":
+                for prop in mkt.get("propositions", []):
+                    if not prop.get("isOpen", True) if "isOpen" in prop else prop.get("bettingStatus") != "Open":
+                        continue
+                    name = prop.get("name", "")
+                    odds = prop.get("returnWin", 0)
+                    prop_id = prop.get("number", prop.get("id"))
+                    if name not in player_map:
+                        player_map[name] = {"name": name}
+                    player_map[name][f"{line}+"] = odds
+                    player_map[name][f"{line}+_propId"] = prop_id
+
+    players = sorted(player_map.values(), key=lambda p: p.get("name", ""))
+    return {"players": players, "match_id": match_id, "count": len(players)}
+
+
 @app.post("/api/csb-resolve-one")
 async def api_csb_resolve_one(req: CsbBet, _user: dict = Depends(_verify_app_token)):
     """Resolve a single CSB bet (SGM or Multi) against TAB markets."""

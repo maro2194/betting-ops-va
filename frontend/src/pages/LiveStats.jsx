@@ -335,18 +335,6 @@ export default function LiveStats() {
         </div>
       )}
 
-      {/* Bet Tracker — shown above player table once a match is loaded */}
-      {matchId && (
-        <div style={{
-          background: 'var(--bg-surface, var(--bg-input))',
-          border: '1px solid var(--border)',
-          borderRadius: 8,
-          padding: '12px 14px',
-        }}>
-          <BetTracker matchId={matchId} />
-        </div>
-      )}
-
       {/* Player cards */}
       {players.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -403,6 +391,18 @@ export default function LiveStats() {
       {!loading && players.length === 0 && !data?.error && (
         <div className="card" style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
           Enter a Footywire match ID and click Load. Find IDs at footywire.com/afl/footy/live_stats
+        </div>
+      )}
+
+      {/* Bet Tracker — below the disposal table */}
+      {players.length > 0 && (
+        <div style={{
+          background: 'var(--bg-surface, var(--bg-input))',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          padding: '12px 14px',
+        }}>
+          <BetTracker matchId={matchId} />
         </div>
       )}
     </div>

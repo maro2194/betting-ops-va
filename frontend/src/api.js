@@ -167,6 +167,12 @@ export const api = {
   // Live P/L (bet tracker cross-referenced with live disposal counts)
   getLivePnl: (matchId) => request(`/api/sportsbet/live-pnl?match_id=${matchId}`),
 
+  // Disposals Monitor
+  getDisposalMatches: (sessionId, sport, competition) =>
+    request(`/api/matches?session_id=${sessionId}&sport=${encodeURIComponent(sport)}&competition=${encodeURIComponent(competition)}`),
+  getDisposals: (matchId, sessionId, sport, competition) =>
+    request(`/api/disposals/${matchId}?session_id=${sessionId}&sport=${encodeURIComponent(sport)}&competition=${encodeURIComponent(competition)}`),
+
   // Health
   health: () => request('/api/health'),
 };

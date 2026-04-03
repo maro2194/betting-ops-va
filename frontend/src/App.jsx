@@ -18,6 +18,7 @@ import Bet365 from './pages/Bet365';
 import CsbResults from './pages/CsbResults';
 import Sportsbet from './pages/Sportsbet';
 import LiveStats from './pages/LiveStats';
+import Disposals from './pages/Disposals';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -57,6 +58,7 @@ function AppRoutes() {
         <Route path="/bet365" element={<Bet365 />} />
         <Route path="/sportsbet" element={<Sportsbet />} />
         <Route path="/live" element={<LiveStats />} />
+        <Route path="/disposals" element={<Disposals />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

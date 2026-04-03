@@ -294,7 +294,9 @@ export default function JsonUpload() {
         if (!bet.stake || bet.stake <= 0) bet.stake = 10;
         const result = await api.placeJson(sessionId, bet);
 
-        if (result.success) {
+        // Check for success: either explicit success flag, or ticket_number present
+        const isSuccess = result.success || result.ticket_number;
+        if (isSuccess) {
           const rawBal = result.account_balance || '';
           const newBalance = rawBal ? parseFloat(String(rawBal).replace(/[$,]/g, '')) : runningBalances[currentAcc.id] - bet.stake;
           runningBalances[currentAcc.id] = newBalance;
@@ -310,7 +312,7 @@ export default function JsonUpload() {
             },
           }));
         } else {
-          const errMsg = result.error || 'Unknown error';
+          const errMsg = result.error || result.detail || 'Unknown error';
           if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.toLowerCase().includes('insufficient')) {
             runningBalances[currentAcc.id] = 0;
             setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: 0 }));
