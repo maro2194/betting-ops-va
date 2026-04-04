@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+(function(){
+  var k='betops2026';
+  if(sessionStorage.getItem('auth')===k)return;
+  var p=prompt('Password:');
+  if(p===k){sessionStorage.setItem('auth',k)}
+  else{document.documentElement.innerHTML='<body style="font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;background:#f5f6f8"><h2 style="color:#dc2626">Wrong password. Refresh to try again.</h2></body>';throw'';}
+})();
+</script>
+<title>Betting Ops Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f6f8;color:#1a1a2e;padding:20px;max-width:1400px;margin:0 auto}
+h1{font-size:28px;margin-bottom:8px;color:#1a1a2e}
+.subtitle{color:#6b7280;margin-bottom:24px;font-size:14px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:32px}
+.stat{background:#fff;border-radius:12px;padding:20px;text-align:center;border:1px solid #e2e5ea;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+.stat .num{font-size:36px;font-weight:700;display:block}
+.stat .label{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-top:4px}
+.green{color:#16a34a}.red{color:#dc2626}.blue{color:#0284c7}.yellow{color:#d97706}.purple{color:#7c3aed}.gray{color:#6b7280}
+section{margin-bottom:32px}
+h2{font-size:20px;margin-bottom:4px;display:flex;align-items:center;gap:8px;color:#1a1a2e}
+.section-desc{color:#6b7280;font-size:13px;margin-bottom:12px}
+table{width:100%;border-collapse:collapse;margin-bottom:8px;font-size:12px}
+th{background:#f0f1f4;text-align:left;padding:8px 10px;color:#4b5563;font-size:10px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #d1d5db;position:sticky;top:0;white-space:nowrap}
+td{padding:7px 10px;border-bottom:1px solid #e5e7eb;white-space:nowrap}
+tr:hover td{background:#f8f9fb}
+.status{padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;white-space:nowrap}
+.s-inactive{background:#fef3c7;color:#b45309}.s-dup{background:#fee2e2;color:#dc2626}.s-fail{background:#fee2e2;color:#ef4444}.s-frozen{background:#dbeafe;color:#2563eb}.s-done{background:#dcfce7;color:#16a34a}.s-fresh{background:#ede9fe;color:#7c3aed}.s-pending{background:#f3f4f6;color:#6b7280}.s-dead{background:#f3f4f6;color:#9ca3af}
+.method{font-weight:600;font-size:11px}
+.method-bpay{color:#d97706}.method-card{color:#0284c7}.method-na{color:#9ca3af}
+.action-list{background:#fff;border:1px solid #e2e5ea;border-radius:10px;padding:16px 20px;margin:12px 0;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+.action-list h3{font-size:14px;margin-bottom:8px;color:#1a1a2e}
+.action-list h4{color:#0284c7}
+.action-list ol,.action-list ul{padding-left:20px;color:#374151;font-size:13px;line-height:2}
+.proxy-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin:12px 0}
+.proxy-card{background:#fff;border:1px solid #e2e5ea;border-radius:8px;padding:12px 16px;font-family:monospace;font-size:12px;color:#374151;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+.proxy-card .label{color:#6b7280;font-size:10px;text-transform:uppercase;margin-bottom:4px;font-family:-apple-system,sans-serif}
+.highlight{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:13px;color:#92400e}
+.highlight-blue{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:13px;color:#1e40af}
+.priority-bar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.priority-item{background:#fff;border:1px solid #e2e5ea;border-radius:8px;padding:12px 16px;flex:1;min-width:180px;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+.priority-item .step{font-size:28px;font-weight:700;color:#d1d5db}
+.priority-item .ptitle{font-size:13px;font-weight:600;color:#1a1a2e;margin-top:4px}
+.priority-item .pdesc{font-size:11px;color:#6b7280;margin-top:2px}
+.tabs{display:flex;gap:4px;margin-bottom:0;border-bottom:2px solid #d1d5db;padding-bottom:0;flex-wrap:wrap}
+.tab{padding:8px 14px;cursor:pointer;border-radius:8px 8px 0 0;font-size:12px;font-weight:600;color:#6b7280;background:transparent;border:none;transition:all .2s}
+.tab:hover{color:#1a1a2e;background:#fff}
+.tab.active{color:#0284c7;background:#fff;border-bottom:2px solid #0284c7;margin-bottom:-2px}
+.tab-content{display:none;background:#fff;border:1px solid #e2e5ea;border-top:none;border-radius:0 0 10px 10px;padding:16px;overflow-x:auto;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+.tab-content.active{display:block}
+.rule{border:none;border-top:1px solid #e2e5ea;margin:16px 0}
+.mono{font-family:monospace;font-size:11px;color:#7c3aed}
+a{color:#0284c7;text-decoration:none}
+a:hover{text-decoration:underline}
+.sheets-link{display:inline-block;background:#0284c7;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;margin:4px 4px 4px 0}
+.sheets-link:hover{background:#0369a1;text-decoration:none}
+</style>
+</head>
+<body>
+
+<h1>Betting Ops — Master Dashboard</h1>
+<p class="subtitle">4 April 2026 — 78 identities across 2 lists</p>
+
+<div class="stats">
+  <div class="stat"><span class="num green">13</span><span class="label">Depo Ready</span></div>
+  <div class="stat"><span class="num purple">46</span><span class="label">Fresh Setup</span></div>
+  <div class="stat"><span class="num red">18</span><span class="label">Cleanup / Dead</span></div>
+  <div class="stat"><span class="num blue">60</span><span class="label">AdsPower Needed</span></div>
+  <div class="stat"><span class="num yellow">6</span><span class="label">Need Card</span></div>
+  <div class="stat"><span class="num yellow">7</span><span class="label">Need BPAY</span></div>
+</div>
+
+<!-- PRIORITY -->
+<section>
+<h2>Priority Order</h2>
+<div class="priority-bar">
+  <div class="priority-item"><div class="step green">1</div><div class="ptitle">Deposit-Ready (13)</div><div class="pdesc">AdsPower + login + flag for Maro</div></div>
+  <div class="priority-item"><div class="step red">2</div><div class="ptitle">Cleanup (18)</div><div class="pdesc">Delete phone, nuke AdsPower, free proxy</div></div>
+  <div class="priority-item"><div class="step purple">3</div><div class="ptitle">22-List Emails (21)</div><div class="pdesc">Create Outlook accounts first</div></div>
+  <div class="priority-item"><div class="step purple">4</div><div class="ptitle">30-List Fresh (25)</div><div class="pdesc">Verify emails + sign up</div></div>
+  <div class="priority-item"><div class="step blue">5</div><div class="ptitle">Amused Signups</div><div class="pdesc">Mix of Deluxe/Nation/Pulse/Surge</div></div>
+</div>
+</section>
+
+<!-- TABS -->
+<section>
+<div class="tabs">
+  <button class="tab active" onclick="showTab('instructions')">Instructions</button>
+  <button class="tab" onclick="showTab('master')">Master List</button>
+  <button class="tab" onclick="showTab('deposit')">Deposit Ready (13)</button>
+  <button class="tab" onclick="showTab('dead')">Cleanup / Dead (18)</button>
+  <button class="tab" onclick="showTab('fresh30')">Fresh — 30 List (25)</button>
+  <button class="tab" onclick="showTab('fresh22')">Fresh — 22 List (21)</button>
+  <button class="tab" onclick="showTab('proxies')">Proxies</button>
+  <button class="tab" onclick="showTab('amused')">Amused</button>
+</div>
+
+<!-- INSTRUCTIONS (default open) -->
+<div id="instructions" class="tab-content active">
+<h3 style="margin-bottom:12px;color:#0284c7">VA Instructions</h3>
+
+<div class="highlight-blue">
+<strong>READ THIS FIRST.</strong> This dashboard covers 60 active identities (18 dead ones excluded). Your job is to make sure every working identity has an AdsPower profile, is on BetOps, and is flagged to Maro for deposits. Follow the priority order above.<br><br>
+<strong>Your working spreadsheet is: <code>VA_BettingOps_MasterList.xlsx</code></strong> — pre-filled with all 60 identities, colour-coded, with dropdown columns. Open it, work through it row by row, update as you go.<br><br>
+<strong>Google Sheets (source data):</strong><br>
+<a class="sheets-link" href="https://docs.google.com/spreadsheets/d/1FpcTI1plGi700IvpJ_Tk6rE7qpqw-y23lCqBZp4TFdQ/edit?gid=1251949002#gid=1251949002" target="_blank">30 x Details Sheet</a>
+<a class="sheets-link" href="https://docs.google.com/spreadsheets/d/1OS1IZr-4AmJaM0Xhx8t4Uyg5yNTlOpqbtGhgQSEcPuo/edit?gid=0#gid=0" target="_blank">22 List Sheet</a>
+<br><span style="color:#6b7280;font-size:12px">Update these sheets as you complete each step.</span>
+</div>
+
+<div class="action-list" style="margin-bottom:16px">
+<h3>AdsPower Profile Setup</h3>
+<p style="color:#374151;font-size:13px;margin-bottom:8px">Every working identity needs an AdsPower profile. Format:</p>
+<p style="color:#7c3aed;font-size:16px;font-weight:700;margin-bottom:8px;font-family:monospace">MARO - [CODE]</p>
+<p style="color:#374151;font-size:13px;">Where <strong>[CODE]</strong> is the 3-letter code (e.g. LUM, CYS, BIS). For identities without a code, use initials (e.g. FJ for Flordeliza Juera, DM for Dug McNee).</p>
+<p style="color:#374151;font-size:13px;margin-top:8px">Set proxy in the profile (see Proxies tab). Check proxy works before saving.</p>
+
+<h4 style="color:#0284c7;margin-top:16px;margin-bottom:8px">Bookmarks (do this for every profile)</h4>
+<p style="color:#374151;font-size:13px;margin-bottom:8px">Once the AdsPower profile is created, open it and set up bookmarks in this order:</p>
+<ol style="color:#374151;font-size:13px;line-height:2;padding-left:20px">
+<li><strong>Outlook</strong> — Bookmark outlook.live.com but <strong>name the bookmark with the profile code</strong> (e.g. name it <code style="color:#7c3aed">PAA</code> but it links to Outlook). This way you instantly know which email goes with which profile.</li>
+<li><strong>Bookies</strong> — Add a bookmark for each bookie that's been opened for that ID (TAB, SB, Amused, etc.). Only add bookmarks for bookies that are actually signed up and working.</li>
+</ol>
+<p style="color:#6b7280;font-size:12px;margin-top:8px">Example for MARO - PAA:<br>
+<code style="color:#7c3aed">PAA</code> → outlook.live.com &nbsp;|&nbsp; <code style="color:#2ecc71">TAB</code> → tab.com.au &nbsp;|&nbsp; <code style="color:#2ecc71">SB</code> → sportsbet.com.au</p>
+</div>
+
+<div class="action-list" style="margin-bottom:16px">
+<h3>Creating / Verifying Outlook Emails (ALL fresh identities)</h3>
+<p style="color:#374151;font-size:13px;">None of the fresh identities (both lists) have confirmed Outlook emails. For <strong>every fresh identity</strong>: try logging in to the listed email. If it doesn't exist, create it using the exact email address and password listed. Use the identity's name and DOB during signup. Update the spreadsheet when done.</p>
+</div>
+
+<div class="highlight" style="margin-bottom:16px">
+<strong>PHONE NUMBERS:</strong> SB and TAB now require proper phone numbers for signup. Many of the fresh identities don't have one. <strong>Do NOT use fake or placeholder numbers.</strong> Maro will provide ~20 new phone numbers (KrispCall / Twilio). Wait for Maro to assign numbers before attempting signups on identities that don't have a phone. Update the Google Sheet with the assigned number once received.
+</div>
+
+<div class="action-list" style="margin-bottom:16px">
+<h3>Ensuring Everything is on AdsPower + BetOps</h3>
+<ol>
+<li>Go through every identity that has a working account (TAB active/inactive, SB active/inactive)</li>
+<li>If they don't have an AdsPower profile yet — <strong>create one</strong> (MARO - [CODE])</li>
+<li>If they're not on BetOps yet — <strong>add them</strong></li>
+<li>Confirm login works in the AdsPower profile for each active bookie</li>
+<li><strong>Check if the account already has money</strong> — some may already be deposited by Maro. If it has funds, mark "Has Money = Yes"</li>
+<li>Update the Google Sheet + Master List tab as you go</li>
+</ol>
+</div>
+
+<div class="action-list" style="margin-bottom:16px">
+<h3>Flagging Deposits to Maro</h3>
+<p style="color:#374151;font-size:13px;margin-bottom:8px"><strong>VAs do NOT make deposits.</strong> Flag to Maro when an account is ready.</p>
+<ul>
+<li><strong>TAB + SB (or multiple books)</strong> → flag as <strong>BANK CARD</strong> deposit</li>
+<li><strong>TAB only</strong> → flag as <strong>BPAY</strong> deposit</li>
+</ul>
+</div>
+
+<div class="action-list" style="margin-bottom:16px">
+<h3>Cleanup — Failed/Dead Accounts</h3>
+<ol>
+<li><strong>Delete the phone number</strong> from the profile</li>
+<li><strong>Delete the AdsPower profile</strong></li>
+<li><strong>Free the proxy</strong> — return to pool for reuse</li>
+<li>Mark as <strong>"DEAD - CLEANED"</strong> in Google Sheet</li>
+</ol>
+</div>
+
+<div class="action-list" style="margin-bottom:16px">
+<h3>Amused Signups</h3>
+<p style="color:#374151;font-size:13px;">Try opening Amused accounts — start with deposit-ready identities. Use a mix of <strong>Deluxe / Nation / Pulse / Surge</strong> (spread them out, don't put all on one type). This is exploratory — report results to Maro.</p>
+</div>
+
+<div class="action-list" style="margin-bottom:16px;border-color:#00b4d8">
+<h3 style="color:#00b4d8">Report Template for Maro</h3>
+<p style="color:#374151;font-size:13px;margin-bottom:12px">For each identity you set up, fill in this table in the Google Sheet. This is what Maro needs to see:</p>
+<table style="font-size:12px;background:#161925;border-radius:8px">
+<tr><th>Column</th><th>Example</th><th>What to put</th></tr>
+<tr><td><strong>AdsPower Profile</strong></td><td class="mono">MARO - LUM</td><td>Profile name in AdsPower</td></tr>
+<tr><td><strong>TAB</strong></td><td><span class="status s-inactive">Inactive</span></td><td>Active / Inactive / Failed / Dup / N/A</td></tr>
+<tr><td><strong>SB</strong></td><td><span class="status s-done">Active</span></td><td>Active / Inactive / Failed / Dup / N/A</td></tr>
+<tr><td><strong>Amused</strong></td><td><span class="status s-done">Deluxe</span></td><td>Deluxe / Nation / Pulse / Surge / Failed / N/A</td></tr>
+<tr><td><strong>Email</strong></td><td>lukemoroney5283@outlook.com</td><td>The Outlook email address</td></tr>
+<tr><td><strong>Password</strong></td><td>Volcano422!</td><td>Email + bookie password</td></tr>
+<tr><td><strong>Phone</strong></td><td>0435 765 776</td><td>Phone number on the account</td></tr>
+<tr><td><strong>On BetOps?</strong></td><td><span class="status s-done">Yes</span></td><td>Yes / No — is it added to BetOps?</td></tr>
+<tr><td><strong>Proxy</strong></td><td class="mono">175.29.3.66</td><td>IP of static proxy or Oxylabs session ID</td></tr>
+<tr><td><strong>Has Money?</strong></td><td>No</td><td>Yes / No — check if already deposited</td></tr>
+<tr><td><strong>Needs Depo?</strong></td><td><span class="status s-inactive">Yes</span></td><td>Yes / No</td></tr>
+<tr><td><strong>Method</strong></td><td><span class="method method-card">CARD</span></td><td>BPAY (TAB only) / CARD (multi-book) / N/A</td></tr>
+</table>
+</div>
+
+<div class="highlight-blue" style="margin-bottom:16px">
+<strong>IMPORTANT:</strong> Some accounts may already have deposits from Maro. Before flagging "Needs Depo", <strong>check the account in AdsPower and BetOps first</strong>. If it already has money, mark "Has Money = Yes" and "Needs Depo = No".
+</div>
+
+<div class="action-list" style="margin-bottom:16px">
+<h3>Google Sheet — Columns to Add</h3>
+<p style="color:#374151;font-size:13px;margin-bottom:12px">Add these columns to the Google Sheet. Here's what a filled-in row looks like:</p>
+
+<div style="overflow-x:auto">
+<table style="font-size:11px;background:#161925;border-radius:8px">
+<tr><th>AdsPower</th><th>Name</th><th>Email</th><th>Password</th><th>Phone</th><th>Email OK?</th><th>TAB</th><th>SB</th><th>Amused</th><th>On BetOps?</th><th>Proxy</th><th>Has $?</th><th>Needs Depo?</th><th>Method</th><th>Notes</th></tr>
+<tr style="color:#2ecc71"><td class="mono">MARO - LUM</td><td>Luke Moroney</td><td>lukemoroney5283@outlook.com</td><td>Volcano422!</td><td>0435 765 776</td><td>Yes</td><td>Inactive (3172)</td><td>Inactive</td><td>Deluxe</td><td>Yes</td><td>175.29.3.66</td><td>No</td><td>Yes</td><td>CARD</td><td>-</td></tr>
+<tr style="color:#f59e0b"><td class="mono">MARO - DYC</td><td>Dylan Cox</td><td>dylancox6458@outlook.com</td><td>Dolphin892!</td><td>0483 963 104</td><td>Yes</td><td>Inactive (1108)</td><td>Dup</td><td>Nation</td><td>Yes</td><td>175.29.1.123</td><td>No</td><td>Yes</td><td>BPAY</td><td>SB dead, TAB only</td></tr>
+<tr style="color:#7c3aed"><td class="mono">MARO - DM</td><td>Dug McNee</td><td>dug.mcnee482@outlook.com</td><td>BrickWall82!</td><td>-</td><td>Created</td><td>Pending</td><td>Pending</td><td>Pending</td><td>No</td><td>Oxylabs-DM01</td><td>No</td><td>After signup</td><td>TBD</td><td>Waiting for phone from Maro</td></tr>
+<tr style="color:#ef4444"><td class="mono" style="text-decoration:line-through">MARO - TOC</td><td style="text-decoration:line-through">Toby Cuthbert-Ashmore</td><td style="color:#6b7280">-</td><td style="color:#6b7280">-</td><td style="color:#6b7280">-</td><td style="color:#6b7280">-</td><td>Failed</td><td>Failed</td><td>-</td><td>No</td><td style="color:#6b7280">Freed</td><td>-</td><td>-</td><td>-</td><td>DEAD - CLEANED</td></tr>
+</table>
+</div>
+
+<p style="color:#6b7280;font-size:11px;margin-top:8px"><strong>Key:</strong>
+<span style="color:#2ecc71">Green = deposit ready (multi-book, CARD)</span> &nbsp;|&nbsp;
+<span style="color:#f59e0b">Amber = deposit ready (TAB only, BPAY)</span> &nbsp;|&nbsp;
+<span style="color:#7c3aed">Purple = fresh, still setting up</span> &nbsp;|&nbsp;
+<span style="color:#ef4444">Red = dead, cleaned up</span>
+</p>
+</div>
+</div>
+
+<!-- MASTER LIST -->
+<div id="master" class="tab-content">
+<h3 style="margin-bottom:8px;color:#0284c7">Master List — All 78 Identities</h3>
+<p class="section-desc">One row per identity. Scroll right for all columns.</p>
+
+<table>
+<tr>
+<th>AdsPower</th><th>Name</th><th>TAB</th><th>SB</th><th>Amused</th><th>Email</th><th>Password</th><th>Phone</th><th>BetOps?</th><th>Proxy</th><th>Has $?</th><th>Needs Depo?</th><th>Method</th>
+</tr>
+
+<!-- === DEPOSIT READY: TAB + SB (BANK CARD) === -->
+<tr style="background:#f0fdf4"><td class="mono">MARO - LUM</td><td>Luke Moroney</td><td><span class="status s-inactive">Inactive (3172)</span></td><td><span class="status s-inactive">Inactive</span></td><td><span class="status s-pending">Pending</span></td><td>lukemoroney5283@outlook.com</td><td>Volcano422!</td><td>0435 765 776</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-card">CARD</span></td></tr>
+<tr style="background:#f0fdf4"><td class="mono">MARO - CYS</td><td>Crystal Schlenka</td><td><span class="status s-inactive">Inactive (2748)</span></td><td><span class="status s-inactive">Inactive</span></td><td><span class="status s-pending">Pending</span></td><td>crystalschlenka940@outlook.com</td><td>Rocket376!</td><td>0435 992 691</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-card">CARD</span></td></tr>
+<tr style="background:#f0fdf4"><td class="mono">MARO - MIS</td><td>Michael Sutherland</td><td><span class="status s-inactive">Inactive (2827)</span></td><td><span class="status s-inactive">Inactive</span></td><td><span class="status s-pending">Pending</span></td><td>michael.sutherland2734@outlook.com</td><td>Neptune775#</td><td>0436 747 872</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-card">CARD</span></td></tr>
+<tr style="background:#f0fdf4"><td class="mono">MARO - ALM</td><td>Alexi Murray</td><td><span class="status s-inactive">Inactive (0143)</span></td><td><span class="status s-inactive">Inactive</span></td><td><span class="status s-pending">Pending</span></td><td>alexi.murray2441@outlook.com</td><td>Horizon327!</td><td>0440 757 472</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-card">CARD</span></td></tr>
+<tr style="background:#f0fdf4"><td class="mono">MARO - BIS</td><td>Billy Wise</td><td><span class="status s-inactive">Inactive (1811)</span></td><td><span class="status s-inactive">Inactive</span></td><td><span class="status s-pending">Pending</span></td><td>billywise5501@outlook.com</td><td>Lantern149#</td><td>0485 016 428</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-card">CARD</span></td></tr>
+<tr style="background:#f0fdf4"><td class="mono">MARO - PAA</td><td>Paul Amai</td><td><span class="status s-inactive">Inactive (5001)</span></td><td><span class="status s-inactive">Inactive</span></td><td><span class="status s-pending">Pending</span></td><td>paulamai3644@outlook.com</td><td>Raptor396#</td><td>0468 172 053</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-card">CARD</span></td></tr>
+
+<!-- === DEPOSIT READY: TAB ONLY (BPAY) === -->
+<tr style="background:#fffbeb"><td class="mono">MARO - DYC</td><td>Dylan Cox</td><td><span class="status s-inactive">Inactive (1108)</span></td><td><span class="status s-dup">Dup</span></td><td><span class="status s-pending">Pending</span></td><td>dylancox6458@outlook.com</td><td>Dolphin892!</td><td>0483 963 104</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr style="background:#fffbeb"><td class="mono">MARO - ROG</td><td>Robert Gebbie</td><td><span class="status s-inactive">Inactive (1142)</span></td><td><span class="status s-dup">Dup</span></td><td><span class="status s-pending">Pending</span></td><td>robert.gebbie7660@outlook.com</td><td>Elephant686!</td><td>0485 011 310</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr style="background:#fffbeb"><td class="mono">MARO - BYM</td><td>Byron Morgan</td><td><span class="status s-inactive">Inactive (7206)</span></td><td><span class="status s-dup">Dup</span></td><td><span class="status s-pending">Pending</span></td><td>byronmorgan8597@outlook.com</td><td>Panther931!</td><td>0435 960 606</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr style="background:#fffbeb"><td class="mono">MARO - JOC</td><td>Joshua Collins</td><td><span class="status s-inactive">Inactive (9487)</span></td><td><span class="status s-dup">Dup</span></td><td><span class="status s-pending">Pending</span></td><td>joshua.collins8344@outlook.com</td><td>Falcon686!</td><td>0436 758 799</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr style="background:#fffbeb"><td class="mono">MARO - NAA</td><td>Nathan Aldous</td><td><span class="status s-inactive">Inactive (3097)</span></td><td><span class="status s-dup">Dup</span></td><td><span class="status s-pending">Pending</span></td><td>nathanaldous4320@outlook.com</td><td>Serpent568#</td><td>0489 278 757</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr style="background:#fffbeb"><td class="mono">MARO - SEC</td><td>Sean Corcoran</td><td><span class="status s-inactive">Inactive (8403)</span></td><td><span class="status s-dup">Dup</span></td><td><span class="status s-pending">Pending</span></td><td>sean.corcoran5896@outlook.com</td><td>Titanium973#</td><td>0468 155 397</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr style="background:#fffbeb"><td class="mono">MARO - LUB</td><td>Luke Brushe</td><td><span class="status s-inactive">Inactive (1004)</span></td><td><span class="status s-dup">Dup</span></td><td><span class="status s-pending">Pending</span></td><td>lukebrushe8277@outlook.com</td><td>Nebula827!</td><td>0468 162 105</td><td>-</td><td>-</td><td>No</td><td>Yes</td><td><span class="method method-bpay">BPAY</span></td></tr>
+
+<!-- === DONE === -->
+<tr style="background:#dcfce7"><td class="mono">MARO - RM</td><td>Rebekah Matthews</td><td><span class="status s-done">Active</span></td><td><span class="status s-done">Active</span></td><td>-</td><td>rebekahmatthews3873@outlook.com</td><td>PixelDice99#</td><td>0432667812</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
+
+<!-- === FRESH: 30-LIST BOTTOM 25 === -->
+<tr style="background:#faf5ff"><td class="mono">MARO - DM</td><td>Dug McNee</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>dug.mcnee482@outlook.com</td><td>BrickWall82!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - PC</td><td>Paul Cameron</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>paul.cameron319@outlook.com</td><td>LimePie53!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - BA</td><td>Brett Abel</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>brett.abel647@outlook.com</td><td>SilverKey71!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - ME</td><td>Matt Ellenby</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>matt.ellenby253@outlook.com</td><td>BlueStar29!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - MK</td><td>Miroslav Kinock</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>miroslav.kinock814@outlook.com</td><td>IronGate55!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - ML</td><td>Matthew Lord</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>matthew.lord762@outlook.com</td><td>KeyChain44!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - RP</td><td>Raffaele Perversi-Burchall</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>raffaele.perversi385@outlook.com</td><td>MapleDust67!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - WS</td><td>Wilf Sweetland</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>wilf.sweetland193@outlook.com</td><td>CoralReef38!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - BAD</td><td>Bruce Adey</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>bruce.adey524@outlook.com</td><td>StoneArch91!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - DD</td><td>David Dickson</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>david.dickson871@outlook.com</td><td>GreenMint62!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - MR</td><td>Miroslav Rajak</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>miroslav.rajak436@outlook.com</td><td>FireBolt77!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - PCS</td><td>Paul Cassidy</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>paul.cassidy208@outlook.com</td><td>OakLeaf34!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - AR</td><td>Adrian Roca</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>adrian.roca615@outlook.com</td><td>RiverStone48!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - GS</td><td>Gagandeep Singh</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>gagandeep.singh349@outlook.com</td><td>CloudPeak59!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - MT</td><td>Michael Trew</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>michael.trew782@outlook.com</td><td>TigerLily23!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - BJ</td><td>Bobby James</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>bobby.james156@outlook.com</td><td>WildFern86!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - JB</td><td>James Barnaby</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>james.barnaby943@outlook.com</td><td>MintLeaf41!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - RLS</td><td>Rafael Le Saux</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>rafael.lesaux627@outlook.com</td><td>SandDune73!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - SW</td><td>Scott Williams</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>scott.williams358@outlook.com</td><td>NightOwl52!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - RPR</td><td>Rafael Protacio</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>rafael.protacio714@outlook.com</td><td>RedCedar66!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - MM</td><td>Matt Maddock</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>matt.maddock291@outlook.com</td><td>PineCone39!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - DDV</td><td>David Diviny</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>david.diviny468@outlook.com</td><td>FrostBite84!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - TD</td><td>Tim Duguid</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>tim.duguid537@outlook.com</td><td>SunRise27!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - MN</td><td>Milton Nomikoudis</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>milton.nomikoudis842@outlook.com</td><td>DarkHorse95!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - WT</td><td>Warren Tate</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>warren.tate176@outlook.com</td><td>ColdBrew58!</td><td>-</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+
+<!-- === FRESH: 22-LIST (emails not created yet) === -->
+<tr style="background:#faf5ff"><td class="mono">MARO - FJ</td><td>Flordeliza Juera</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>flordelizajuera8174@outlook.com</td><td>CrazyTacos16!</td><td>0428537590</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - MH</td><td>Margaret Huxtable</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>margarethuxtable7650@outlook.com</td><td>CrazyTacos22!</td><td>0452376123</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - CV</td><td>Casey Viney</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>caseyviney9564@outlook.com</td><td>CrazyTacos28!</td><td>0411331982</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - DS</td><td>Debra Summons</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>debrasummons2320@outlook.com</td><td>CrazyTacos30!</td><td>0418816902</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - JK</td><td>Jennifer Kozul</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>jenniferkozul1710@outlook.com</td><td>CoolLion27!</td><td>0412145807</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - AC</td><td>Andrea Carydias</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>andreacarydias3580@outlook.com</td><td>SunMaker14!</td><td>0420523789</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - AW</td><td>Addie Wootten</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>addiewootten7742@outlook.com</td><td>StormPot81!</td><td>0462397278</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - MKE</td><td>Megan Kennedy</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>megankennedy5768@outlook.com</td><td>DarkLion67#</td><td>0458337339</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - RR</td><td>Ryan Ranger</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>ryanranger2039@outlook.com</td><td>SlickRunner87!</td><td>0429413651</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - RMA</td><td>Rebecca Magnuson</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>rebeccamagnuson5368@outlook.com</td><td>HappyFlame58!</td><td>0493642482</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - SM</td><td>Susan Meeking</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>susanmeeking2867@outlook.com</td><td>MoonPanda90#</td><td>0450505492</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - AM</td><td>Amy Monaghan</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>amymonaghan2208@outlook.com</td><td>GrandShield56#</td><td>0440387839</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - NS</td><td>Nika Sadaraka</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>nikasadaraka9388@outlook.com</td><td>WildChip18!</td><td>0487115882</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - PRO</td><td>Peter Rosengren</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>peterrosengren8132@outlook.com</td><td>JazzLion47!</td><td>0423244746</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - FB</td><td>Fay Bradford</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>faybradford8936@outlook.com</td><td>FastStorm91!</td><td>0465418387</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - JC</td><td>Jill Carstairs</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>jillcarstairs9654@outlook.com</td><td>StormDice31#</td><td>0434514353</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - JN</td><td>Jacqueline Naismith</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>jacquelinenaismith8078@outlook.com</td><td>RockBlaze60@</td><td>0483371506</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - RB</td><td>Rodney Brown</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>rodneybrown3559@outlook.com</td><td>SlickFox29!</td><td>0472833451</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - BK</td><td>Bradley King</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>bradleyking7341@outlook.com</td><td>JazzBlaze80!</td><td>0435428421</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - DMA</td><td>Darryl Magan</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>darrylmagan9152@outlook.com</td><td>FireArrow76@</td><td>0441795394</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+<tr style="background:#faf5ff"><td class="mono">MARO - TW</td><td>Tony West</td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td><span class="status s-fresh">Signup</span></td><td>tonywest3954@outlook.com</td><td>HappyLion38!</td><td>0448839789</td><td>-</td><td>-</td><td>No</td><td>After signup</td><td><span class="method method-na">TBD</span></td></tr>
+
+</table>
+</div>
+
+<!-- DEPOSIT READY -->
+<div id="deposit" class="tab-content">
+<h3 style="margin-bottom:4px;color:#2ecc71">TAB + Sportsbet — Deposit via BANK CARD (6)</h3>
+<p class="section-desc">Both accounts exist (inactive). Need funds loaded. Flag to Maro.</p>
+<table>
+<tr><th>#</th><th>AdsPower</th><th>Name</th><th>TAB PIN</th><th>SB</th><th>Deposit</th></tr>
+<tr><td>1</td><td class="mono">MARO - LUM</td><td>Luke Moroney</td><td>3172</td><td><span class="status s-inactive">Inactive</span></td><td><span class="method method-card">BANK CARD</span></td></tr>
+<tr><td>2</td><td class="mono">MARO - CYS</td><td>Crystal Schlenka</td><td>2748</td><td><span class="status s-inactive">Inactive</span></td><td><span class="method method-card">BANK CARD</span></td></tr>
+<tr><td>3</td><td class="mono">MARO - MIS</td><td>Michael Sutherland</td><td>2827</td><td><span class="status s-inactive">Inactive</span></td><td><span class="method method-card">BANK CARD</span></td></tr>
+<tr><td>4</td><td class="mono">MARO - ALM</td><td>Alexi Murray</td><td>0143</td><td><span class="status s-inactive">Inactive</span></td><td><span class="method method-card">BANK CARD</span></td></tr>
+<tr><td>5</td><td class="mono">MARO - BIS</td><td>Billy Wise</td><td>1811</td><td><span class="status s-inactive">Inactive</span></td><td><span class="method method-card">BANK CARD</span></td></tr>
+<tr><td>6</td><td class="mono">MARO - PAA</td><td>Paul Amai</td><td>5001</td><td><span class="status s-inactive">Inactive</span></td><td><span class="method method-card">BANK CARD</span></td></tr>
+</table>
+
+<h3 style="margin:16px 0 4px;color:#f59e0b">TAB Only — Deposit via BPAY (7)</h3>
+<p class="section-desc">SB is duplicated (dead). Only TAB usable.</p>
+<table>
+<tr><th>#</th><th>AdsPower</th><th>Name</th><th>TAB PIN</th><th>SB</th><th>Deposit</th></tr>
+<tr><td>1</td><td class="mono">MARO - DYC</td><td>Dylan Cox</td><td>1108</td><td><span class="status s-dup">Dup</span></td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr><td>2</td><td class="mono">MARO - ROG</td><td>Robert Gebbie</td><td>1142</td><td><span class="status s-dup">Dup</span></td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr><td>3</td><td class="mono">MARO - BYM</td><td>Byron Morgan</td><td>7206</td><td><span class="status s-dup">Dup</span></td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr><td>4</td><td class="mono">MARO - JOC</td><td>Joshua Collins</td><td>9487</td><td><span class="status s-dup">Dup</span></td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr><td>5</td><td class="mono">MARO - NAA</td><td>Nathan Aldous</td><td>3097</td><td><span class="status s-dup">Dup</span></td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr><td>6</td><td class="mono">MARO - SEC</td><td>Sean Corcoran</td><td>8403</td><td><span class="status s-dup">Dup</span></td><td><span class="method method-bpay">BPAY</span></td></tr>
+<tr><td>7</td><td class="mono">MARO - LUB</td><td>Luke Brushe</td><td>1004</td><td><span class="status s-dup">Dup</span></td><td><span class="method method-bpay">BPAY</span></td></tr>
+</table>
+
+<div class="action-list">
+<h3>VA Actions</h3>
+<ol>
+<li>Make sure each has an AdsPower profile (MARO - [CODE]) with proxy assigned</li>
+<li>Log in to TAB / SB in AdsPower — confirm accounts are accessible</li>
+<li>Confirm each is on BetOps</li>
+<li>Flag to Maro for deposit (BANK CARD or BPAY as shown)</li>
+</ol>
+</div>
+</div>
+
+<!-- CLEANUP / DEAD -->
+<div id="dead" class="tab-content">
+
+<h3 style="margin-bottom:4px;color:#f87171">Failed to Verify — Cleanup Required (8)</h3>
+<p class="section-desc">Delete phone number, nuke AdsPower profile, free the proxy.</p>
+<table>
+<tr><th>#</th><th>Code</th><th>Name</th><th>SB</th><th>TAB</th></tr>
+<tr><td>1</td><td>TOC</td><td>Toby Cuthbert-Ashmore</td><td><span class="status s-fail">Failed</span></td><td><span class="status s-fail">Failed</span></td></tr>
+<tr><td>2</td><td>JOS</td><td>Jonathan Smith</td><td><span class="status s-fail">Failed</span></td><td><span class="status s-fail">Failed</span></td></tr>
+<tr><td>3</td><td>ANV</td><td>Andre Navarrete</td><td><span class="status s-fail">Failed</span></td><td><span class="status s-fail">Failed</span></td></tr>
+<tr><td>4</td><td>CIT</td><td>Cindy Tahiata</td><td><span class="status s-fail">Failed</span></td><td><span class="status s-fail">Failed</span></td></tr>
+<tr><td>5</td><td>JOH</td><td>John Hanna</td><td><span class="status s-fail">Failed</span></td><td><span class="status s-fail">Failed</span></td></tr>
+<tr><td>6</td><td>JAA</td><td>Jay Appleby</td><td><span class="status s-fail">Failed</span></td><td><span class="status s-fail">Failed</span></td></tr>
+<tr><td>7</td><td>ZAS</td><td>Zachary Smith</td><td><span class="status s-dup">Dup</span></td><td><span class="status s-fail">Failed</span></td></tr>
+<tr><td>8</td><td>MAB</td><td>Martin Betzien</td><td><span class="status s-fail">Failed</span></td><td><span class="status s-frozen">Frozen</span></td></tr>
+</table>
+
+<h3 style="margin:20px 0 4px;color:#ef4444">Dead — Both Duplicated (10)</h3>
+<p class="section-desc">Both SB and TAB duplicated. Cleanup same as above.</p>
+<table>
+<tr><th>#</th><th>Code</th><th>Name</th></tr>
+<tr><td>9</td><td>JAT</td><td>James Thorpe</td></tr>
+<tr><td>10</td><td>MIB</td><td>Mitchell Bowler</td></tr>
+<tr><td>11</td><td>MYB</td><td>Myles Brauer</td></tr>
+<tr><td>12</td><td>CAS</td><td>Carl Smith</td></tr>
+<tr><td>13</td><td>MIN</td><td>Michael Noar</td></tr>
+<tr><td>14</td><td>BLR</td><td>Blake Ryan</td></tr>
+<tr><td>15</td><td>CRB</td><td>Craig Butcher</td></tr>
+<tr><td>16</td><td>JAL</td><td>Jared Lauder</td></tr>
+<tr><td>17</td><td>ANB</td><td>Andrew Bailey</td></tr>
+<tr><td>18</td><td>PED</td><td>Peter Darby</td></tr>
+</table>
+
+<div class="action-list">
+<h3>VA Actions — All 18</h3>
+<ol>
+<li><strong>Delete phone number</strong> from profile</li>
+<li><strong>Delete AdsPower profile</strong> if one exists</li>
+<li><strong>Free the proxy</strong> — return to pool</li>
+<li>Mark as "DEAD - CLEANED" in Google Sheet</li>
+</ol>
+</div>
+</div>
+
+<!-- FRESH 30 LIST -->
+<div id="fresh30" class="tab-content">
+<p class="section-desc">Bottom of the "30 x Details" sheet. Emails listed but <strong>may not be created yet</strong> — verify each one exists, create if not. No betting accounts yet.</p>
+<table>
+<tr><th>#</th><th>AdsPower</th><th>Name</th><th>DOB</th><th>Email</th><th>Password</th></tr>
+<tr><td>1</td><td class="mono">MARO - DM</td><td>Dug McNee</td><td>04/05/1978</td><td>dug.mcnee482@outlook.com</td><td>BrickWall82!</td></tr>
+<tr><td>2</td><td class="mono">MARO - PC</td><td>Paul Cameron</td><td>09/10/1966</td><td>paul.cameron319@outlook.com</td><td>LimePie53!</td></tr>
+<tr><td>3</td><td class="mono">MARO - BA</td><td>Brett Abel</td><td>03/12/1970</td><td>brett.abel647@outlook.com</td><td>SilverKey71!</td></tr>
+<tr><td>4</td><td class="mono">MARO - ME</td><td>Matt Ellenby</td><td>11/05/1985</td><td>matt.ellenby253@outlook.com</td><td>BlueStar29!</td></tr>
+<tr><td>5</td><td class="mono">MARO - MK</td><td>Miroslav Kinock</td><td>12/01/1985</td><td>miroslav.kinock814@outlook.com</td><td>IronGate55!</td></tr>
+<tr><td>6</td><td class="mono">MARO - ML</td><td>Matthew Lord</td><td>31/05/1994</td><td>matthew.lord762@outlook.com</td><td>KeyChain44!</td></tr>
+<tr><td>7</td><td class="mono">MARO - RP</td><td>Raffaele Perversi-Burchall</td><td>22/01/1988</td><td>raffaele.perversi385@outlook.com</td><td>MapleDust67!</td></tr>
+<tr><td>8</td><td class="mono">MARO - WS</td><td>Wilf Sweetland</td><td>21/07/1972</td><td>wilf.sweetland193@outlook.com</td><td>CoralReef38!</td></tr>
+<tr><td>9</td><td class="mono">MARO - BAD</td><td>Bruce Adey</td><td>13/02/1965</td><td>bruce.adey524@outlook.com</td><td>StoneArch91!</td></tr>
+<tr><td>10</td><td class="mono">MARO - DD</td><td>David Dickson</td><td>07/08/1979</td><td>david.dickson871@outlook.com</td><td>GreenMint62!</td></tr>
+<tr><td>11</td><td class="mono">MARO - MR</td><td>Miroslav Rajak</td><td>22/06/1966</td><td>miroslav.rajak436@outlook.com</td><td>FireBolt77!</td></tr>
+<tr><td>12</td><td class="mono">MARO - PCS</td><td>Paul Cassidy</td><td>16/08/1969</td><td>paul.cassidy208@outlook.com</td><td>OakLeaf34!</td></tr>
+<tr><td>13</td><td class="mono">MARO - AR</td><td>Adrian Roca</td><td>26/10/1983</td><td>adrian.roca615@outlook.com</td><td>RiverStone48!</td></tr>
+<tr><td>14</td><td class="mono">MARO - GS</td><td>Gagandeep Singh</td><td>21/05/1988</td><td>gagandeep.singh349@outlook.com</td><td>CloudPeak59!</td></tr>
+<tr><td>15</td><td class="mono">MARO - MT</td><td>Michael Trew</td><td>20/08/1993</td><td>michael.trew782@outlook.com</td><td>TigerLily23!</td></tr>
+<tr><td>16</td><td class="mono">MARO - BJ</td><td>Bobby James</td><td>04/04/1979</td><td>bobby.james156@outlook.com</td><td>WildFern86!</td></tr>
+<tr><td>17</td><td class="mono">MARO - JB</td><td>James Barnaby</td><td>02/12/1992</td><td>james.barnaby943@outlook.com</td><td>MintLeaf41!</td></tr>
+<tr><td>18</td><td class="mono">MARO - RLS</td><td>Rafael Le Saux</td><td>01/04/1982</td><td>rafael.lesaux627@outlook.com</td><td>SandDune73!</td></tr>
+<tr><td>19</td><td class="mono">MARO - SW</td><td>Scott Williams</td><td>16/04/1977</td><td>scott.williams358@outlook.com</td><td>NightOwl52!</td></tr>
+<tr><td>20</td><td class="mono">MARO - RPR</td><td>Rafael Protacio</td><td>22/08/1991</td><td>rafael.protacio714@outlook.com</td><td>RedCedar66!</td></tr>
+<tr><td>21</td><td class="mono">MARO - MM</td><td>Matt Maddock</td><td>02/12/1972</td><td>matt.maddock291@outlook.com</td><td>PineCone39!</td></tr>
+<tr><td>22</td><td class="mono">MARO - DDV</td><td>David Diviny</td><td>30/12/1982</td><td>david.diviny468@outlook.com</td><td>FrostBite84!</td></tr>
+<tr><td>23</td><td class="mono">MARO - TD</td><td>Tim Duguid</td><td>14/01/1972</td><td>tim.duguid537@outlook.com</td><td>SunRise27!</td></tr>
+<tr><td>24</td><td class="mono">MARO - MN</td><td>Milton Nomikoudis</td><td>20/12/1964</td><td>milton.nomikoudis842@outlook.com</td><td>DarkHorse95!</td></tr>
+<tr><td>25</td><td class="mono">MARO - WT</td><td>Warren Tate</td><td>24/06/1967</td><td>warren.tate176@outlook.com</td><td>ColdBrew58!</td></tr>
+</table>
+
+<div class="action-list">
+<h3>VA Actions (in order)</h3>
+<ol>
+<li>Verify Outlook emails — log in to each. If not created, create with listed password.</li>
+<li>Create AdsPower profile (MARO - [initials]) with proxy</li>
+<li>Sign up TAB + Sportsbet + Amused</li>
+<li>Add to BetOps</li>
+<li>Update Google Sheet after each step</li>
+</ol>
+</div>
+</div>
+
+<!-- FRESH 22 LIST -->
+<div id="fresh22" class="tab-content">
+<p class="section-desc">Rebekah Matthews (#8) is done. The other 21 <strong>DO NOT have Outlook emails created yet</strong>. Create emails first. Mobiles listed are not proper — change phone in SB via email.</p>
+<table>
+<tr><th>#</th><th>AdsPower</th><th>Name</th><th>DOB</th><th>Email to Create</th><th>Password</th><th>Mobile</th></tr>
+<tr><td>1</td><td class="mono">MARO - FJ</td><td>Flordeliza Juera</td><td>05/11/1970</td><td>flordelizajuera8174@outlook.com</td><td>CrazyTacos16!</td><td>0428537590</td></tr>
+<tr><td>2</td><td class="mono">MARO - MH</td><td>Margaret Huxtable</td><td>28/12/1952</td><td>margarethuxtable7650@outlook.com</td><td>CrazyTacos22!</td><td>0452376123</td></tr>
+<tr><td>3</td><td class="mono">MARO - CV</td><td>Casey Viney</td><td>12/08/1988</td><td>caseyviney9564@outlook.com</td><td>CrazyTacos28!</td><td>0411331982</td></tr>
+<tr><td>4</td><td class="mono">MARO - DS</td><td>Debra Summons</td><td>21/03/1975</td><td>debrasummons2320@outlook.com</td><td>CrazyTacos30!</td><td>0418816902</td></tr>
+<tr><td>5</td><td class="mono">MARO - JK</td><td>Jennifer Kozul</td><td>11/03/1976</td><td>jenniferkozul1710@outlook.com</td><td>CoolLion27!</td><td>0412145807</td></tr>
+<tr><td>6</td><td class="mono">MARO - AC</td><td>Andrea Carydias</td><td>12/12/1969</td><td>andreacarydias3580@outlook.com</td><td>SunMaker14!</td><td>0420523789</td></tr>
+<tr><td>7</td><td class="mono">MARO - AW</td><td>Addie Wootten</td><td>30/08/1979</td><td>addiewootten7742@outlook.com</td><td>StormPot81!</td><td>0462397278</td></tr>
+<tr style="opacity:0.4"><td>8</td><td class="mono">MARO - RM</td><td>Rebekah Matthews</td><td colspan="4" style="color:#2ecc71;font-weight:600">DONE — has TAB + Sportsbet</td></tr>
+<tr><td>9</td><td class="mono">MARO - MKE</td><td>Megan Kennedy</td><td>11/02/1983</td><td>megankennedy5768@outlook.com</td><td>DarkLion67#</td><td>0458337339</td></tr>
+<tr><td>10</td><td class="mono">MARO - RR</td><td>Ryan Ranger</td><td>10/04/1981</td><td>ryanranger2039@outlook.com</td><td>SlickRunner87!</td><td>0429413651</td></tr>
+<tr><td>11</td><td class="mono">MARO - RMA</td><td>Rebecca Magnuson</td><td>04/07/1978</td><td>rebeccamagnuson5368@outlook.com</td><td>HappyFlame58!</td><td>0493642482</td></tr>
+<tr><td>12</td><td class="mono">MARO - SM</td><td>Susan Meeking</td><td>10/12/1959</td><td>susanmeeking2867@outlook.com</td><td>MoonPanda90#</td><td>0450505492</td></tr>
+<tr><td>13</td><td class="mono">MARO - AM</td><td>Amy Monaghan</td><td>21/01/1983</td><td>amymonaghan2208@outlook.com</td><td>GrandShield56#</td><td>0440387839</td></tr>
+<tr><td>14</td><td class="mono">MARO - NS</td><td>Nika Sadaraka</td><td>19/09/1991</td><td>nikasadaraka9388@outlook.com</td><td>WildChip18!</td><td>0487115882</td></tr>
+<tr><td>15</td><td class="mono">MARO - PRO</td><td>Peter Rosengren</td><td>18/04/1964</td><td>peterrosengren8132@outlook.com</td><td>JazzLion47!</td><td>0423244746</td></tr>
+<tr><td>16</td><td class="mono">MARO - FB</td><td>Fay Bradford</td><td>16/04/1948</td><td>faybradford8936@outlook.com</td><td>FastStorm91!</td><td>0465418387</td></tr>
+<tr><td>17</td><td class="mono">MARO - JC</td><td>Jill Carstairs</td><td>27/11/1947</td><td>jillcarstairs9654@outlook.com</td><td>StormDice31#</td><td>0434514353</td></tr>
+<tr><td>18</td><td class="mono">MARO - JN</td><td>Jacqueline Naismith</td><td>16/01/1973</td><td>jacquelinenaismith8078@outlook.com</td><td>RockBlaze60@</td><td>0483371506</td></tr>
+<tr><td>19</td><td class="mono">MARO - RB</td><td>Rodney Brown</td><td>13/11/1966</td><td>rodneybrown3559@outlook.com</td><td>SlickFox29!</td><td>0472833451</td></tr>
+<tr><td>20</td><td class="mono">MARO - BK</td><td>Bradley King</td><td>04/07/1965</td><td>bradleyking7341@outlook.com</td><td>JazzBlaze80!</td><td>0435428421</td></tr>
+<tr><td>21</td><td class="mono">MARO - DMA</td><td>Darryl Magan</td><td>08/07/1964</td><td>darrylmagan9152@outlook.com</td><td>FireArrow76@</td><td>0441795394</td></tr>
+<tr><td>22</td><td class="mono">MARO - TW</td><td>Tony West</td><td>15/12/1965</td><td>tonywest3954@outlook.com</td><td>HappyLion38!</td><td>0448839789</td></tr>
+</table>
+
+<div class="highlight">NOTE: Mobiles are NOT proper phone numbers. For Sportsbet, change phone via email after account creation.</div>
+
+<div class="action-list">
+<h3>VA Actions (in order)</h3>
+<ol>
+<li>Create Outlook email for each (exact email + password listed)</li>
+<li>Create AdsPower profile (MARO - [initials]) with proxy</li>
+<li>Sign up TAB + Sportsbet + Amused</li>
+<li>Add to BetOps</li>
+<li>Update Google Sheet after each step</li>
+</ol>
+</div>
+</div>
+
+<!-- PROXIES -->
+<div id="proxies" class="tab-content">
+<h3 style="margin-bottom:12px">Fresh Static Proxies (10)</h3>
+<div class="proxy-grid">
+<div class="proxy-card"><div class="label">Proxy 1</div>175.29.3.66:12323:user001:pizza33</div>
+<div class="proxy-card"><div class="label">Proxy 2</div>175.29.1.123:12323:user001:pizza33</div>
+<div class="proxy-card"><div class="label">Proxy 3</div>175.29.1.235:12323:user001:pizza33</div>
+<div class="proxy-card"><div class="label">Proxy 4</div>175.29.0.219:12323:user001:pizza33</div>
+<div class="proxy-card"><div class="label">Proxy 5</div>175.29.0.56:12323:user001:pizza33</div>
+<div class="proxy-card"><div class="label">Proxy 6</div>175.29.3.218:12323:user001:pizza33</div>
+<div class="proxy-card"><div class="label">Proxy 7</div>175.29.2.9:12323:user001:pizza33</div>
+<div class="proxy-card"><div class="label">Proxy 8</div>175.29.1.204:12323:user001:pizza33</div>
+<div class="proxy-card"><div class="label">Proxy 9</div>175.29.3.161:12323:user001:pizza33</div>
+<div class="proxy-card"><div class="label">Proxy 10</div>175.29.2.160:12323:user001:pizza33</div>
+</div>
+
+<h3 style="margin:20px 0 12px">Rotating Proxy (Oxylabs)</h3>
+<div class="proxy-card" style="max-width:500px">
+<div class="label">Oxylabs Rotating — changes IP each login</div>
+Host: pr.oxylabs.io<br>
+Port: 7777<br>
+User: customer-marolete_86olc-cc-au-sessid-{RANDOM}-sesstime-10<br>
+Pass: K5E=2qcyhfyFZs~
+</div>
+
+<div class="highlight" style="margin-top:16px">
+<strong>WARNING:</strong> 10 static + 1 rotating for 60 profiles is thin.<br>
+Assign the 10 static proxies 1:1 to the deposit-ready accounts first.<br>
+Use Oxylabs rotating for the rest (unique session ID per profile).<br>
+<strong>Recommendation:</strong> Buy 20+ more residential proxies before scaling fresh signups.
+</div>
+
+<h3 style="margin:20px 0 8px">Suggested Proxy Assignment</h3>
+<table>
+<tr><th>Priority</th><th>Group</th><th>Count</th><th>Proxy Type</th></tr>
+<tr><td>1</td><td>TAB+SB Deposit Ready</td><td>6</td><td>Static (Proxy 1-6)</td></tr>
+<tr><td>2</td><td>TAB-Only Deposit Ready</td><td>7</td><td>Static (Proxy 7-10) + Oxylabs (3)</td></tr>
+<tr><td>3</td><td>Fresh 30-list</td><td>25</td><td>Oxylabs rotating</td></tr>
+<tr><td>4</td><td>Fresh 22-list</td><td>21</td><td>Oxylabs rotating</td></tr>
+</table>
+
+<div class="highlight">
+<strong>NOTE:</strong> Cleaning up the 18 dead/failed accounts will free up any proxies currently assigned to them — recycle into the fresh signup pool.
+</div>
+</div>
+
+<!-- AMUSED -->
+<div id="amused" class="tab-content">
+<h3 style="margin-bottom:8px;color:#a78bfa">Amused — New Bookie Signups</h3>
+<p class="section-desc">Try opening Amused accounts across identities. Exploratory — report results to Maro. Mix across types.</p>
+
+<table>
+<tr><th>Type</th><th>Spread</th></tr>
+<tr><td><strong>Deluxe</strong></td><td>~25% of signups</td></tr>
+<tr><td><strong>Nation</strong></td><td>~25% of signups</td></tr>
+<tr><td><strong>Pulse</strong></td><td>~25% of signups</td></tr>
+<tr><td><strong>Surge</strong></td><td>~25% of signups</td></tr>
+</table>
+
+<div class="action-list">
+<h3>VA Actions</h3>
+<ol>
+<li>Start with the <strong>deposit-ready identities</strong> (13) — they already have AdsPower + proxies</li>
+<li>Sign up for Amused in each AdsPower profile</li>
+<li>Spread across Deluxe / Nation / Pulse / Surge</li>
+<li>Track which type assigned to which identity in Google Sheet</li>
+<li>Report results to Maro</li>
+</ol>
+</div>
+</div>
+
+</section>
+
+<script>
+function showTab(id){
+  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+
+</body>
+</html>
