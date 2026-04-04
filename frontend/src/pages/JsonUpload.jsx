@@ -77,6 +77,8 @@ export default function JsonUpload() {
   const [accountQueue, setAccountQueue] = useState([]);
   const [accountBalances, setAccountBalances] = useState({});
 
+  const [selectedBets, setSelectedBets] = useState(new Set());
+
   const [placing, setPlacing] = useState(false);
   const [betStatuses, setBetStatuses] = useState({});
   const [currentBetIndex, setCurrentBetIndex] = useState(-1);
@@ -146,6 +148,7 @@ export default function JsonUpload() {
         }
       }
       setParsedBets(data);
+      setSelectedBets(new Set(data.map((_, i) => i)));
     } catch (e) {
       setError(`Invalid JSON: ${e.message}`);
     }
@@ -166,11 +169,24 @@ export default function JsonUpload() {
     setJsonText('');
     setParsedBets([]);
     setBetStatuses({});
+    setSelectedBets(new Set());
     setError('');
     setCurrentBetIndex(-1);
     setPlacing(false);
     abortRef.current = true;
   };
+
+  const toggleBetSelection = (i) => {
+    setSelectedBets((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelectedBets(new Set(parsedBets.map((_, i) => i)));
+  const deselectAll = () => setSelectedBets(new Set());
 
   const toggleAccount = (id) => {
     setAccountQueue((prev) =>
@@ -235,15 +251,21 @@ export default function JsonUpload() {
       return;
     }
 
+    const selectedIndices = Array.from(selectedBets).sort((a, b) => a - b);
+    if (selectedIndices.length === 0) {
+      setError('Select at least one bet to place.');
+      return;
+    }
+
     setPlacing(true);
     setError('');
     abortRef.current = false;
 
     const initialStatuses = {};
-    parsedBets.forEach((_, i) => {
+    selectedIndices.forEach((i) => {
       initialStatuses[i] = { status: 'pending' };
     });
-    setBetStatuses(initialStatuses);
+    setBetStatuses((prev) => ({ ...prev, ...initialStatuses }));
 
     let accIdx = 0;
     const runningBalances = {};
@@ -251,8 +273,10 @@ export default function JsonUpload() {
       runningBalances[acc.id] = accountBalances[acc.id] ?? 0;
     }
 
-    for (let i = 0; i < parsedBets.length; i++) {
+    for (let si = 0; si < selectedIndices.length; si++) {
       if (abortRef.current) break;
+
+      const i = selectedIndices[si];
 
       while (accIdx < enabledAccounts.length && runningBalances[enabledAccounts[accIdx].id] < parsedBets[i].stake) {
         accIdx++;
@@ -263,7 +287,8 @@ export default function JsonUpload() {
           ...prev,
           [i]: { status: 'failed', error: 'No accounts with sufficient balance' },
         }));
-        for (let j = i + 1; j < parsedBets.length; j++) {
+        for (let sj = si + 1; sj < selectedIndices.length; sj++) {
+          const j = selectedIndices[sj];
           setBetStatuses((prev) => ({
             ...prev,
             [j]: { status: 'failed', error: 'No accounts with sufficient balance' },
@@ -311,16 +336,22 @@ export default function JsonUpload() {
               combined_odds: result.combined_odds,
             },
           }));
+          // Auto-uncheck successful bets
+          setSelectedBets((prev) => {
+            const next = new Set(prev);
+            next.delete(i);
+            return next;
+          });
         } else {
           const errMsg = result.error || result.detail || 'Unknown error';
           if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.toLowerCase().includes('insufficient')) {
             runningBalances[currentAcc.id] = 0;
             setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: 0 }));
             accIdx++;
-            i--;
+            si--;
             setBetStatuses((prev) => ({
               ...prev,
-              [i + 1]: { status: 'pending' },
+              [i]: { status: 'pending' },
             }));
           } else {
             setBetStatuses((prev) => ({
@@ -339,7 +370,7 @@ export default function JsonUpload() {
           runningBalances[currentAcc.id] = 0;
           setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: 0 }));
           accIdx++;
-          i--;
+          si--;
         } else {
           setBetStatuses((prev) => ({
             ...prev,
@@ -352,7 +383,7 @@ export default function JsonUpload() {
         }
       }
 
-      if (i < parsedBets.length - 1 && !abortRef.current) {
+      if (si < selectedIndices.length - 1 && !abortRef.current) {
         const delay = randomDelay();
         setCountdown(delay);
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -366,7 +397,8 @@ export default function JsonUpload() {
 
   const placedCount = Object.values(betStatuses).filter((s) => s.status === 'placed').length;
   const failedCount = Object.values(betStatuses).filter((s) => s.status === 'failed').length;
-  const progressPct = parsedBets.length > 0 ? ((placedCount + failedCount) / parsedBets.length) * 100 : 0;
+  const selectedCount = selectedBets.size;
+  const progressPct = selectedCount > 0 ? ((placedCount + failedCount) / selectedCount) * 100 : 0;
 
   const [retrying, setRetrying] = useState(false);
 
@@ -524,11 +556,14 @@ export default function JsonUpload() {
               Bets: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{parsedBets.length}</span>
             </div>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              Selected: <span style={{ color: selectedCount > 0 ? 'var(--accent)' : 'var(--text-muted)', fontWeight: 600 }}>{selectedCount} of {parsedBets.length}</span>
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               Total Stake: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>${totalStake.toFixed(2)}</span>
             </div>
             {placing && (
               <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                Progress: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{placedCount + failedCount}/{parsedBets.length}</span>
+                Progress: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{placedCount + failedCount}/{selectedCount}</span>
                 {countdown > 0 && (
                   <span style={{ color: 'var(--warning)', marginLeft: 8 }}>Next in {(countdown / 1000).toFixed(1)}s</span>
                 )}
@@ -726,14 +761,14 @@ export default function JsonUpload() {
           )}
 
           {/* Action buttons */}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               onClick={handlePlaceAll}
-              disabled={placing || retrying || enabledAccounts.length === 0}
+              disabled={placing || retrying || enabledAccounts.length === 0 || selectedCount === 0}
               className="btn btn-success"
             >
               {placing ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-              {placing ? 'Placing...' : 'Place All'}
+              {placing ? 'Placing...' : `Place Selected${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
             </button>
             {failedCount > 0 && !placing && (
               <button
@@ -749,6 +784,25 @@ export default function JsonUpload() {
               <RotateCcw size={16} />
               Reset
             </button>
+            {!placing && !retrying && (
+              <>
+                <div style={{ width: 1, height: 24, background: 'var(--border)', margin: '0 4px' }} />
+                <button
+                  onClick={selectAll}
+                  className="btn btn-secondary"
+                  style={{ fontSize: 12, padding: '6px 12px' }}
+                >
+                  Select All
+                </button>
+                <button
+                  onClick={deselectAll}
+                  className="btn btn-secondary"
+                  style={{ fontSize: 12, padding: '6px 12px' }}
+                >
+                  Deselect All
+                </button>
+              </>
+            )}
           </div>
 
           {/* Bets Table */}
@@ -756,6 +810,16 @@ export default function JsonUpload() {
             <table className="data-table">
               <thead>
                 <tr>
+                  <th style={{ width: 36, textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedCount === parsedBets.length && parsedBets.length > 0}
+                      ref={(el) => { if (el) el.indeterminate = selectedCount > 0 && selectedCount < parsedBets.length; }}
+                      onChange={(e) => e.target.checked ? selectAll() : deselectAll()}
+                      disabled={placing}
+                      title="Select all / deselect all"
+                    />
+                  </th>
                   <th style={{ width: 32 }}>#</th>
                   <th>Event</th>
                   <th>Type</th>
@@ -770,7 +834,15 @@ export default function JsonUpload() {
                   const legs = formatLegs(bet.legs);
                   const type = betTypeLabel(bet);
                   return (
-                    <tr key={i} style={{ background: st ? statusRowBg(st.status) : undefined }}>
+                    <tr key={i} style={{ background: st ? statusRowBg(st.status) : undefined, opacity: selectedBets.has(i) ? 1 : 0.45 }}>
+                      <td style={{ textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedBets.has(i)}
+                          onChange={() => toggleBetSelection(i)}
+                          disabled={placing || st?.status === 'placed'}
+                        />
+                      </td>
                       <td style={{ color: 'var(--text-muted)' }}>{i + 1}</td>
                       <td style={{ maxWidth: 200 }}>
                         <div style={{ color: 'var(--text-secondary)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{bet.event || '-'}</div>

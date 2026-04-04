@@ -1,39 +1,52 @@
 # BotOps
 
-Multi-bookie bot operations platform. Automated betting across TAB accounts with a web dashboard.
+Multi-bookie automated betting platform. Operates across TAB, Sportsbet, bet365, BetMakers (7 brands), and Amused (7 brands) with a unified web dashboard.
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│  Frontend (React/Vite)                                │
-│  Signal-style dashboard, JetBrains Mono, dark theme  │
-│  Caddy :8081                                          │
-└──────────────┬───────────────────────────────────────┘
-               │
-┌──────────────▼───────────────────────────────────────┐
-│  Backend (FastAPI)                                     │
-│  Port 8001, systemd service                           │
-│                                                       │
-│  Auth0 ROPC Token ──► api.beta.tab.com.au             │
-│    (pricing, matches, SGM markets)                    │
-│                                                       │
-│  Legacy TabcorpAuth ──► webapi.tab.com.au             │
-│    (bet placement, bet history, account ops)          │
-└──────────────┬───────────────────────────────────────┘
-               │
-┌──────────────▼───────────────────────────────────────┐
-│  PostgreSQL                                           │
-│  Accounts, sessions, bets — all persistent            │
-└──────────────────────────────────────────────────────┘
+                              ┌────────────────────────────────────┐
+                              │  Frontend (React/Vite/Tailwind v4) │
+                              │  Dashboard at bo.betops.sh :8081   │
+                              └──────────────┬─────────────────────┘
+                                             │
+                              ┌──────────────▼─────────────────────┐
+                              │  Backend (FastAPI)                  │
+                              │  Port 8001, systemd service         │
+                              │                                     │
+                              │  TAB ──► api.beta.tab.com.au        │
+                              │  Sportsbet ──► sportsbet.com.au     │
+                              │  BetMakers ──► GraphQL (7 brands)   │
+                              │  Amused ──► REST (7 brands)         │
+                              │  bet365 ──► Browser (Camoufox)      │
+                              └────┬────────────────────┬──────────┘
+                                   │                    │
+                    ┌──────────────▼──────┐  ┌─────────▼──────────────┐
+                    │  PostgreSQL          │  │  Token Farm (Mini PC)   │
+                    │  Accounts, sessions, │  │  VM 800 @ 192.168.1.139│
+                    │  bets, multi_bets    │  │  Port 9000 via WireGuard│
+                    └─────────────────────┘  │                         │
+                                             │  Patchright (SB Kasada) │
+                                             │  Camoufox (bet365)      │
+                                             └─────────────────────────┘
 ```
+
+## Supported Bookies
+
+| Platform | Bookies | Auth Method | Racing | Sports |
+|----------|---------|-------------|--------|--------|
+| **TAB** | TAB | Auth0 ROPC + Akamai bypass | Yes | Yes |
+| **Sportsbet** | Sportsbet | Browser (Patchright + Kasada) via Token Farm | - | Yes |
+| **BetMakers** | CrownBet, DiamondBet, BetDash, TerryBet, PonyBet, BetIt, SwiftBet | Cognito (GraphQL) | Yes | - |
+| **Amused** | BetNation, BetDeluxe, Surge, PulseBet, BigBet, YesBet, MightyBet | Auth0 (REST) | Yes | - |
+| **bet365** | bet365 | Browser (Camoufox) via Token Farm | - | Yes |
 
 ## Quick Start
 
 ### Prerequisites
-- Ubuntu 24.04 (or any Linux with Python 3.12+)
+- Ubuntu 24.04 (Python 3.12+)
 - PostgreSQL 16
-- Node.js 18+ (for frontend build only)
+- Node.js 18+ (frontend build)
 - Caddy (reverse proxy)
 
 ### 1. Database
@@ -49,10 +62,7 @@ sudo -u postgres psql -c "CREATE DATABASE tabbetting OWNER tabbetting;"
 cd backend
 pip3 install --break-system-packages -r requirements.txt
 
-# Create .env (or copy the included one)
-echo "HYPERSOLUTIONS_API_KEY=2f71b97d-0289-47e5-ba8e-d60c321f959a" > .env
-
-# Run
+# Create .env (see .env.example)
 uvicorn main:app --host 127.0.0.1 --port 8001 --log-level info
 ```
 
@@ -62,7 +72,7 @@ uvicorn main:app --host 127.0.0.1 --port 8001 --log-level info
 cd frontend
 npm install
 npm run build
-# Serve the dist/ folder via Caddy or any static server
+# Serve dist/ via Caddy
 ```
 
 ### 4. Caddy Config
@@ -73,270 +83,274 @@ npm run build
         reverse_proxy localhost:8001
     }
     handle {
-        root * /path/to/frontend/dist
+        root * /opt/botops-frontend
         try_files {path} /index.html
         file_server
     }
 }
 ```
 
-### 5. Systemd Service
+## Token Farm
 
-```bash
-cat > /etc/systemd/system/botops.service << 'EOF'
-[Unit]
-Description=BotOps API
-After=network.target postgresql.service
+Browser-based auth service running on a Proxmox mini PC (VM 800, Lubuntu 24.04). Handles logins that require a real browser to bypass anti-bot (Kasada, Cloudflare).
 
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/botops-backend
-ExecStart=/usr/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --log-level info
-Restart=always
-RestartSec=5
-Environment=HYPERSOLUTIONS_API_KEY=2f71b97d-0289-47e5-ba8e-d60c321f959a
+| Detail | Value |
+|--------|-------|
+| VM | 800 (`token-farm`) on Proxmox `jv1lab` |
+| IP | 192.168.1.139 (static) |
+| Port | 9000 |
+| SSH | Key auth (`root` / `jsb`) |
+| Systemd | `token-farm.service` (enabled, auto-start) |
+| Connectivity | VPS reaches farm via WireGuard tunnel |
 
-[Install]
-WantedBy=multi-user.target
-EOF
+### Token Farm Endpoints
 
-systemctl daemon-reload && systemctl enable botops && systemctl start botops
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/auth/sportsbet/login` | Browser login (Patchright + Kasada) |
+| POST | `/auth/sportsbet/refresh` | JWT refresh (curl-cffi, no browser) |
+| POST | `/auth/bet365/login` | Browser login (Camoufox) |
+| GET | `/auth/bet365/status` | Active browser sessions |
+| POST | `/bet365/place-bet` | Browser-automated bet placement |
+| GET | `/health` | Service health + session tracking |
+
+All endpoints require `Authorization: Bearer {TOKEN_FARM_API_KEY}`. All login endpoints accept an optional `proxy_url` field for per-account IP isolation.
+
+### Token Farm Stack
+- **Sportsbet**: Patchright (patched Playwright) + system Chrome 136 + Kasada bypass
+- **bet365**: Camoufox (anti-detect Firefox) + GeoIP locale matching
+- **Proxies**: Oxylabs rotating AU residential (SB), IPRoyal (bet365)
+- **WireGuard**: VPS 2 (76.13.214.208) ↔ Mini PC (192.168.1.210), ~155ms
+
+## Multi-Bookie Platform Framework
+
+Unified abstraction for all bookies beyond TAB.
+
+### Platform Clients (`backend/platforms/`)
+
+| File | Platform | Brands | Protocol |
+|------|----------|--------|----------|
+| `betmakers.py` | BetMakers/Apollo | 7 | GraphQL + Cognito auth |
+| `amused.py` | Amused/BlackStream | 7 | REST + Auth0 (300s token!) |
+| `sportsbet.py` | Sportsbet | 1 | Token Farm → JWT |
+| `bet365.py` | bet365 | 1 | Token Farm → Camoufox session |
+| `base.py` | Abstract base | - | PlatformClient ABC |
+
+All clients implement: `login()`, `is_session_valid()`, `find_race()`, `get_runners()`, `place_bet()`, `get_balance()`.
+
+### Registry (`backend/platforms/registry.py`)
+
+Maps bookmaker names → `(platform, brand)` tuples. Singleton client instances per platform.
+
+```python
+BOOKMAKER_PLATFORM_MAP = {
+    "tab": ("tab", "tab"),
+    "crownbet": ("betmakers", "crownbet"),
+    "betnation": ("amused", "betnation"),
+    "sportsbet": ("sportsbet", "sportsbet"),
+    "bet365": ("bet365", "bet365"),
+    # ... 21 bookies total
+}
 ```
+
+### Session Manager (`backend/session_manager.py`)
+
+Thread-safe multi-platform session cache. Sportsbet login cascade:
+1. Try token refresh (fast, no browser)
+2. Try Token Farm browser login (mini PC)
+3. Fallback to local browser login
+
+## Squiggle Matcher (`backend/squiggle_matcher.py`)
+
+AFL team name resolver for all 18 teams across all bookies. Handles aliases like "Bris" → "Brisbane Lions", "GWS" → "GWS Giants". Integrates with api.squiggle.com.au for game data and round lookups.
 
 ## Deployment
 
-Runs on any VPS with Ubuntu 24.04. Currently deployed on Hostinger KVM2 with Caddy reverse proxy.
+Deployed on Hostinger VPS at `bo.betops.sh` (76.13.214.208).
 
-| Component | Default |
-|-----------|---------|
-| Backend port | 8001 |
-| Caddy port | 8081 |
-| Backend path | `/opt/botops-backend/` |
-| Frontend path | `/opt/botops-frontend/` |
+| Component | Path / Port |
+|-----------|-------------|
+| Backend | `/opt/botops-backend/` → port 8001 |
+| Frontend | `/opt/botops-frontend/` → Caddy :8081 |
 | Database | PostgreSQL `tabbetting` |
+| Logs | `/var/log/botops.log` |
 
-### Deploy
+### Deploy Commands
 
 ```bash
-# Backend — copy Python files, restart service
-scp backend/*.py root@YOUR_VPS:/opt/botops-backend/
-ssh root@YOUR_VPS 'systemctl restart botops'
+# Backend
+scp backend/*.py root@bo.betops.sh:/opt/botops-backend/
+scp -r backend/platforms root@bo.betops.sh:/opt/botops-backend/
+ssh root@bo.betops.sh 'fuser -k 8001/tcp; sleep 2; cd /opt/tab-betting-backend && nohup python3 /usr/local/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --log-level info > /var/log/botops.log 2>&1 &'
 
-# Frontend — build locally, copy dist
+# Frontend
 cd frontend && npm run build
-scp -r dist/* root@YOUR_VPS:/opt/botops-frontend/
+scp -r dist/* root@bo.betops.sh:/opt/botops-frontend/
 ```
 
-## Login Flow
+## Login Flows
 
-Each TAB account login obtains two tokens:
+### TAB
+1. **Auth0 ROPC** — `curl_cffi` (Chrome TLS) + HyperSolutions Akamai bypass + Auth0 password grant → `api.beta.tab.com.au` (pricing, matches, SGM)
+2. **Legacy TabcorpAuth** — POST `/v1/account-service/tab/authenticate` → `webapi.tab.com.au` (bet placement, history)
 
-1. **Auth0 ROPC** — `curl_cffi` (Chrome 142 TLS fingerprint) + HyperSolutions Akamai bypass + Auth0 password grant. Used for `api.beta.tab.com.au` (pricing, matches, SGM markets). Lasts ~9 hours.
+### Sportsbet
+1. Token Farm browser login (Patchright + Chrome, Kasada bypass) → captures JWT from `/ciam/token`
+2. Token refresh via curl-cffi (no browser needed)
 
-2. **Legacy TabcorpAuth** — POST `/v1/account-service/tab/authenticate` with `{accountNumber, password, channel}`. Used for `webapi.tab.com.au` (bet placement, history). Lasts ~9 hours.
+### BetMakers (7 brands)
+AWS Cognito `USER_PASSWORD_AUTH` → AccessToken for GraphQL platform endpoint. Per-brand config: cognito_client_id, user_pool_id, platform/racing hosts.
 
-**Balance** uses the account-list endpoint which works with ROPC tokens and resolves the real TAB account number (different from customerId in the JWT).
+### Amused (7 brands)
+Auth0 password grant → JWT for REST API. **Token only lasts 300 seconds** — auto-refreshed. Per-brand config: client_id, connection, audience.
 
-**Key rule:** `api.beta.tab.com.au` uses `Authorization: Bearer` only. `webapi.tab.com.au` uses `TabcorpAuth` only. Never mix them — sending TabcorpAuth to api.beta causes 401, sending Bearer to webapi betslip causes 401.
+### bet365
+Camoufox browser login → persistent browser session for subsequent bet placement. No REST API — everything browser-automated.
 
-## App Auth
+## Frontend Pages
 
-Web app users are defined in `backend/main.py` (SHA256 hashed passwords). Add new users by adding entries to the `APP_USERS` dict.
+| Page | Route | Description |
+|------|-------|-------------|
+| Dashboard | `/` | Stats, account cards, session management |
+| SGM Builder | `/betting` | Sport → match → props → betslip → place |
+| Multi Builder | `/multi` | Cross-game multi, one leg per game |
+| JSON Upload | `/json` | Upload JSON bets, checkbox selection, sequential placement |
+| CSV Paste | `/csv` | Tipster CSV → resolve against TAB → bulk place |
+| History | `/history` | Unified history across ALL bookies, bookie filter, P/L stats |
+| bet365 | `/bet365` | Telegram pick pipeline, browser control, manual picks |
+| Sportsbet | `/sportsbet` | SB-specific dashboard |
+| Disposals | `/disposals` | AFL disposal live tracker |
+| Live Stats | `/live-stats` | Real-time game stats |
+| Bet Ledger | `/bet-ledger` | Cross-bookie ledger |
+| Bookie Accounts | `/bookie-accounts` | Multi-bookie account management |
 
-Sessions persist in PostgreSQL — survive server restarts, stay logged in until explicit logout.
+## Betting Modes
 
-## TAB Accounts
+### SGM Builder (`/betting`)
+Browse matches by sport dropdown → click match → pick player props → betslip with price check → place across selected accounts.
 
-Managed via the Dashboard UI. Each account needs:
-- **Label** — display name (e.g., "Account1")
-- **Email** — TAB login email
-- **Password** — TAB login password
-- **Proxy URL** — AU residential proxy in format `http://user:pass@host:port`
-- **Account Number** — auto-detected on first login
+### Multi Builder (`/multi`)
+Pick one leg from each game → combine into cross-game multi → place.
 
-Each account uses its own proxy for IP isolation. The VPS is in the US so all TAB API calls must go through an AU proxy.
+### JSON Upload (`/json`)
+Upload a JSON array of bets. Checkbox UI to select/deselect individual bets. Place sequentially with human-like delays (2-6s between bets, 1-2min break every 15-25 bets).
+
+### CSV Paste (`/csv`)
+Paste CSV from tipster → resolve against TAB → bulk place. Supports SGM and Multi formats.
+
+### Human-Like Delays
+- 2-6 seconds between bets (randomised)
+- Every 15-25 bets: 1-2 minute break
+- Interval itself randomised each cycle
 
 ## Database Schema
 
 | Table | Purpose |
 |-------|---------|
 | `tab_accounts` | TAB credentials, proxy, account numbers |
-| `app_sessions` | Persistent web app login tokens |
-| `tab_sessions` | Persistent TAB auth tokens (Auth0 + legacy) |
-| `bets` | Every bet placed through BotOps — legs (JSONB), odds, stake, status, payout, TSN |
+| `app_sessions` | Web app login tokens |
+| `tab_sessions` | TAB auth tokens (Auth0 + legacy) |
+| `bets` | TAB bets — legs, odds, stake, status, payout, TSN |
+| `multi_accounts` | Multi-bookie accounts (BetMakers, Amused, SB, bet365) |
+| `multi_bets` | Multi-bookie bets — unified across all platforms |
 
-Tables auto-created on first startup.
-
-## Frontend Pages
-
-| Page | Route | Description |
-|------|-------|-------------|
-| Dashboard | `/` | Stat cards (bets, P/L, win rate) + account cards with table/card toggle |
-| SGM Builder | `/betting` | Sport dropdown, match browser, prop grid, betslip with stake/liability mode |
-| Multi Builder | `/multi` | Cross-game multi — one leg per game |
-| JSON Upload | `/json` | Upload JSON bet array, select accounts, place sequentially with human delays |
-| CSV Paste | `/csv` | Paste CSV from tipster, resolve against TAB, bulk place |
-| History | `/history` | Our bets from DB — table/card views, filters, P/L stats, check results |
-
-## Betting Modes
-
-### SGM Builder (`/betting`)
-Browse matches by sport dropdown → click match → pick props → betslip with price check → place.
-
-### Multi Builder (`/multi`)
-Pick one leg from each game → combine into cross-game multi → place.
-
-### JSON Upload (`/json`)
-Upload a JSON array of bets:
-```json
-[
-  {
-    "category": "sports",
-    "is_same_event_multi": true,
-    "sport": "afl",
-    "event": "Fremantle v Melbourne",
-    "legs": [
-      {"market": "player_prop", "player": "Andrew Brayshaw", "stat": "disposals", "line": 20, "selection": "over"},
-      {"market": "player_prop", "player": "Matthew Johnson", "stat": "disposals", "line": 25, "selection": "over"}
-    ]
-  }
-]
-```
-Select accounts (ordered), set staking mode (from JSON / fixed stake / max liability), hit Place All. Bets placed sequentially with 2-6 second random delays between each. Auto-switches to next account when balance runs out.
-
-### CSV Paste (`/csv`)
-Paste CSV from tipster in either format:
-
-**SGM:**
-```
-Bet Type,Game ID,Bet,Odds,SGM Min Odds,EV %,Units,Leg 1 TAB Odds,Leg 2 TAB Odds
-SGM,20260327_GWS_COL,Billy Frampton 15+ Disposals/Phoenix Gothard 15+ Disposals,5.0,3.834,30.38%,1.5,2.6,2.05
-```
-
-**Multi (cross-game):**
-```
-Bet Type,Bet,Odds,Min Odds,EV %,Units,Teams,Leg 1 TAB Odds,Leg 2 TAB Odds
-Multi,Luke Davies-Uniacke 30+ Disposals/Campbell Chesser 15+ Disposals,3.89,3.262,19.10%,1.7,,2.1,1.85
-```
-
-### Staking Modes
-- **Fixed Stake** — flat dollar amount per bet
-- **Max Liability** — set max payout, stake auto-calculated: `stake = liability / odds`, rounded down to a human number (under $10 = exact dollar, $10-99 = nearest $5 down, $100+ = nearest $10 down)
-
-### Human-Like Delays
-- 2-6 seconds between each bet (randomised)
-- Every 15-25 bets: 1-2 minute break (randomised)
-- Break interval itself randomised each cycle
-
-## Bet Tracking & Results
-
-Every bet placed through BotOps is saved to PostgreSQL with:
-- Ticket serial number (TSN)
-- Legs with descriptive names from TAB (e.g., "NBA Den-GSW 10+Pts Peyton Watson (DEN)")
-- Combined odds, stake, account label
-- Status: Pending → Won / Lost
-
-**Check Results**: Click the button on History page — loops through all accounts with pending bets, queries TAB's my-bets API by TSN, updates Won/Lost with payout amounts. Each account can only see its own bets.
-
-**P/L**: Calculated from settled bets only (Won + Lost). Pending bets don't affect P/L.
+Tables auto-created on startup.
 
 ## API Endpoints
 
 ### Auth
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/auth/login` | App login `{username, password}` → `{token}` |
+| POST | `/api/auth/login` | App login |
 | GET | `/api/auth/me` | Check auth |
 
-### TAB Accounts
+### Accounts
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/accounts` | List accounts from DB |
+| GET | `/api/accounts` | List TAB accounts |
 | POST | `/api/accounts` | Add/update account |
 | DELETE | `/api/accounts/{id}` | Delete account |
-| POST | `/api/accounts/sync` | Bulk sync from frontend |
 
-### TAB Login
+### TAB Login & Sessions
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/login` | Login to TAB `{email, password, proxy_url}` → `{session_id, balance}` |
-| GET | `/api/active-sessions` | List active TAB sessions (for restoring state) |
+| POST | `/api/login` | TAB login → session_id |
+| GET | `/api/active-sessions` | List active sessions |
 | GET | `/api/balance?session_id=` | Check balance |
-| GET | `/api/session?session_id=` | Session info |
-| DELETE | `/api/session?session_id=` | Logout TAB session |
+| DELETE | `/api/session?session_id=` | Logout |
 
-### Markets
+### Markets & Betting
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/matches?session_id=&sport=&competition=` | List matches |
-| GET | `/api/sgm-markets/{match_id}?session_id=&sport=&competition=` | SGM props (falls back to regular markets if SGM empty) |
-
-### Betting
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/price-check` | Price check `{session_id, propositions, stake, bet_type}` |
-| POST | `/api/place-sgm` | Place SGM `{session_id, propositions, combined_odds, stake}` |
-| POST | `/api/place-multi` | Place multi `{session_id, legs, stake}` |
-| POST | `/api/place-json` | Place single bet from JSON format |
-| POST | `/api/place-json-batch` | Place batch with human delays |
-| POST | `/api/quick-resolve` | Resolve CSV rows to TAB propositions |
-| POST | `/api/quick-place` | Resolve + place with human delays |
+| GET | `/api/matches` | List matches by sport/competition |
+| GET | `/api/sgm-markets/{id}` | SGM props for a match |
+| POST | `/api/price-check` | Price check propositions |
+| POST | `/api/place-sgm` | Place SGM bet |
+| POST | `/api/place-multi` | Place cross-game multi |
+| POST | `/api/place-json` | Place from JSON format |
+| POST | `/api/quick-resolve` | Resolve CSV to TAB props |
+| POST | `/api/quick-place` | Resolve + place from CSV |
 
 ### History
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/bet-history?status=&account_number=&limit=` | Our bets from DB |
-| POST | `/api/bets/check-results` | Check all pending bets across all accounts |
+| GET | `/api/bet-history` | TAB bet history |
+| GET | `/api/unified-history` | All bookies merged — filters by status, bookie, date |
+| POST | `/api/bets/check-results` | Check pending bets across all accounts |
+| POST | `/api/sync-manual-bets` | Import TAB bets not in DB |
+| GET | `/api/leg-results` | Per-leg stats from external APIs |
 
-## Token Types
+### bet365
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/bet365/status` | Service status |
+| POST | `/api/bet365/start-all` | Start all services |
+| POST | `/api/bet365/browser/start` | Start Camoufox browser |
+| POST | `/api/bet365/telegram/start` | Start Telegram monitor |
+| POST | `/api/bet365/pipeline/enable` | Enable auto-place pipeline |
+| GET | `/api/bet365/picks` | Get parsed picks |
+| POST | `/api/bet365/picks/manual` | Add manual pick |
 
-| Token | Source | Used For | Domain | Header | Duration |
-|-------|--------|----------|--------|--------|----------|
-| Auth0 ROPC | Auth0 password grant | Pricing, matches, SGM | `api.beta.tab.com.au` | `Authorization: Bearer` | ~9 hours |
-| Legacy TabcorpAuth | `/account-service/tab/authenticate` | Bet placement, history | `webapi.tab.com.au` | `TabcorpAuth:` | ~9 hours |
+### Sportsbet
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/sportsbet/live-pnl` | Live P/L for a match |
+
+## Tech Stack
+
+### Backend
+- Python 3.12, FastAPI, asyncpg (PostgreSQL)
+- curl_cffi (Chrome TLS fingerprint)
+- hyper-sdk (Akamai bypass for TAB)
+- httpx (Token Farm client)
+- pydantic (models)
+
+### Frontend
+- React 18, Vite, Tailwind CSS v4
+- Lucide React (icons)
+- JetBrains Mono font
+- Dark/Light theme (CSS custom properties)
+
+### Token Farm
+- FastAPI + uvicorn (port 9000)
+- Patchright 1.58 + Chrome 136 (Sportsbet)
+- Camoufox 0.4 + Firefox (bet365)
+- curl-cffi (token refresh)
+- Proxmox VM (Lubuntu 24.04, 4 CPU, 4GB RAM)
+
+### Infrastructure
+- VPS: Hostinger KVM2 (76.13.214.208)
+- Mini PC: Proxmox `jv1lab` (192.168.1.210)
+- WireGuard VPN tunnel between VPS and Mini PC
+- Caddy reverse proxy
+- Systemd services (botops, token-farm)
 
 ## Key Technical Notes
 
-- **Customer ID ≠ Account Number** — JWT `customerId` differs from TAB `accountNumber`. Resolved via `/customers/{customerId}/account-list?channel=TABCOMAU`.
-- **SGM vs regular markets** — SGM player props open 12-24h before game. Regular markets (H2H, Line, Totals) available days in advance. API falls back automatically.
-- **Akamai bypass** — HyperSolutions SDK, 3 sensor POSTs to `www.tab.com.au`. Required before Auth0 ROPC login.
-- **Bet leg names** — TAB's placement response doesn't include leg names. After placement, the system queries `/my-bets` by TSN (with 1s delay) to get descriptive names.
-- **Proxy required** — VPS is in the US. All TAB API calls go through per-account AU residential proxies.
-- **Sessions persist** — both app auth and TAB sessions stored in PostgreSQL. Survive server restarts.
-
-## Frontend Stack
-
-- React 18 + Vite
-- Tailwind CSS v4
-- Lucide React (icons)
-- JetBrains Mono font
-- Signal Dashboard design language (oklch colors, dark sidebar, stat cards)
-- Dark/Light theme toggle
-
-## Backend Stack
-
-- Python 3.12 + FastAPI
-- curl_cffi (Chrome 142 TLS fingerprint)
-- hyper-sdk (Akamai bypass)
-- asyncpg (PostgreSQL)
-- pydantic (models)
-
-## Sport Options
-
-Pre-configured in dropdown: AFL, NRL, NBA, NBL, NCAA Basketball, A-League Men, EPL, Champions League, Cricket BBL, Tennis ATP/WTA, NFL, MLB, NHL.
-
-## Adding a New TAB Account
-
-1. Go to Dashboard → Add Account
-2. Fill in: Label, Email, TAB Password, Proxy URL (`http://user:pass@host:port`)
-3. Account number auto-detected on first login
-4. Click Login → balance appears, ready to bet
-
-## Adding a New Bookie (Future)
-
-The architecture is bookie-agnostic. To add a new bookie:
-1. Create a new login module (like `login.py` for TAB)
-2. Create betting API module (like `betting.py`)
-3. Add endpoints to `main.py`
-4. Update frontend with bookie selector
+- **Customer ID != Account Number** — TAB JWT `customerId` differs from `accountNumber`. Resolved via account-list endpoint.
+- **Proxy required** — VPS is in the US. All AU bookie API calls go through per-account AU residential proxies.
+- **Sessions persist** — App auth, TAB sessions, multi-bookie sessions all in PostgreSQL. Survive restarts.
+- **Kasada bypass** — Patchright uses real system Chrome (matching UA + TLS fingerprint). UA must match Chrome version exactly.
+- **bet365 has no API** — Everything browser-automated via Camoufox. Persistent sessions for bet placement.
+- **Amused tokens expire in 300s** — Auto-refreshed before each operation.
+- **BetMakers amounts in cents** — `amount: 500` = $5.00. Position always 0, is_boxed always false.

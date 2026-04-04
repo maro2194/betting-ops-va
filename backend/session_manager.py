@@ -13,6 +13,7 @@ VALIDITY_BUFFERS = {
     "tab": 300,        # 5 min buffer
     "betmakers": 120,  # 2 min buffer
     "amused": 60,      # 1 min buffer (tokens only last 300s!)
+    "sportsbet": 120,  # 2 min buffer
 }
 
 
@@ -97,6 +98,10 @@ class SessionManager:
             # TAB uses its own login module — not handled here yet
             return {"success": False, "error": "TAB login not yet implemented in session manager"}
 
+        # Sportsbet: try token farm for browser login, refresh_token for fast path
+        if platform == "sportsbet":
+            return await self._login_sportsbet(account)
+
         try:
             client = get_client(platform)
         except ValueError as e:
@@ -132,6 +137,56 @@ class SessionManager:
             session["initials"] = account.get("initials", "")
             session["account_id"] = account.get("id", "")
 
+        return session
+
+
+    async def _login_sportsbet(self, account: dict) -> dict:
+        """Login to Sportsbet: try refresh first, then token farm browser login."""
+        from platforms.sportsbet import SportsbetClient
+
+        client = SportsbetClient()
+        email = account["email"]
+        password = account["password"]
+        proxy_url = _generate_proxy(account.get("proxy_base", ""))
+
+        # Build brand_config with any existing refresh_token
+        brand_config = account.get("brand_config", {})
+
+        # Try refresh_token first (fast, no browser)
+        refresh_token = brand_config.get("refresh_token")
+        if refresh_token:
+            session = await client._try_refresh(
+                brand_config.get("base_url", "https://www.sportsbet.com.au"),
+                refresh_token, proxy_url,
+            )
+            if session and session.get("success"):
+                session["platform"] = "sportsbet"
+                session["brand"] = "sportsbet"
+                session["initials"] = account.get("initials", "")
+                session["account_id"] = account.get("id", "")
+                return session
+
+        # Try token farm (browser login on mini PC)
+        try:
+            import token_farm_client
+            farm_result = await token_farm_client.sportsbet_login(email, password)
+            if farm_result.get("success"):
+                farm_result["platform"] = "sportsbet"
+                farm_result["brand"] = "sportsbet"
+                farm_result["initials"] = account.get("initials", "")
+                farm_result["account_id"] = account.get("id", "")
+                return farm_result
+            logger.warning(f"Token farm SB login failed: {farm_result.get('error')}")
+        except Exception as e:
+            logger.warning(f"Token farm unavailable, trying local browser: {e}")
+
+        # Fallback: local browser login (if patchright available)
+        session = await client.login(email, password, proxy_url, brand_config)
+        if session.get("success"):
+            session["platform"] = "sportsbet"
+            session["brand"] = "sportsbet"
+            session["initials"] = account.get("initials", "")
+            session["account_id"] = account.get("id", "")
         return session
 
 

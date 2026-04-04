@@ -7,6 +7,8 @@ import logging
 from .base import PlatformClient
 from .betmakers import BetMakersClient
 from .amused import AmusedClient
+from .sportsbet import SportsbetClient
+from .bet365 import Bet365Client
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +33,14 @@ BOOKMAKER_PLATFORM_MAP: dict[str, tuple[str, str]] = {
     "bigbet": ("amused", "bigbet"),
     "yesbet": ("amused", "yesbet"),
     "mightybet": ("amused", "mightybet"),
+    # Sportsbet (own platform, browser-auth via token farm)
+    "sportsbet": ("sportsbet", "sportsbet"),
+    # bet365 (browser-automated via token farm)
+    "bet365": ("bet365", "bet365"),
 }
 
 # Unsupported (yet)
-UNSUPPORTED_BOOKMAKERS = {"sportsbet", "neds", "ladbrokes", "bet365", "pointsbet"}
+UNSUPPORTED_BOOKMAKERS = {"neds", "ladbrokes", "pointsbet"}
 
 # Singleton client instances
 _clients: dict[str, PlatformClient] = {}
@@ -53,15 +59,18 @@ def get_platform_and_brand(bookmaker: str) -> tuple[str, str] | None:
 
 
 def get_client(platform: str) -> PlatformClient:
-    """Get or create a platform client instance.
-    Platform must be 'betmakers' or 'amused'. TAB uses its own login/betting modules."""
+    """Get or create a platform client instance."""
     if platform not in _clients:
         if platform == "betmakers":
             _clients[platform] = BetMakersClient()
         elif platform == "amused":
             _clients[platform] = AmusedClient()
+        elif platform == "sportsbet":
+            _clients[platform] = SportsbetClient()
+        elif platform == "bet365":
+            _clients[platform] = Bet365Client()
         else:
-            raise ValueError(f"Unknown platform: {platform}. Use 'betmakers' or 'amused'.")
+            raise ValueError(f"Unknown platform: {platform}")
     return _clients[platform]
 
 

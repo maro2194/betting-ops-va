@@ -106,6 +106,17 @@ export const api = {
     return request(`/api/bet-history?${params}`);
   },
 
+  // Unified History (all bookies merged)
+  getUnifiedHistory: (status, bookie, limit = 500, dateFrom, dateTo) => {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (bookie) params.set('bookie', bookie);
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
+    params.set('limit', limit);
+    return request(`/api/unified-history?${params}`);
+  },
+
   // Check Results (loops all accounts server-side)
   checkResults: () =>
     request('/api/bets/check-results', { method: 'POST' }),

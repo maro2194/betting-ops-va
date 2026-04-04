@@ -37,8 +37,11 @@ export default function History() {
   const [bets, setBets] = useState([]);
   const [filter, setFilter] = useState('');
   const [accountFilter, setAccountFilter] = useState('');
+  const [bookieFilter, setBookieFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [stats, setStats] = useState(null);
+  const [byBookie, setByBookie] = useState({});
   const [viewMode, setViewMode] = useState('table'); // 'table' or 'card'
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
@@ -49,20 +52,22 @@ export default function History() {
 
   const fetchBets = useCallback(async () => {
     try {
-      const data = await api.getBetHistory(
+      const data = await api.getUnifiedHistory(
         filter || undefined,
-        accountFilter || undefined,
+        bookieFilter || undefined,
         500,
         dateFrom || undefined,
         dateTo || undefined,
       );
       setBets(data.bets || []);
+      setStats(data.stats || null);
+      setByBookie(data.by_bookie || {});
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [filter, accountFilter, dateFrom, dateTo]);
+  }, [filter, bookieFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     setLoading(true);
@@ -106,19 +111,16 @@ export default function History() {
     { label: 'Lost', value: 'Lost' },
   ];
 
-  // Get unique accounts from bets
-  const accounts = [...new Set(bets.map((b) => b.account_label || b.account_number).filter(Boolean))];
+  // Get unique accounts and bookies from bets
+  const accounts = [...new Set(bets.map((b) => b.label || b.account_label || b.account_number).filter(Boolean))];
+  const bookies = [...new Set(bets.map((b) => b.bookie).filter(Boolean))];
 
-  const totalStake = bets.reduce((s, b) => s + parseMoney(b.stake), 0);
-  const totalPayout = bets.reduce((s, b) => s + parseMoney(b.payout), 0);
-  // P/L from settled bets only
-  const settledBets = bets.filter((b) => b.status === 'Won' || b.status === 'won' || b.status === 'Lost' || b.status === 'lost');
-  const settledStake = settledBets.reduce((s, b) => s + parseMoney(b.stake), 0);
-  const settledPayout = settledBets.reduce((s, b) => s + parseMoney(b.payout), 0);
-  const pl = settledPayout - settledStake;
-  const wonCount = bets.filter((b) => b.status === 'Won' || b.status === 'won').length;
-  const lostCount = bets.filter((b) => b.status === 'Lost' || b.status === 'lost').length;
-  const pendingCount = bets.filter((b) => b.status === 'Pending' || b.status === 'pending').length;
+  const totalStake = stats?.total_staked ?? bets.reduce((s, b) => s + parseMoney(b.stake), 0);
+  const totalPayout = stats?.total_returned ?? bets.reduce((s, b) => s + parseMoney(b.payout), 0);
+  const pl = stats?.pl ?? (totalPayout - totalStake);
+  const wonCount = stats?.won ?? bets.filter((b) => b.status === 'Won' || b.status === 'won').length;
+  const lostCount = stats?.lost ?? bets.filter((b) => b.status === 'Lost' || b.status === 'lost').length;
+  const pendingCount = stats?.pending ?? bets.filter((b) => b.status === 'Pending' || b.status === 'pending').length;
 
   return (
     <div className="animate-fade-in">
@@ -174,13 +176,31 @@ export default function History() {
           </button>
         ))}
 
+        {/* Bookie filter */}
+        {bookies.length > 1 && (
+          <>
+            <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
+            <select
+              value={bookieFilter}
+              onChange={(e) => { setBookieFilter(e.target.value); setLoading(true); }}
+              className="t-input"
+              style={{ border: '1px solid var(--border)', padding: '6px 10px', fontSize: 12 }}
+            >
+              <option value="">All Bookies</option>
+              {bookies.map((b) => (
+                <option key={b} value={b}>{b.charAt(0).toUpperCase() + b.slice(1)}</option>
+              ))}
+            </select>
+          </>
+        )}
+
         {/* Account filter */}
         {accounts.length > 0 && (
           <>
             <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
             <select
               value={accountFilter}
-              onChange={(e) => { setAccountFilter(e.target.value); setLoading(true); }}
+              onChange={(e) => { setAccountFilter(e.target.value); }}
               className="t-input"
               style={{ border: '1px solid var(--border)', padding: '6px 10px', fontSize: 12 }}
             >
@@ -345,6 +365,7 @@ export default function History() {
             <thead>
               <tr>
                 <th>Date</th>
+                <th>Bookie</th>
                 <th>Account</th>
                 <th>Type</th>
                 <th>Legs</th>
@@ -355,22 +376,31 @@ export default function History() {
               </tr>
             </thead>
             <tbody>
-              {bets.map((bet) => (
+              {bets.filter(bet => !accountFilter || (bet.label || bet.account_label || bet.account_number || '') === accountFilter).map((bet) => (
                 <tr key={bet.id}>
                   <td style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                    <div>{new Date(bet.placed_at).toLocaleDateString()}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{new Date(bet.placed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                    {bet.placed_at ? (
+                      <>
+                        <div>{new Date(bet.placed_at).toLocaleDateString()}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{new Date(bet.placed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                      </>
+                    ) : <span style={{ color: 'var(--text-muted)' }}>-</span>}
                   </td>
                   <td>
-                    <span className="badge badge-neutral">{bet.account_label || bet.account_number || '-'}</span>
+                    <span className="badge badge-accent" style={{ fontSize: 10, textTransform: 'uppercase' }}>
+                      {bet.bookie || 'tab'}
+                    </span>
                   </td>
                   <td>
-                    <span className={`badge ${bet.bet_type === 'SGM' ? 'badge-purple' : 'badge-accent'}`}>
-                      {bet.bet_type || 'SGM'}
+                    <span className="badge badge-neutral">{bet.label || bet.account_label || bet.account_number || '-'}</span>
+                  </td>
+                  <td>
+                    <span className={`badge ${(bet.type || bet.bet_type) === 'SGM' ? 'badge-purple' : 'badge-accent'}`}>
+                      {bet.type || bet.bet_type || 'SGM'}
                     </span>
                   </td>
                   <td><LegsCell legs={bet.legs} /></td>
-                  <td style={{ textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>{parseMoney(bet.combined_odds).toFixed(2)}</td>
+                  <td style={{ textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>{parseMoney(bet.odds || bet.combined_odds).toFixed(2)}</td>
                   <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>${parseMoney(bet.stake).toFixed(2)}</td>
                   <td><StatusBadge status={bet.status} /></td>
                   <td style={{ textAlign: 'right', color: bet.status === 'Won' || bet.status === 'won' ? 'var(--success)' : 'var(--text-secondary)', fontWeight: bet.payout ? 600 : 400 }}>
@@ -384,8 +414,8 @@ export default function History() {
       ) : (
         /* ─── Card View ─── */
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
-          {bets.map((bet) => {
-            const odds = parseMoney(bet.combined_odds);
+          {bets.filter(bet => !accountFilter || (bet.label || bet.account_label || bet.account_number || '') === accountFilter).map((bet) => {
+            const odds = parseMoney(bet.odds || bet.combined_odds);
             const stake = parseMoney(bet.stake);
             const payout = parseMoney(bet.payout);
             const isWon = bet.status === 'Won' || bet.status === 'won';
@@ -405,9 +435,10 @@ export default function History() {
                 {/* Header */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className="badge badge-neutral" style={{ fontSize: 11 }}>{bet.account_label || bet.account_number}</span>
-                    <span className={`badge ${bet.bet_type === 'SGM' ? 'badge-purple' : 'badge-accent'}`} style={{ fontSize: 11 }}>
-                      {bet.bet_type || 'SGM'}
+                    <span className="badge badge-accent" style={{ fontSize: 10, textTransform: 'uppercase' }}>{bet.bookie || 'tab'}</span>
+                    <span className="badge badge-neutral" style={{ fontSize: 11 }}>{bet.label || bet.account_label || bet.account_number}</span>
+                    <span className={`badge ${(bet.type || bet.bet_type) === 'SGM' ? 'badge-purple' : 'badge-accent'}`} style={{ fontSize: 11 }}>
+                      {bet.type || bet.bet_type || 'SGM'}
                     </span>
                   </div>
                   <StatusBadge status={bet.status} />

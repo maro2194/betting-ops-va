@@ -578,6 +578,126 @@ async def api_bet_history(status: str = None, account_number: str = None,
         raise HTTPException(500, f"Bet history failed: {str(e)}")
 
 
+@app.get("/api/unified-history")
+async def api_unified_history(
+    status: str = None, bookie: str = None,
+    date_from: str = None, date_to: str = None,
+    limit: int = 500, _user: dict = Depends(_verify_app_token),
+):
+    """Unified bet history across ALL bookies (TAB bets + multi_bets)."""
+    import database as _db
+    try:
+        async with _db.pool.acquire() as conn:
+            # Query TAB bets
+            tab_rows = await conn.fetch(
+                """SELECT id, 'tab' as bookie, account_label as label,
+                          bet_type as type, legs, combined_odds as odds,
+                          stake::double precision as stake, status, payout,
+                          placed_at, settled_at, tsn as reference, source as method
+                   FROM bets WHERE username = $1
+                   ORDER BY placed_at DESC NULLS LAST
+                   LIMIT $2""",
+                _user["username"], limit,
+            )
+
+            # Query multi_bets
+            multi_rows = await conn.fetch(
+                """SELECT id, brand as bookie, initials as label,
+                          method as type, NULL as legs,
+                          odds::text as odds, stake, status,
+                          payout::double precision as payout,
+                          placed_at, settled_at, bet_reference as reference,
+                          method
+                   FROM multi_bets WHERE username = $1
+                   ORDER BY placed_at DESC NULLS LAST
+                   LIMIT $2""",
+                _user["username"], limit,
+            )
+
+        # Merge and normalise
+        all_bets = []
+        for r in tab_rows:
+            d = dict(r)
+            d["source"] = "tab"
+            if d.get("placed_at"):
+                d["placed_at"] = d["placed_at"].isoformat()
+            if d.get("settled_at"):
+                d["settled_at"] = d["settled_at"].isoformat()
+            # Normalise payout to float
+            if d.get("payout"):
+                try:
+                    d["payout"] = float(str(d["payout"]).replace("$", "").replace(",", ""))
+                except (ValueError, TypeError):
+                    d["payout"] = 0.0
+            # Normalise stake
+            if d.get("stake") is not None:
+                try:
+                    d["stake"] = float(d["stake"])
+                except (ValueError, TypeError):
+                    pass
+            all_bets.append(d)
+
+        for r in multi_rows:
+            d = dict(r)
+            d["source"] = "multi"
+            if d.get("placed_at"):
+                d["placed_at"] = d["placed_at"].isoformat()
+            if d.get("settled_at"):
+                d["settled_at"] = d["settled_at"].isoformat()
+            all_bets.append(d)
+
+        # Apply filters
+        if status and status != "ALL":
+            sl = status.lower()
+            all_bets = [b for b in all_bets if b.get("status", "").lower() == sl]
+        if bookie and bookie != "ALL":
+            bl = bookie.lower()
+            all_bets = [b for b in all_bets if b.get("bookie", "").lower() == bl]
+        if date_from:
+            all_bets = [b for b in all_bets if b.get("placed_at", "") >= date_from]
+        if date_to:
+            all_bets = [b for b in all_bets if b.get("placed_at", "") <= date_to + "T23:59:59"]
+
+        # Sort by placed_at descending
+        all_bets.sort(key=lambda b: b.get("placed_at") or "", reverse=True)
+        all_bets = all_bets[:limit]
+
+        # Compute stats
+        total_staked = sum(float(b.get("stake") or 0) for b in all_bets)
+        total_returned = sum(float(b.get("payout") or 0) for b in all_bets)
+        won = sum(1 for b in all_bets if b.get("status", "").lower() in ("won", "w"))
+        lost = sum(1 for b in all_bets if b.get("status", "").lower() in ("lost", "l"))
+        pending = sum(1 for b in all_bets if b.get("status", "").lower() in ("pending", "placed", "open"))
+
+        # Breakdown by bookie
+        bookie_stats = {}
+        for b in all_bets:
+            bk = b.get("bookie", "unknown")
+            if bk not in bookie_stats:
+                bookie_stats[bk] = {"bets": 0, "staked": 0.0, "returned": 0.0}
+            bookie_stats[bk]["bets"] += 1
+            bookie_stats[bk]["staked"] += float(b.get("stake") or 0)
+            bookie_stats[bk]["returned"] += float(b.get("payout") or 0)
+
+        return {
+            "bets": all_bets,
+            "stats": {
+                "total": len(all_bets),
+                "won": won,
+                "lost": lost,
+                "pending": pending,
+                "total_staked": round(total_staked, 2),
+                "total_returned": round(total_returned, 2),
+                "pl": round(total_returned - total_staked, 2),
+                "win_rate": round(won / (won + lost) * 100, 1) if (won + lost) > 0 else 0,
+            },
+            "by_bookie": bookie_stats,
+        }
+    except Exception as e:
+        logger.error(f"Unified history error: {e}")
+        raise HTTPException(500, f"Unified history failed: {str(e)}")
+
+
 @app.post("/api/bets/check-results")
 async def api_check_results(session_id: str = None, _user: dict = Depends(_verify_app_token)):
     """Check results for all Pending bets across all logged-in accounts."""
