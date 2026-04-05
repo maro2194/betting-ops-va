@@ -592,7 +592,7 @@ async def api_unified_history(
             tab_rows = await conn.fetch(
                 """SELECT id, 'tab' as bookie, account_label as label,
                           bet_type as type, legs, combined_odds as odds,
-                          stake::double precision as stake, status, payout,
+                          stake, status, payout,
                           placed_at, settled_at, tsn as reference, source as method
                    FROM bets WHERE username = $1
                    ORDER BY placed_at DESC NULLS LAST
@@ -722,9 +722,11 @@ async def api_check_results(session_id: str = None, _user: dict = Depends(_verif
     for acct_num, acct_bets in pending_by_account.items():
         # Find a session for this account
         session_found = None
+        session_sid = None
         for sid, s in sessions.items():
             if s.get("account_number") == acct_num and s.get("legacy_token"):
                 session_found = s
+                session_sid = sid
                 break
 
         if not session_found:
@@ -743,8 +745,40 @@ async def api_check_results(session_id: str = None, _user: dict = Depends(_verif
                     tab_by_tsn[tb["tsn"]] = tb
             accounts_checked.append(acct_num)
         except Exception as e:
-            accounts_failed.append({"account": acct_num, "error": str(e)})
-            continue
+            error_msg = str(e)
+            # Auto-re-auth: if legacy token expired, refresh it and retry
+            if "401" in error_msg and session_found.get("password") and session_found.get("account_number"):
+                try:
+                    logger.info(f"Legacy token expired for {acct_num}, re-authenticating...")
+                    legacy_result = legacy_authenticate(
+                        session_found["account_number"],
+                        session_found["password"],
+                        session_found.get("proxy_url"),
+                    )
+                    new_token = legacy_result.get("legacy_token", "")
+                    if new_token:
+                        session_found["legacy_token"] = new_token
+                        if session_sid:
+                            sessions[session_sid]["legacy_token"] = new_token
+                        logger.info(f"Re-authenticated legacy token for {acct_num}")
+                        # Retry the fetch
+                        tab_bets = get_my_bets(
+                            new_token, acct_num,
+                            session_found["proxy_url"], count=100, status="ALL", max_pages=5
+                        )
+                        for tb in tab_bets.get("bets", []):
+                            if tb.get("tsn"):
+                                tab_by_tsn[tb["tsn"]] = tb
+                        accounts_checked.append(acct_num)
+                    else:
+                        accounts_failed.append({"account": acct_num, "error": "Re-auth returned no token"})
+                        continue
+                except Exception as reauth_err:
+                    accounts_failed.append({"account": acct_num, "error": f"Re-auth failed: {reauth_err}"})
+                    continue
+            else:
+                accounts_failed.append({"account": acct_num, "error": error_msg})
+                continue
 
         # Match and update
         for bet in acct_bets:

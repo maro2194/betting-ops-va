@@ -113,10 +113,12 @@ class SquiggleMatcher:
         if norm in _ALIAS_LOOKUP:
             return _ALIAS_LOOKUP[norm].title()
 
-        # Substring match (e.g. "brisbanelions" contains "brisbane")
-        for alias_norm, canonical in _ALIAS_LOOKUP.items():
-            if len(alias_norm) >= 4 and alias_norm in norm:
-                return canonical.title()
+        # Substring match (e.g. "brisbanelions" contains "brisbane") — prefer longest match
+        matches = [(alias_norm, canonical) for alias_norm, canonical in _ALIAS_LOOKUP.items()
+                   if len(alias_norm) >= 4 and alias_norm in norm]
+        if matches:
+            best = max(matches, key=lambda x: len(x[0]))
+            return best[1].title()
 
         # Reverse: check if input is in any canonical name
         for canonical in AFL_ALIASES:

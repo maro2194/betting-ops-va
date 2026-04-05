@@ -115,12 +115,25 @@ export default function History() {
   const accounts = [...new Set(bets.map((b) => b.label || b.account_label || b.account_number).filter(Boolean))];
   const bookies = [...new Set(bets.map((b) => b.bookie).filter(Boolean))];
 
-  const totalStake = stats?.total_staked ?? bets.reduce((s, b) => s + parseMoney(b.stake), 0);
-  const totalPayout = stats?.total_returned ?? bets.reduce((s, b) => s + parseMoney(b.payout), 0);
-  const pl = stats?.pl ?? (totalPayout - totalStake);
-  const wonCount = stats?.won ?? bets.filter((b) => b.status === 'Won' || b.status === 'won').length;
-  const lostCount = stats?.lost ?? bets.filter((b) => b.status === 'Lost' || b.status === 'lost').length;
-  const pendingCount = stats?.pending ?? bets.filter((b) => b.status === 'Pending' || b.status === 'pending').length;
+  // Filter bets by account (client-side) for accurate stats
+  const filteredBets = bets.filter(bet => !accountFilter || (bet.label || bet.account_label || bet.account_number || '') === accountFilter);
+
+  const totalStake = accountFilter
+    ? filteredBets.reduce((s, b) => s + parseMoney(b.stake), 0)
+    : (stats?.total_staked ?? bets.reduce((s, b) => s + parseMoney(b.stake), 0));
+  const totalPayout = accountFilter
+    ? filteredBets.reduce((s, b) => s + parseMoney(b.payout), 0)
+    : (stats?.total_returned ?? bets.reduce((s, b) => s + parseMoney(b.payout), 0));
+  const pl = totalPayout - totalStake;
+  const wonCount = accountFilter
+    ? filteredBets.filter((b) => b.status === 'Won' || b.status === 'won').length
+    : (stats?.won ?? bets.filter((b) => b.status === 'Won' || b.status === 'won').length);
+  const lostCount = accountFilter
+    ? filteredBets.filter((b) => b.status === 'Lost' || b.status === 'lost').length
+    : (stats?.lost ?? bets.filter((b) => b.status === 'Lost' || b.status === 'lost').length);
+  const pendingCount = accountFilter
+    ? filteredBets.filter((b) => b.status === 'Pending' || b.status === 'pending').length
+    : (stats?.pending ?? bets.filter((b) => b.status === 'Pending' || b.status === 'pending').length);
 
   return (
     <div className="animate-fade-in">
@@ -177,7 +190,7 @@ export default function History() {
         ))}
 
         {/* Bookie filter */}
-        {bookies.length > 1 && (
+        {(bookies.length > 0 || bookieFilter) && (
           <>
             <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
             <select
@@ -376,7 +389,7 @@ export default function History() {
               </tr>
             </thead>
             <tbody>
-              {bets.filter(bet => !accountFilter || (bet.label || bet.account_label || bet.account_number || '') === accountFilter).map((bet) => (
+              {filteredBets.map((bet) => (
                 <tr key={bet.id}>
                   <td style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                     {bet.placed_at ? (
@@ -414,7 +427,7 @@ export default function History() {
       ) : (
         /* ─── Card View ─── */
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
-          {bets.filter(bet => !accountFilter || (bet.label || bet.account_label || bet.account_number || '') === accountFilter).map((bet) => {
+          {filteredBets.map((bet) => {
             const odds = parseMoney(bet.odds || bet.combined_odds);
             const stake = parseMoney(bet.stake);
             const payout = parseMoney(bet.payout);
@@ -482,7 +495,7 @@ export default function History() {
 
                 {/* Date */}
                 <div style={{ padding: '6px 16px 8px', fontSize: 11, color: 'var(--text-muted)' }}>
-                  {new Date(bet.placed_at).toLocaleString()}
+                  {bet.placed_at ? new Date(bet.placed_at).toLocaleString() : '-'}
                   {bet.tsn && <span style={{ marginLeft: 8 }}>TSN: {bet.tsn}</span>}
                 </div>
               </div>

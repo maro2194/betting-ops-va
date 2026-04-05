@@ -14,6 +14,7 @@ VALIDITY_BUFFERS = {
     "betmakers": 120,  # 2 min buffer
     "amused": 60,      # 1 min buffer (tokens only last 300s!)
     "sportsbet": 120,  # 2 min buffer
+    "bet365": 300,     # 5 min buffer (sessions last ~2hrs)
 }
 
 
