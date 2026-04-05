@@ -128,11 +128,16 @@ async def api_test_login(account_id: str, user: dict = Depends(_verify_app_token
         from platforms.amused import AMUSED_BRANDS
         brand_config = AMUSED_BRANDS.get(brand, {}) or {}
 
-    # Generate proxy with unique session
+    # Generate proxy URL
     proxy_base = account.get("proxy_base", "")
     if proxy_base:
-        sess_id = str(random.randint(1000000000, 9999999999))
-        proxy_url = f"{proxy_base}-sessid-{sess_id}-sesstime-10:K5E=2qcyhfyFZs~@pr.oxylabs.io:7777"
+        # If proxy_base is already a full URL (http://user:pass@host:port), use as-is
+        if "://" in proxy_base and "@" in proxy_base:
+            proxy_url = proxy_base
+        else:
+            # Oxylabs format: proxy_base is the username prefix
+            sess_id = str(random.randint(1000000000, 9999999999))
+            proxy_url = f"{proxy_base}-sessid-{sess_id}-sesstime-10:K5E=2qcyhfyFZs~@pr.oxylabs.io:7777"
     else:
         proxy_url = ""
 
@@ -194,7 +199,7 @@ async def api_csv_upload(
     for i, (row, val) in enumerate(zip(rows, validation)):
         row_id = str(uuid.uuid4())
         status = "pending" if val["valid"] else "skipped"
-        db_rows.append({
+        db_row = {
             "id": row_id,
             "batch_id": batch_id,
             "row_index": i,
@@ -215,17 +220,29 @@ async def api_csv_upload(
             "brand": val.get("brand"),
             "account_id": val.get("account_id"),
             "status": status,
-        })
+        }
+        # Sports fields stored in existing columns (track=event, horse=bet_desc)
+        if row.row_type == "sports":
+            db_row["track"] = row.event
+            db_row["horse"] = row.bet_desc
+            db_row["race"] = "0"
+        db_rows.append(db_row)
     await insert_csv_rows(db_rows)
 
-    # Build preview (first 20 rows)
+    # Build preview (all rows, not just 20 — allocations are typically <100)
     preview = []
-    for i, (row, val) in enumerate(zip(rows[:20], validation[:20])):
-        preview.append({
+    for i, (row, val) in enumerate(zip(rows, validation)):
+        entry = {
             "row_index": i,
+            "row_type": row.row_type,
             "track": row.track,
             "race": row.race,
             "horse": row.horse,
+            "event": row.event,
+            "bet_desc": row.bet_desc,
+            "sport": row.sport,
+            "odds": row.odds,
+            "min_odds": row.min_odds,
             "initials": row.initials,
             "bookmaker": row.bookmaker,
             "stake": row.stake,
@@ -234,7 +251,8 @@ async def api_csv_upload(
             "platform": val.get("platform"),
             "brand": val.get("brand"),
             "error": val.get("error"),
-        })
+        }
+        preview.append(entry)
 
     return CsvUploadResponse(
         batch_id=batch_id,

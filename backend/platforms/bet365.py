@@ -23,7 +23,7 @@ class Bet365Client(PlatformClient):
         """Login to bet365 via token farm's Camoufox browser."""
         try:
             import token_farm_client
-            result = await token_farm_client.bet365_login(email, password)
+            result = await token_farm_client.bet365_login(email, password, proxy_url=proxy_url)
             if result.get("success"):
                 return {
                     "success": True,
@@ -72,6 +72,36 @@ class Bet365Client(PlatformClient):
             })
         except Exception as e:
             return {"success": False, "error": f"bet365 placement error: {e}"}
+
+    async def place_sports_bet(self, session: dict, bet_payload: dict) -> dict:
+        """Place a sports bet on bet365 via token farm browser automation.
+
+        The token farm's Camoufox browser navigates to the event, finds the market,
+        and places the bet. bet_payload contains event, bet_desc, sport, odds, stake.
+        """
+        session_id = session.get("session_id")
+        if not session_id:
+            return {"success": False, "error": "No active bet365 browser session"}
+
+        try:
+            import token_farm_client
+            return await token_farm_client.bet365_place_bet(session_id, {
+                "type": "sports",
+                "sport": bet_payload.get("sport", ""),
+                "event": bet_payload.get("event", ""),
+                "bet_desc": bet_payload.get("bet_desc", ""),
+                "odds": bet_payload.get("odds", 0),
+                "min_odds": bet_payload.get("min_odds", 0),
+                "stake": bet_payload.get("stake", 0),
+                "stake_type": bet_payload.get("stake_type", "cash"),
+            })
+        except Exception as e:
+            return {"success": False, "error": f"bet365 sports placement error: {e}"}
+
+    async def get_balances(self, session: dict) -> dict:
+        """Get cash + bonus balances for multi-bookie framework."""
+        bal = await self.get_balance(session)
+        return {"cash": bal, "bonus": 0.0}
 
     async def get_balance(self, session: dict) -> float:
         """Get bet365 balance from session data."""

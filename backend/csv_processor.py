@@ -33,10 +33,17 @@ class CsvBetRow:
     promotion: str
     target_stake: str
     fully_allocated: str
+    # Sports fields (optional — empty for racing rows)
+    row_type: str = "racing"  # "racing" or "sports"
+    event: str = ""
+    bet_desc: str = ""
+    sport: str = ""
+    min_odds: float = 0.0
 
 
 def parse_racing_csv(csv_text: str) -> list[CsvBetRow]:
-    """Parse a racing allocation CSV into structured rows.
+    """Parse a unified allocation CSV into structured rows.
+    Supports both racing and sports rows via optional 'Type' column.
     Handles quoted fields, strips $ from odds, converts types."""
     reader = csv.DictReader(io.StringIO(csv_text))
     rows = []
@@ -55,6 +62,23 @@ def parse_racing_csv(csv_text: str) -> list[CsvBetRow]:
             stake_str = raw.get("Stake", "0").strip().replace("$", "")
             stake = float(stake_str) if stake_str else 0.0
 
+            # Parse min_odds
+            min_odds_str = raw.get("Min Odds", "0").strip().replace("$", "")
+            min_odds = float(min_odds_str) if min_odds_str else 0.0
+
+            # Detect row type: explicit 'Type' column, or infer from presence of event/bet_desc
+            row_type = raw.get("Type", "").strip().lower()
+            event = raw.get("Event", "").strip()
+            bet_desc = raw.get("Bet", raw.get("Bet Desc", "")).strip()
+            sport = raw.get("Sport", "").strip()
+
+            if not row_type:
+                # Auto-detect: if event or bet_desc present and no track, it's sports
+                if (event or bet_desc) and not raw.get("Track", "").strip():
+                    row_type = "sports"
+                else:
+                    row_type = "racing"
+
             rows.append(CsvBetRow(
                 date=raw.get("Date", "").strip(),
                 track=raw.get("Track", "").strip(),
@@ -70,6 +94,11 @@ def parse_racing_csv(csv_text: str) -> list[CsvBetRow]:
                 promotion=raw.get("Promotion", "").strip(),
                 target_stake=raw.get("Target Stake", "").strip(),
                 fully_allocated=raw.get("Fully Allocated", "").strip(),
+                row_type=row_type,
+                event=event,
+                bet_desc=bet_desc,
+                sport=sport,
+                min_odds=min_odds,
             ))
         except Exception as e:
             logger.warning(f"Skipping malformed CSV row: {e} — raw: {raw}")
@@ -86,13 +115,19 @@ async def validate_csv_rows(rows: list[CsvBetRow], username: str) -> list[dict]:
     for i, row in enumerate(rows):
         result = {
             "row_index": i,
+            "row_type": row.row_type,
             "track": row.track,
             "race": row.race,
             "horse": row.horse,
+            "event": row.event,
+            "bet_desc": row.bet_desc,
+            "sport": row.sport,
+            "min_odds": row.min_odds,
             "initials": row.initials,
             "bookmaker": row.bookmaker,
             "stake": row.stake,
             "stake_type": row.stake_type,
+            "odds": row.odds,
             "valid": False,
             "platform": None,
             "brand": None,
@@ -169,16 +204,6 @@ async def process_batch(batch_id: str, rows: list[dict], username: str):
                 failed += 1
             continue
 
-        # Skip TAB for now (uses different login system)
-        if platform == "tab":
-            for row in group_rows:
-                await update_csv_row(row["id"], {
-                    "status": "skipped",
-                    "error": "TAB betting via CSV not yet implemented",
-                })
-                skipped += 1
-            continue
-
         # Get platform client
         try:
             client = get_client(platform)
@@ -224,8 +249,73 @@ async def process_batch(batch_id: str, rows: list[dict], username: str):
                 # Update row status to in_progress
                 await update_csv_row(row["id"], {"status": "in_progress"})
 
-                # Human delay: simulate browsing to the race page
+                # Human delay: simulate browsing
                 await asyncio.sleep(random.uniform(1.0, 2.5))
+
+                # ── Sports bet routing ──
+                # Detect sports rows: explicit row_type, or race=0 with bet desc in horse field
+                is_sports = (row.get("row_type") == "sports"
+                             or (str(row.get("race", "1")) == "0" and row.get("horse", ""))
+                             )
+                if is_sports:
+                    # Sports fields: from in-memory rows or DB rows (track=event, horse=bet_desc)
+                    event = row.get("event") or row.get("track", "")
+                    bet_desc = row.get("bet_desc") or row.get("horse", "")
+                    sport = row.get("sport", "")
+                    target_odds = float(row.get("odds") or row.get("target_odds", 0) or 0)
+                    min_odds = float(row.get("min_odds", 0) or 0)
+
+                    result = await client.place_sports_bet(session, {
+                        "event": event,
+                        "bet_desc": bet_desc,
+                        "sport": sport,
+                        "odds": target_odds,
+                        "min_odds": min_odds,
+                        "stake": float(row["stake"]),
+                        "stake_type": row.get("stake_type", "cash"),
+                    })
+
+                    if result.get("success"):
+                        await update_csv_row(row["id"], {
+                            "status": "placed",
+                            "live_odds": str(result.get("odds", "")),
+                            "bet_reference": result.get("bet_id", ""),
+                            "raw_response": result,
+                        })
+                        placed += 1
+                        if cached_balance != float("inf"):
+                            cached_balance -= bet_stake
+                        try:
+                            await save_multi_bet({
+                                "id": str(uuid.uuid4()),
+                                "username": username,
+                                "initials": row["initials"],
+                                "owner_name": row.get("owner", ""),
+                                "platform": row["platform"],
+                                "brand": row["brand"],
+                                "method": "allocation-sports",
+                                "track": row.get("event", ""),
+                                "race_number": 0,
+                                "horse": row.get("bet_desc", ""),
+                                "stake": float(row["stake"]),
+                                "stake_type": row.get("stake_type", "cash"),
+                                "odds": result.get("odds"),
+                                "bet_reference": result.get("bet_id", ""),
+                                "status": "placed",
+                                "raw_response": result,
+                            })
+                        except Exception as e:
+                            logger.warning(f"Failed to save sports multi_bet: {e}")
+                    else:
+                        await update_csv_row(row["id"], {
+                            "status": "failed",
+                            "error": result.get("error", "Sports placement failed"),
+                            "raw_response": result,
+                        })
+                        failed += 1
+                    continue
+
+                # ── Racing bet routing ──
 
                 # Find the race
                 race_info = await client.find_race(session, row["track"], int(row["race"]))

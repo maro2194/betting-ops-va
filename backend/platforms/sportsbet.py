@@ -486,7 +486,242 @@ class SportsbetClient(PlatformClient):
 
         return {"success": False, "error": "No placement data in response", "raw": data}
 
+    # ── Sports bet placement ────────────────────────────────────
+
+    async def place_sports_bet(self, session: dict, bet_payload: dict) -> dict:
+        """Place a sports bet on Sportsbet.
+
+        For the allocation system, bet_payload contains:
+          - event: str (match name, e.g. "GWS vs COL")
+          - bet_desc: str (legs description, e.g. "Nick Daicos 25+ Disposals/Josh Kelly 20+ Disposals")
+          - sport: str (e.g. "afl")
+          - odds: float (target/expected odds)
+          - min_odds: float (minimum acceptable)
+          - stake: float
+          - stake_type: str
+
+        This searches SB's sports API to resolve event → markets → selections,
+        then places the bet via the standard /apigw/acs/bets endpoint.
+        """
+        access_token = session.get("access_token")
+        customer_id = session.get("customer_id")
+        proxy = session.get("proxy_url")
+
+        if not access_token or not customer_id:
+            return {"success": False, "error": "No valid SB session"}
+
+        event_name = bet_payload.get("event", "")
+        bet_desc = bet_payload.get("bet_desc", "")
+        sport = bet_payload.get("sport", "")
+        target_odds = bet_payload.get("odds", 0)
+        min_odds = bet_payload.get("min_odds", 0)
+        stake = bet_payload.get("stake", 0)
+
+        if not bet_desc:
+            return {"success": False, "error": "No bet description provided"}
+
+        # Parse legs from bet_desc: "Player1 25+ Disposals/Player2 20+ Disposals"
+        import re
+        leg_descs = [l.strip() for l in bet_desc.split("/") if l.strip()]
+        if not leg_descs:
+            return {"success": False, "error": f"Could not parse legs from: {bet_desc}"}
+
+        # Search for the event on SB
+        headers = _std_headers(access_token, customer_id)
+
+        # Use SB search API to find the event
+        search_term = event_name or sport
+        search_url = f"{BASE_URL}/apigw/sportsbook-sports/Sportsbook/Sports/Search?query={search_term}&limit=20"
+
+        try:
+            async with AsyncSession(impersonate="chrome131", proxy=proxy) as s:
+                resp = await s.get(search_url, headers=headers, timeout=15)
+
+            if resp.status_code >= 400:
+                return {"success": False, "error": f"SB search failed: HTTP {resp.status_code}"}
+
+            events = resp.json() if isinstance(resp.json(), list) else resp.json().get("events", [])
+
+            # Find matching event
+            matched_event = None
+            event_lower = event_name.lower().replace(" ", "")
+            for ev in events:
+                ev_name = (ev.get("name", "") or "").lower().replace(" ", "")
+                if event_lower and (event_lower in ev_name or ev_name in event_lower):
+                    matched_event = ev
+                    break
+
+            if not matched_event and events:
+                matched_event = events[0]  # Best guess if no exact match
+
+            if not matched_event:
+                return {"success": False, "error": f"Event not found on SB: {event_name}"}
+
+            event_id = matched_event.get("id")
+
+            # Get markets for this event
+            markets_url = f"{BASE_URL}/apigw/sportsbook-sports/Sportsbook/Sports/Events/{event_id}/Markets"
+            async with AsyncSession(impersonate="chrome131", proxy=proxy) as s:
+                resp = await s.get(markets_url, headers=headers, timeout=15)
+
+            if resp.status_code >= 400:
+                return {"success": False, "error": f"Markets fetch failed: HTTP {resp.status_code}"}
+
+            all_markets = resp.json() if isinstance(resp.json(), list) else []
+
+            # Resolve each leg to a selection
+            resolved_legs = []
+            for leg_desc in leg_descs:
+                selection = self._find_selection(all_markets, leg_desc)
+                if not selection:
+                    return {"success": False, "error": f"Selection not found: {leg_desc}"}
+                resolved_legs.append(selection)
+
+            # Build bet payload
+            is_multi = len(resolved_legs) > 1
+            bet_type = "CMP" if is_multi else "SGL"
+
+            legs = []
+            for i, sel in enumerate(resolved_legs):
+                legs.append({
+                    "legNo": i,
+                    "legSort": "--",
+                    "legType": "W",
+                    "legDesc": "",
+                    "isPYPSingle": False,
+                    "parts": [{
+                        "outcome": sel["id"],
+                        "partNo": 1,
+                        "priceType": "L",
+                        "partDesc": sel.get("market_name", ""),
+                        "priceNum": sel["price_num"],
+                        "priceDen": sel["price_den"],
+                    }],
+                })
+
+            payload = {
+                "betItems": [{
+                    "betNo": 0,
+                    "stakePerLine": stake,
+                    "numLines": 1,
+                    "betType": bet_type,
+                    "legs": legs,
+                    "legType": "W",
+                }],
+                "checkBalance": True,
+                "errorDetail": "ALL",
+                "firstBet": True,
+                "fullDetails": True,
+                "pendingBetCount": True,
+                "returnBalance": True,
+                "returnCashoutAvailable": True,
+            }
+
+            url = f"{BASE_URL}/apigw/acs/bets"
+            bet_hdrs = _bet_headers(access_token, customer_id)
+
+            async with AsyncSession(impersonate="chrome131", proxy=proxy) as s:
+                resp = await s.post(url, headers=bet_hdrs, json=payload, timeout=15)
+
+            if resp.status_code >= 400:
+                return {"success": False, "error": f"SB bet HTTP {resp.status_code}: {resp.text[:300]}"}
+
+            data = resp.json()
+
+            # Check rejection
+            if data.get("reCode") or data.get("reReason"):
+                return {"success": False, "error": f"Rejected: {data.get('reReason') or data.get('reCode')}", "raw": data}
+
+            failures = data.get("betFailures", [])
+            if failures:
+                return {"success": False, "error": failures[0].get("betFailureReason", "Unknown"), "raw": data}
+
+            placements = data.get("betPlacements", [])
+            if placements:
+                p = placements[0]
+                return {
+                    "success": True,
+                    "bet_id": p.get("betId") or p.get("receipt"),
+                    "odds": p.get("totalOdds") or target_odds,
+                    "stake": p.get("totalStake") or stake,
+                    "potential_win": p.get("betPotentialWin"),
+                    "balance": data.get("accountBalance", {}).get("balance"),
+                    "raw": data,
+                }
+
+            return {"success": False, "error": "No placement data", "raw": data}
+
+        except Exception as e:
+            logger.error(f"SB sports bet error: {e}", exc_info=True)
+            return {"success": False, "error": f"SB sports bet failed: {e}"}
+
+    def _find_selection(self, markets: list, leg_desc: str) -> dict | None:
+        """Find a market selection matching a leg description like 'Nick Daicos 25+ Disposals'.
+
+        Searches all markets for a selection whose name matches the player + stat + line.
+        """
+        import re
+        desc_lower = leg_desc.lower().strip()
+
+        # Try to extract player name from the description
+        # Pattern: "Player Name XX+ Stat" or "Player Name Over/Under XX.5 Stat"
+        player_match = re.match(r'^(.+?)\s+(\d+\.?\d*)\+?\s+(.+)$', desc_lower)
+        if not player_match:
+            player_match = re.match(r'^(.+?)\s+(over|under)\s+(\d+\.?\d*)\s+(.+)$', desc_lower)
+
+        for market in markets:
+            market_name = (market.get("name", "") or "").lower()
+            for sel in market.get("selections", []):
+                sel_name = (sel.get("name", "") or "").lower()
+                price = sel.get("price", {})
+
+                # Check if selection name contains key parts of the leg description
+                if self._matches_leg(sel_name, market_name, desc_lower):
+                    price_num = price.get("winPriceNum", 0)
+                    price_den = price.get("winPriceDen", 0)
+                    if price_num and price_den:
+                        return {
+                            "id": sel["id"],
+                            "name": sel.get("name"),
+                            "market_name": market.get("name"),
+                            "price_num": price_num,
+                            "price_den": price_den,
+                            "odds": price.get("winPrice", 0),
+                        }
+        return None
+
+    @staticmethod
+    def _matches_leg(sel_name: str, market_name: str, leg_desc: str) -> bool:
+        """Check if a selection+market matches a leg description."""
+        import re
+        # Normalise
+        combined = f"{market_name} {sel_name}".lower()
+
+        # Extract key terms from leg description
+        # "Nick Daicos 25+ Disposals" → player="nick daicos", line="25", stat="disposals"
+        parts = re.match(r'^(.+?)\s+(\d+\.?\d*)\+?\s+(.+)$', leg_desc)
+        if parts:
+            player = parts.group(1).strip()
+            line = parts.group(2)
+            stat = parts.group(3).strip()
+            # Check: player name in selection, stat+line in market or selection
+            player_words = player.split()
+            player_match = all(w in combined for w in player_words)
+            line_match = line in combined or f"{line}+" in combined
+            stat_match = stat in combined
+            return player_match and (line_match or stat_match)
+
+        # Fallback: check if most words from leg_desc appear in combined
+        words = [w for w in leg_desc.split() if len(w) > 2]
+        matches = sum(1 for w in words if w in combined)
+        return matches >= len(words) * 0.7
+
     # ── Balance ───────────────────────────────────────────────────
+
+    async def get_balances(self, session: dict) -> dict:
+        """Get cash + bonus balances for multi-bookie framework."""
+        bal = await self.get_balance(session)
+        return {"cash": bal, "bonus": 0.0}
 
     async def get_balance(self, session: dict) -> float:
         """Get account cash balance."""

@@ -31,10 +31,11 @@ const BOOKMAKERS = [
   { name: 'YesBet', platform: 'amused' },
   { name: 'MightyBet', platform: 'amused' },
   { name: 'Sportsbet', platform: 'sportsbet' },
+  { name: 'bet365', platform: 'bet365' },
   { name: 'TAB', platform: 'tab' },
 ];
 
-const PLATFORM_LABELS = { betmakers: 'BetMakers', amused: 'Amused', sportsbet: 'Sportsbet', tab: 'TAB' };
+const PLATFORM_LABELS = { betmakers: 'BetMakers', amused: 'Amused', sportsbet: 'Sportsbet', bet365: 'bet365', tab: 'TAB' };
 
 function AccountModal({ account, onClose, onSaved }) {
   const isEdit = !!account;

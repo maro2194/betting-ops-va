@@ -24,9 +24,13 @@ def _session_key(account: dict) -> str:
 
 
 def _generate_proxy(proxy_base: str) -> str:
-    """Generate a unique Oxylabs sticky session proxy URL."""
+    """Generate a proxy URL from proxy_base.
+    If proxy_base is a full URL (http://user:pass@host:port), use as-is.
+    Otherwise treat as Oxylabs username prefix and build sticky session URL."""
     if not proxy_base:
         return ""
+    if "://" in proxy_base and "@" in proxy_base:
+        return proxy_base
     sess_id = str(random.randint(1000000000, 9999999999))
     return f"{proxy_base}-sessid-{sess_id}-sesstime-10:K5E=2qcyhfyFZs~@pr.oxylabs.io:7777"
 
