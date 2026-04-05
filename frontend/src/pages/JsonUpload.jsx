@@ -327,15 +327,24 @@ export default function JsonUpload() {
           runningBalances[currentAcc.id] = newBalance;
           setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: newBalance }));
 
-          setBetStatuses((prev) => ({
-            ...prev,
-            [i]: {
-              status: 'placed',
-              account: currentAcc.id,
-              ticket_number: result.ticket_number,
-              combined_odds: result.combined_odds,
-            },
-          }));
+          setBetStatuses((prev) => {
+            const existing = prev[i] || {};
+            const placements = existing.placements || [];
+            return {
+              ...prev,
+              [i]: {
+                status: 'placed',
+                account: currentAcc.id,
+                ticket_number: result.ticket_number,
+                combined_odds: result.combined_odds,
+                placements: [...placements, {
+                  account: currentAcc.id,
+                  ticket_number: result.ticket_number,
+                  combined_odds: result.combined_odds,
+                }],
+              },
+            };
+          });
           // Auto-uncheck successful bets
           setSelectedBets((prev) => {
             const next = new Set(prev);
@@ -458,10 +467,24 @@ export default function JsonUpload() {
           const newBal = rawBal ? parseFloat(String(rawBal).replace(/[$,]/g, '')) : runningBalances[currentAcc.id] - bet.stake;
           runningBalances[currentAcc.id] = newBal;
           setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: newBal }));
-          setBetStatuses((prev) => ({
-            ...prev,
-            [i]: { status: 'placed', account: currentAcc.id, ticket_number: result.ticket_number, combined_odds: result.combined_odds },
-          }));
+          setBetStatuses((prev) => {
+            const existing = prev[i] || {};
+            const placements = existing.placements || [];
+            return {
+              ...prev,
+              [i]: {
+                status: 'placed',
+                account: currentAcc.id,
+                ticket_number: result.ticket_number,
+                combined_odds: result.combined_odds,
+                placements: [...placements, {
+                  account: currentAcc.id,
+                  ticket_number: result.ticket_number,
+                  combined_odds: result.combined_odds,
+                }],
+              },
+            };
+          });
           setSelectedBets((prev) => { const next = new Set(prev); next.delete(i); return next; });
         } else {
           const errMsg = result.error || 'Unknown error';
@@ -869,21 +892,36 @@ export default function JsonUpload() {
                         {stakingMode === 'from_json' && !bet.stake ? <span style={{ color: 'var(--warning)', fontSize: 11 }}>no stake</span> : ''}
                       </td>
                       <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <StatusIcon status={st?.status} />
-                          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                            {st?.status === 'placed' && (st?.ticket_number ? `#${st.ticket_number}` : 'Placed')}
-                            {st?.status === 'placed' && st?.combined_odds && (
-                              <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>@{st.combined_odds}</span>
-                            )}
-                            {st?.status === 'failed' && (st?.error || 'Failed')}
-                            {st?.status === 'placing' && 'Placing...'}
-                            {st?.status === 'waiting' && 'Waiting'}
-                            {st?.status === 'pending' && 'Pending'}
-                            {!st && '-'}
-                          </span>
-                        </div>
-                        {st?.account && (
+                        {st?.status === 'placed' && st?.placements?.length > 0 ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {st.placements.map((p, pi) => (
+                              <div key={pi} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <StatusIcon status="placed" />
+                                <span style={{ fontSize: 12, color: 'var(--success)' }}>
+                                  {p.ticket_number ? `#${p.ticket_number}` : 'Placed'}
+                                  {p.combined_odds && (
+                                    <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>@{p.combined_odds}</span>
+                                  )}
+                                </span>
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                  {sessions[p.account]?.accountLabel || sessions[p.account]?.email || ''}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <StatusIcon status={st?.status} />
+                            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                              {st?.status === 'failed' && (st?.error || 'Failed')}
+                              {st?.status === 'placing' && 'Placing...'}
+                              {st?.status === 'waiting' && 'Waiting'}
+                              {st?.status === 'pending' && 'Pending'}
+                              {!st && '-'}
+                            </span>
+                          </div>
+                        )}
+                        {st?.status !== 'placed' && st?.account && (
                           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                             {sessions[st.account]?.accountLabel || sessions[st.account]?.email || ''}
                           </div>
