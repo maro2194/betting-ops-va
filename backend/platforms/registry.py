@@ -9,6 +9,7 @@ from .betmakers import BetMakersClient
 from .amused import AmusedClient
 from .sportsbet import SportsbetClient
 from .bet365 import Bet365Client
+from .tab import TabClient
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,8 @@ def get_client(platform: str) -> PlatformClient:
             _clients[platform] = SportsbetClient()
         elif platform == "bet365":
             _clients[platform] = Bet365Client()
+        elif platform == "tab":
+            _clients[platform] = TabClient()
         else:
             raise ValueError(f"Unknown platform: {platform}")
     return _clients[platform]

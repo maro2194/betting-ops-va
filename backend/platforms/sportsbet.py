@@ -304,7 +304,8 @@ class SportsbetClient(PlatformClient):
             for section in date_block.get("sections", []):
                 for meeting in section.get("meetings", []):
                     meeting_name = meeting.get("name", "").lower().strip()
-                    if meeting_name != track_lower:
+                    # Fuzzy match: "Sandown" matches "Sandown Lakeside", etc.
+                    if track_lower not in meeting_name and meeting_name not in track_lower:
                         continue
                     for event in meeting.get("events", []):
                         if event.get("raceNumber") == race_number:

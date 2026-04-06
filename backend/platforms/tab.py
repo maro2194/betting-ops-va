@@ -1,0 +1,257 @@
+"""
+TAB platform client for multi-bookie allocation framework.
+
+Wraps the existing login.py and betting.py modules — does NOT replace them.
+CSB, Expload, and all existing TAB flows continue to use those modules directly.
+This client is only used by the allocation CSV processor (csv_processor.py).
+"""
+import logging
+import time
+import uuid
+
+from .base import PlatformClient
+
+logger = logging.getLogger(__name__)
+
+
+class TabClient(PlatformClient):
+    """TAB platform client — wraps existing login/betting modules for allocation."""
+
+    async def login(self, email: str, password: str, proxy_url: str, brand_config: dict) -> dict:
+        """Login to TAB using the existing auth flow (Auth0 ROPC + legacy)."""
+        try:
+            from login import browser_login
+            from betting import legacy_authenticate
+
+            result = await browser_login(email, password, proxy_url)
+            if not result.get("token"):
+                return {"success": False, "error": f"TAB login failed: {result.get('error', 'no token')}"}
+
+            access_token = result["token"]
+            account_number = result.get("account_number", "")
+
+            # Legacy auth for bet placement
+            legacy_token = ""
+            if account_number:
+                try:
+                    leg_result = legacy_authenticate(account_number, password, proxy_url)
+                    legacy_token = leg_result.get("legacy_token", "")
+                except Exception as e:
+                    logger.warning(f"TAB legacy auth failed: {e}")
+
+            return {
+                "success": True,
+                "platform": "tab",
+                "brand": "tab",
+                "access_token": access_token,
+                "legacy_token": legacy_token,
+                "account_number": account_number,
+                "customer_id": result.get("customer_id", ""),
+                "email": email,
+                "password": password,
+                "proxy_url": proxy_url,
+                "expires_at": time.time() + 28800,
+            }
+        except Exception as e:
+            logger.error(f"TAB login error: {e}")
+            return {"success": False, "error": f"TAB login failed: {e}"}
+
+    def is_session_valid(self, session: dict) -> bool:
+        return time.time() < (session.get("expires_at", 0) - 300)
+
+    async def find_race(self, session: dict, track: str, race_number: int) -> dict | None:
+        """Find a TAB race by track name and race number."""
+        try:
+            from betting import _make_session, _api_beta_headers
+
+            access_token = session.get("access_token")
+            proxy_url = session.get("proxy_url")
+            s = _make_session(proxy_url)
+            s.headers.update(_api_beta_headers(access_token))
+
+            # TAB racing endpoint
+            url = "https://api.beta.tab.com.au/v1/tab-info-service/racing/dates/today/meetings?jurisdiction=NSW"
+            resp = s.get(url, timeout=15)
+            s.close()
+
+            if resp.status_code != 200:
+                logger.warning(f"TAB racing meetings: HTTP {resp.status_code}")
+                return None
+
+            data = resp.json()
+            track_lower = track.lower().strip()
+
+            for meeting in data.get("meetings", []):
+                meeting_name = (meeting.get("meetingName", "") or "").lower()
+                venue_name = (meeting.get("venueMnemonic", "") or "").lower()
+
+                if track_lower in meeting_name or meeting_name in track_lower or track_lower == venue_name:
+                    for race in meeting.get("races", []):
+                        if race.get("raceNumber") == race_number:
+                            return {
+                                "event_id": race.get("raceNumber"),
+                                "track": meeting.get("meetingName", track),
+                                "race_number": race_number,
+                                "meeting_date": meeting.get("meetingDate"),
+                                "venue": meeting.get("venueMnemonic"),
+                                "sell_code": race.get("sellCode", {}).get("meetingCode"),
+                                "race_status": race.get("raceStatus"),
+                                "_race_data": race,
+                            }
+            return None
+        except Exception as e:
+            logger.error(f"TAB find_race error: {e}")
+            return None
+
+    async def get_runners(self, session: dict, race_info: dict) -> list[dict]:
+        """Get runners with odds from TAB race data."""
+        try:
+            from betting import _make_session, _api_beta_headers
+
+            access_token = session.get("access_token")
+            proxy_url = session.get("proxy_url")
+
+            race_data = race_info.get("_race_data", {})
+            race_link = None
+            for link in race_data.get("_links", {}).values():
+                href = link.get("href", "") if isinstance(link, dict) else ""
+                if "races/" in href:
+                    race_link = href
+                    break
+
+            if not race_link:
+                # Build URL from meeting info
+                venue = race_info.get("venue", "")
+                race_num = race_info.get("race_number", 0)
+                meeting_date = race_info.get("meeting_date", "")
+                race_link = f"https://api.beta.tab.com.au/v1/tab-info-service/racing/dates/{meeting_date}/meetings/{venue}/races/{race_num}?jurisdiction=NSW"
+
+            s = _make_session(proxy_url)
+            s.headers.update(_api_beta_headers(access_token))
+            resp = s.get(race_link, timeout=15)
+            s.close()
+
+            if resp.status_code != 200:
+                return []
+
+            data = resp.json()
+            runners = []
+
+            for r in data.get("runners", []):
+                if r.get("scratched"):
+                    continue
+                fixed = r.get("fixedOdds", {})
+                prop_id = fixed.get("propositionId", 0)
+                win_odds = fixed.get("returnWin", 0)
+
+                if prop_id and win_odds:
+                    runners.append({
+                        "id": prop_id,
+                        "name": r.get("runnerName", ""),
+                        "number": r.get("runnerNumber", 0),
+                        "odds": win_odds,
+                        "price_num": None,
+                        "price_den": None,
+                    })
+
+            return runners
+        except Exception as e:
+            logger.error(f"TAB get_runners error: {e}")
+            return []
+
+    async def place_bet(self, session: dict, race_info: dict, runner: dict,
+                        stake: float, stake_type: str, brand_config: dict) -> dict:
+        """Place a racing bet on TAB via the existing betslip endpoint."""
+        try:
+            from betting import _make_session, _webapi_headers
+
+            legacy_token = session.get("legacy_token")
+            account_number = session.get("account_number")
+            proxy_url = session.get("proxy_url")
+
+            if not legacy_token:
+                return {"success": False, "error": "No TAB legacy token"}
+
+            prop_id = runner.get("id")
+            odds = runner.get("odds", 0)
+            if not prop_id:
+                return {"success": False, "error": "No proposition ID"}
+
+            bet_type = "WIN" if stake_type.lower() in ("win", "w", "cash") else "PLACE"
+
+            payload = {
+                "bets": [{
+                    "type": "FIXED_ODDS",
+                    "betType": bet_type,
+                    "stake": f"{stake:.2f}",
+                    "legs": [{
+                        "type": bet_type,
+                        "odds": f"{float(odds):.2f}",
+                        "propositions": [{
+                            "type": bet_type,
+                            "propositionId": int(prop_id),
+                            "odds": f"{float(odds):.2f}",
+                        }],
+                    }],
+                }],
+                "transactionId": str(uuid.uuid4()),
+            }
+
+            s = _make_session(proxy_url)
+            s.headers.update(_webapi_headers(legacy_token))
+            url = f"https://webapi.tab.com.au/v1/account-service/tab/{account_number}/betslip"
+            resp = s.post(url, json=payload, timeout=15)
+            s.close()
+
+            logger.info(f"TAB place_bet: HTTP {resp.status_code}")
+
+            if resp.status_code == 201:
+                data = resp.json()
+                errors = data.get("errors", [])
+                for b in data.get("bets", []):
+                    errors.extend(b.get("errors", []))
+                if errors:
+                    msg = "; ".join(e.get("message", str(e)) for e in errors)
+                    return {"success": False, "error": msg, "raw": data}
+
+                # Extract ticket number
+                ticket = None
+                for b in data.get("bets", []):
+                    for l in b.get("legs", []):
+                        for p in l.get("propositions", []):
+                            if p.get("ticketNumber"):
+                                ticket = p["ticketNumber"]
+                                break
+
+                return {
+                    "success": True,
+                    "bet_id": ticket or "",
+                    "receipt": ticket or "",
+                    "stake": stake,
+                    "balance": data.get("accountBalance"),
+                    "raw": data,
+                }
+            else:
+                return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
+
+        except Exception as e:
+            logger.error(f"TAB place_bet error: {e}")
+            return {"success": False, "error": f"TAB placement failed: {e}"}
+
+    async def get_balances(self, session: dict) -> dict:
+        bal = await self.get_balance(session)
+        return {"cash": bal, "bonus": 0.0}
+
+    async def get_balance(self, session: dict) -> float:
+        try:
+            from betting import get_balance as tab_balance
+            access_token = session.get("access_token")
+            customer_id = session.get("customer_id")
+            proxy_url = session.get("proxy_url")
+            result = tab_balance(access_token, customer_id, proxy_url)
+            if isinstance(result, dict):
+                return float(result.get("balance", result.get("accountBalance", 0)))
+            return float(result)
+        except Exception as e:
+            logger.error(f"TAB balance error: {e}")
+            return 0.0
