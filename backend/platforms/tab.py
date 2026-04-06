@@ -81,26 +81,30 @@ class TabClient(PlatformClient):
             s = _make_session(proxy_url)
             s.headers.update(_api_beta_headers(access_token))
 
-            logger.info(f"TAB find_race: token={access_token[:20] if access_token else 'NO'}... proxy={proxy_url[:40] if proxy_url else 'NO'}")
+            # TAB racing endpoint — NO bearer auth needed, just proxy for geo
+            # (same as get_matches in betting.py — public endpoint via AU proxy)
+            s2 = _make_session(proxy_url)
+            s2.headers.update({"Accept": "application/json", "User-Agent": "Mozilla/5.0"})
 
-            # TAB racing endpoint
             url = "https://api.beta.tab.com.au/v1/tab-info-service/racing/dates/today/meetings?jurisdiction=NSW"
             meetings = []
             try:
-                resp = s.get(url, timeout=15)
+                resp = s2.get(url, timeout=15)
                 ct = resp.headers.get("content-type", "")
                 logger.info(f"TAB racing API: HTTP {resp.status_code} CT={ct[:30]}")
-                if resp.status_code == 401:
-                    logger.error(f"TAB racing 401: {resp.text[:200]}")
-                elif "html" in ct:
+                if "html" in ct:
                     logger.error(f"TAB racing returned HTML (geo-blocked?)")
                 elif resp.status_code == 200:
                     import json as _json
                     data = _json.loads(resp.text)
                     meetings = data.get("meetings", [])
                     logger.info(f"TAB racing: {len(meetings)} meetings found")
+                else:
+                    logger.error(f"TAB racing error: {resp.text[:200]}")
             except Exception as e:
                 logger.error(f"TAB racing request failed: {e}")
+            finally:
+                s2.close()
 
             s.close()
 
@@ -125,6 +129,7 @@ class TabClient(PlatformClient):
                                 "race_number": race_number,
                                 "meeting_date": meeting.get("meetingDate"),
                                 "venue": meeting.get("venueMnemonic"),
+                                "race_type": meeting.get("raceType", "R"),
                                 "sell_code": race.get("sellCode", {}).get("meetingCode"),
                                 "race_status": race.get("raceStatus"),
                                 "_race_data": race,
@@ -148,36 +153,50 @@ class TabClient(PlatformClient):
 
             race_data = race_info.get("_race_data", {})
             race_link = None
-            for link in race_data.get("_links", {}).values():
-                href = link.get("href", "") if isinstance(link, dict) else ""
-                if "races/" in href:
-                    race_link = href
-                    break
+            # Check for _links in race data (sometimes a direct URL)
+            links = race_data.get("_links", {})
+            if isinstance(links, dict):
+                for lk, lv in links.items():
+                    href = lv.get("href", "") if isinstance(lv, dict) else (lv if isinstance(lv, str) else "")
+                    if href and "races" in href and href.startswith("http"):
+                        race_link = href
+                        break
 
             if not race_link:
-                # Build URL from meeting info
+                # Build URL from meeting info — format: /meetings/RACETYPE/VENUE/races/NUM
                 venue = race_info.get("venue", "")
                 race_num = race_info.get("race_number", 0)
                 meeting_date = race_info.get("meeting_date", "")
-                race_link = f"https://api.beta.tab.com.au/v1/tab-info-service/racing/dates/{meeting_date}/meetings/{venue}/races/{race_num}?jurisdiction=NSW"
+                race_type = race_info.get("race_type", "R")
+                race_link = f"https://api.beta.tab.com.au/v1/tab-info-service/racing/dates/{meeting_date}/meetings/{race_type}/{venue}/races/{race_num}?jurisdiction=NSW"
 
+            # TAB race detail is also public via AU proxy (no Bearer needed)
+            logger.info(f"TAB get_runners: fetching {race_link[:80]}")
             s = _make_session(proxy_url)
-            s.headers.update(_api_beta_headers(access_token))
+            s.headers.update({"Accept": "application/json", "User-Agent": "Mozilla/5.0"})
             resp = s.get(race_link, timeout=15)
             s.close()
 
+            logger.info(f"TAB get_runners: HTTP {resp.status_code}")
             if resp.status_code != 200:
+                logger.warning(f"TAB get_runners: HTTP {resp.status_code} for {race_link[:80]}")
                 return []
 
             data = resp.json()
             runners = []
 
-            for r in data.get("runners", []):
+            raw_runners = data.get("runners", [])
+            logger.info(f"TAB get_runners: {len(raw_runners)} raw runners, keys={list(data.keys())[:10]}")
+
+            for r in raw_runners:
                 if r.get("scratched"):
                     continue
                 fixed = r.get("fixedOdds", {})
-                prop_id = fixed.get("propositionId", 0)
+                prop_id = fixed.get("propositionId") or fixed.get("propositionNumber", 0)
                 win_odds = fixed.get("returnWin", 0)
+
+                # Also check for parimutuel odds as fallback
+                pari_win = r.get("parimutuel", {}).get("returnWin", 0)
 
                 if prop_id and win_odds:
                     runners.append({
@@ -188,7 +207,16 @@ class TabClient(PlatformClient):
                         "price_num": None,
                         "price_den": None,
                     })
+                elif not fixed and pari_win:
+                    # No fixed odds available, log it
+                    logger.info(f"TAB: runner {r.get('runnerName')} has pari odds={pari_win} but no fixedOdds")
 
+            if not runners and raw_runners:
+                # Log first runner's structure for debugging
+                sample = raw_runners[0]
+                logger.warning(f"TAB: 0 runners with fixed odds. Sample keys: {list(sample.keys())}, fixedOdds: {sample.get('fixedOdds')}")
+
+            logger.info(f"TAB get_runners: returning {len(runners)} runners with fixed odds")
             return runners
         except Exception as e:
             logger.error(f"TAB get_runners error: {e}")
@@ -204,8 +232,12 @@ class TabClient(PlatformClient):
             account_number = session.get("account_number")
             proxy_url = session.get("proxy_url")
 
+            logger.info(f"TAB place_bet: acct={account_number} legacy={'YES' if legacy_token else 'NO'} proxy={'YES' if proxy_url else 'NO'} prop={runner.get('id')} odds={runner.get('odds')}")
+
             if not legacy_token:
                 return {"success": False, "error": "No TAB legacy token"}
+            if not account_number:
+                return {"success": False, "error": "No TAB account number"}
 
             prop_id = runner.get("id")
             odds = runner.get("odds", 0)
@@ -221,12 +253,8 @@ class TabClient(PlatformClient):
                     "stake": f"{stake:.2f}",
                     "legs": [{
                         "type": bet_type,
+                        "propositionId": int(prop_id),
                         "odds": f"{float(odds):.2f}",
-                        "propositions": [{
-                            "type": bet_type,
-                            "propositionId": int(prop_id),
-                            "odds": f"{float(odds):.2f}",
-                        }],
                     }],
                 }],
                 "transactionId": str(uuid.uuid4()),
@@ -234,7 +262,7 @@ class TabClient(PlatformClient):
 
             s = _make_session(proxy_url)
             s.headers.update(_webapi_headers(legacy_token))
-            url = f"https://webapi.tab.com.au/v1/account-service/tab/{account_number}/betslip"
+            url = f"https://webapi.tab.com.au/v1/tab-betting-service/accounts/{account_number}/betslip?jurisdiction=QLD"
             resp = s.post(url, json=payload, timeout=15)
             s.close()
 
