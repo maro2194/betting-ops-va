@@ -83,7 +83,7 @@ npm run build
         reverse_proxy localhost:8001
     }
     handle {
-        root * /opt/botops-frontend
+        root * /opt/tab-betting-frontend
         try_files {path} /index.html
         file_server
     }
@@ -130,13 +130,14 @@ Unified abstraction for all bookies beyond TAB.
 
 | File | Platform | Brands | Protocol |
 |------|----------|--------|----------|
+| `tab.py` | TAB | 1 | Auth0 ROPC + Akamai bypass + legacy betslip |
 | `betmakers.py` | BetMakers/Apollo | 7 | GraphQL + Cognito auth |
 | `amused.py` | Amused/BlackStream | 7 | REST + Auth0 (300s token!) |
-| `sportsbet.py` | Sportsbet | 1 | Token Farm → JWT |
+| `sportsbet.py` | Sportsbet | 1 | Token Farm → JWT + racing/sports API |
 | `bet365.py` | bet365 | 1 | Token Farm → Camoufox session |
 | `base.py` | Abstract base | - | PlatformClient ABC |
 
-All clients implement: `login()`, `is_session_valid()`, `find_race()`, `get_runners()`, `place_bet()`, `get_balance()`.
+All clients implement: `login()`, `is_session_valid()`, `find_race()`, `get_runners()`, `place_bet()`, `place_sports_bet()`, `get_balance()`.
 
 ### Registry (`backend/platforms/registry.py`)
 
@@ -170,22 +171,29 @@ Deployed on Hostinger VPS at `bo.betops.sh` (76.13.214.208).
 
 | Component | Path / Port |
 |-----------|-------------|
-| Backend | `/opt/botops-backend/` → port 8001 |
-| Frontend | `/opt/botops-frontend/` → Caddy :8081 |
+| Backend | `/opt/tab-betting-backend/` → port 8001 |
+| Frontend | `/opt/tab-betting-frontend/` → Caddy :8081 |
 | Database | PostgreSQL `tabbetting` |
 | Logs | `/var/log/botops.log` |
+| Service | `systemctl {start|stop|restart} botops` |
+
+**IMPORTANT**: Caddy serves from `/opt/tab-betting-frontend/` (NOT `/opt/botops-frontend/`). Backend runs from `/opt/tab-betting-backend/`.
 
 ### Deploy Commands
 
 ```bash
 # Backend
-scp backend/*.py root@bo.betops.sh:/opt/botops-backend/
-scp -r backend/platforms root@bo.betops.sh:/opt/botops-backend/
-ssh root@bo.betops.sh 'fuser -k 8001/tcp; sleep 2; cd /opt/tab-betting-backend && nohup python3 /usr/local/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --log-level info > /var/log/botops.log 2>&1 &'
+scp backend/*.py root@76.13.214.208:/opt/tab-betting-backend/
+scp -r backend/platforms/*.py root@76.13.214.208:/opt/tab-betting-backend/platforms/
+ssh root@76.13.214.208 'systemctl restart botops'
 
 # Frontend
 cd frontend && npm run build
-scp -r dist/* root@bo.betops.sh:/opt/botops-frontend/
+scp -r dist/* root@76.13.214.208:/opt/tab-betting-frontend/
+
+# Token Farm (Mini PC)
+scp token_farm/*.py root@192.168.1.139:/opt/token-farm/
+ssh root@192.168.1.139 'systemctl restart token-farm'
 ```
 
 ## Login Flows
@@ -222,7 +230,8 @@ Camoufox browser login → persistent browser session for subsequent bet placeme
 | Disposals | `/disposals` | AFL disposal live tracker |
 | Live Stats | `/live-stats` | Real-time game stats |
 | Bet Ledger | `/bet-ledger` | Cross-bookie ledger |
-| Bookie Accounts | `/bookie-accounts` | Multi-bookie account management |
+| Allocation | `/allocation` | Unified CSV upload — all bookies, racing + sports |
+| Bookie Accounts | `/bookie-accounts` | Multi-bookie account management (searchable dropdown) |
 
 ## Betting Modes
 
@@ -237,6 +246,25 @@ Upload a JSON array of bets. Checkbox UI to select/deselect individual bets. Pla
 
 ### CSV Paste (`/csv`)
 Paste CSV from tipster → resolve against TAB → bulk place. Supports SGM and Multi formats.
+
+### Allocation Upload (`/allocation`)
+Unified CSV upload for ALL bookies — racing and sports. Single file, single click.
+
+```csv
+Racing:
+Track,Race,Horse,Bookmaker,Initials,Stake Type,Stake
+Rosehill,1,Compensation,TAB,MRT,win,15
+Rosehill,1,Compensation,Sportsbet,PAA,win,15
+Rosehill,1,Compensation,CrownBet,SML,win,15
+
+Sports (auto-detected when Event/Bet columns present):
+Event,Bet,Sport,Bookmaker,Initials,Odds,Stake
+GWS vs COL,Nick Daicos 25+ Disposals/Josh Kelly 20+ Disposals,afl,tab,MRT,5.00,15
+```
+
+Flow: Parse & Validate → preview (racing + sports tables) → Execute Batch → system logs into each account (token farm for SB/bet365, Akamai for TAB, Cognito for BetMakers, Auth0 for Amused) → finds races/events → matches horses/selections → places bets with human delays → live status updates.
+
+**Supported platforms**: TAB, Sportsbet, bet365, CrownBet, TerryBet, PonyBet, BetIt, DiamondBet, BetDash, SwiftBet, BetNation, BetDeluxe, Surge, PulseBet, BigBet, YesBet, MightyBet (21 bookies total).
 
 ### Human-Like Delays
 - 2-6 seconds between bets (randomised)
@@ -345,12 +373,33 @@ Tables auto-created on startup.
 - Caddy reverse proxy
 - Systemd services (botops, token-farm)
 
+## Environment Variables (`backend/.env`)
+
+| Variable | Description |
+|----------|-------------|
+| `HYPERSOLUTIONS_API_KEY` | HyperSolutions SDK key for TAB Akamai bypass |
+| `TELEGRAM_API_ID` | Telethon userbot for bet365 Telegram pipeline |
+| `TELEGRAM_API_HASH` | Telethon hash |
+| `TELEGRAM_CHANNEL_ID` | bet365 picks Telegram channel |
+| `ANTHROPIC_API_KEY` | Claude Vision for bet365 screenshot parsing |
+| `BET365_USERNAME` | bet365 account username |
+| `BET365_PASSWORD` | bet365 account password |
+| `BET365_PROXY_*` | IPRoyal proxy for bet365 browser |
+| `BET365_UNIT_SIZE` | Default stake unit for bet365 picks |
+| `TOKEN_FARM_URL` | Token farm URL (default: `http://192.168.1.139:9000`) |
+| `TOKEN_FARM_API_KEY` | Token farm API key |
+
 ## Key Technical Notes
 
 - **Customer ID != Account Number** — TAB JWT `customerId` differs from `accountNumber`. Resolved via account-list endpoint.
-- **Proxy required** — VPS is in the US. All AU bookie API calls go through per-account AU residential proxies.
+- **Proxy required** — VPS is in the US. All AU bookie API calls go through per-account AU residential proxies (Oxylabs).
+- **Deploy paths** — Caddy serves from `/opt/tab-betting-frontend/`, backend at `/opt/tab-betting-backend/`. NOT the `botops-*` paths.
 - **Sessions persist** — App auth, TAB sessions, multi-bookie sessions all in PostgreSQL. Survive restarts.
 - **Kasada bypass** — Patchright uses real system Chrome (matching UA + TLS fingerprint). UA must match Chrome version exactly.
+- **TAB racing API is public** — No Bearer auth needed, just AU proxy for geo-restriction.
+- **TAB racing betslip** — Uses `propositionNumber` from racing endpoint as `propositionId` in betslip. Flat leg structure (no nested propositions).
 - **bet365 has no API** — Everything browser-automated via Camoufox. Persistent sessions for bet placement.
+- **bet365 balance takes 12-16s** — DOM elements appear quickly but dollar values populate slowly. Poll with retries.
 - **Amused tokens expire in 300s** — Auto-refreshed before each operation.
 - **BetMakers amounts in cents** — `amount: 500` = $5.00. Position always 0, is_boxed always false.
+- **Systemd services** — `botops` on VPS, `token-farm` on mini PC. Use `systemctl restart` not manual kill/start.
