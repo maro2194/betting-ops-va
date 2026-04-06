@@ -98,7 +98,9 @@ async def sb_refresh(req: SBRefreshRequest, _=Depends(verify_key)):
 @app.post("/auth/bet365/login")
 async def b365_login(req: B365LoginRequest, _=Depends(verify_key)):
     """Camoufox-based bet365 login."""
-    logger.info(f"bet365 login request for {req.username}")
+    logger.info(f"bet365 login request for {req.username}, proxy={'YES' if req.proxy_url else 'NONE'}")
+    if req.proxy_url:
+        logger.info(f"bet365 proxy: {req.proxy_url[:50]}...")
     result = await bet365_browser_login(req.username, req.password, proxy_url=req.proxy_url)
 
     if result.get("success"):

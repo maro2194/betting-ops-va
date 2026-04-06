@@ -145,54 +145,50 @@ async def bet365_browser_login(username: str, password: str, proxy_url: str | No
                     submitted = True
                     break
 
-        # Wait for login completion — poll for balance or login button disappearing
+        # Wait for balance to appear (takes 12-20s after login click)
+        # Login button disappears quickly but balance loads much later
         balance = 0.0
         logged_in = False
-        for _ in range(10):
-            await page.wait_for_timeout(2000)
+        for attempt in range(12):
+            await page.wait_for_timeout(3000)
 
-            # Try to find balance anywhere on the page via JS (most reliable)
+            # Check Balance elements for a dollar amount
             try:
-                bal_text = await page.evaluate("""
-                    () => {
-                        // Look for any element with dollar amount in Balance-related classes
-                        const els = document.querySelectorAll('[class*="Balance"]');
-                        for (const el of els) {
-                            const t = el.textContent || '';
-                            const m = t.match(/\\$([\\d,.]+)/);
-                            if (m) return m[1];
-                        }
-                        // Fallback: scan the whole page header for dollar amounts
-                        const body = document.body.innerText || '';
-                        const bm = body.match(/Balance\\$([\\d,.]+)/);
-                        if (bm) return bm[1];
-                        return null;
-                    }
-                """)
-                if bal_text:
-                    balance = float(bal_text.replace(",", ""))
-                    logged_in = True
+                bal_els = await page.query_selector_all("div[class*='Balance_Value'], div[class*='Balance']")
+                for el in bal_els:
+                    text = await el.text_content()
+                    if text:
+                        m = re.search(r'\d[\d,.]+', text)
+                        if m:
+                            val = float(m.group().replace(",", ""))
+                            if val > 0:
+                                balance = val
+                                logged_in = True
+                                logger.info(f"bet365: balance found on attempt {attempt + 1}: ${balance}")
+                                break
+                if logged_in:
                     break
             except Exception:
                 pass
 
-            # Also check if "Log In" button disappeared
-            login_btns = page.get_by_text("Log In", exact=True)
-            login_visible = False
-            for i in range(await login_btns.count()):
-                try:
+        # If no balance found but login button is gone, still count as logged in
+        if not logged_in:
+            try:
+                login_btns = page.get_by_text("Log In", exact=True)
+                login_visible = False
+                for i in range(await login_btns.count()):
                     if await login_btns.nth(i).is_visible():
                         login_visible = True
                         break
-                except Exception:
-                    pass
-            if not login_visible:
-                logged_in = True
-                break
+                if not login_visible:
+                    logged_in = True
+                    logger.warning("bet365: logged in but balance not found (may be $0)")
+            except Exception:
+                pass
 
         if not logged_in:
             await browser.__aexit__(None, None, None)
-            return {"success": False, "error": "bet365 login failed — timed out waiting for balance"}
+            return {"success": False, "error": "bet365 login failed — timed out"}
 
         # Store persistent session
         _browser_sessions[session_id] = {
