@@ -170,12 +170,13 @@ class SessionManager:
         # Try token farm (browser login on mini PC)
         try:
             import token_farm_client
-            farm_result = await token_farm_client.sportsbet_login(email, password)
+            farm_result = await token_farm_client.sportsbet_login(email, password, proxy_url=proxy_url)
             if farm_result.get("success"):
                 farm_result["platform"] = "sportsbet"
                 farm_result["brand"] = "sportsbet"
                 farm_result["initials"] = account.get("initials", "")
                 farm_result["account_id"] = account.get("id", "")
+                farm_result["proxy_url"] = proxy_url  # CRITICAL: SB API needs AU proxy
                 return farm_result
             logger.warning(f"Token farm SB login failed: {farm_result.get('error')}")
         except Exception as e:
