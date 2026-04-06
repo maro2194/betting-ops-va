@@ -50,32 +50,42 @@ async def bet365_browser_login(username: str, password: str, proxy_url: str | No
         await page.goto("https://www.bet365.com.au/", timeout=60000)
         await page.wait_for_timeout(8000)
 
-        # Accept cookies if consent overlay is present
-        accept_btn = page.get_by_text("Accept All", exact=True)
-        if await accept_btn.count() > 0:
+        # Accept cookies if consent overlay is present — try multiple selectors
+        for cookie_sel in [
+            page.get_by_text("Accept All", exact=True),
+            page.locator("button[class*='ccm']"),
+            page.locator("button[class*='Accept']"),
+            page.locator(".rcc-7c"),
+        ]:
             try:
-                if await accept_btn.is_visible():
-                    await accept_btn.click()
+                if await cookie_sel.count() > 0:
+                    await cookie_sel.first.click(timeout=5000)
                     logger.info("bet365: accepted cookies")
-                    await page.wait_for_timeout(2000)
-            except Exception:
-                pass
-
-        # Click "Log In" header button (text-based, works across redesigns)
-        login_btns = page.get_by_text("Log In", exact=True)
-        clicked = False
-        for i in range(await login_btns.count()):
-            try:
-                if await login_btns.nth(i).is_visible():
-                    await login_btns.nth(i).click()
-                    clicked = True
-                    logger.info("bet365: clicked Log In header")
+                    await page.wait_for_timeout(3000)
                     break
             except Exception:
                 continue
 
+        # Click "Log In" header button — retry up to 3 times with waits
+        clicked = False
+        for attempt in range(3):
+            login_btns = page.get_by_text("Log In", exact=True)
+            for i in range(await login_btns.count()):
+                try:
+                    if await login_btns.nth(i).is_visible():
+                        await login_btns.nth(i).click()
+                        clicked = True
+                        logger.info("bet365: clicked Log In header")
+                        break
+                except Exception:
+                    continue
+            if clicked:
+                break
+            logger.info(f"bet365: Log In not visible yet, retry {attempt + 1}/3")
+            await page.wait_for_timeout(3000)
+
         if not clicked:
-            logger.warning("bet365: no visible Log In button found")
+            logger.warning("bet365: no visible Log In button found after retries")
 
         await page.wait_for_timeout(3000)
 
@@ -135,37 +145,54 @@ async def bet365_browser_login(username: str, password: str, proxy_url: str | No
                     submitted = True
                     break
 
-        # Wait for login completion
-        await page.wait_for_timeout(10000)
+        # Wait for login completion — poll for balance or login button disappearing
+        balance = 0.0
+        logged_in = False
+        for _ in range(10):
+            await page.wait_for_timeout(2000)
 
-        # Check if logged in — balance element visible
-        balance_el = page.locator("div[class*='Balance']")
-        logged_in = await balance_el.count() > 0
+            # Try to find balance anywhere on the page via JS (most reliable)
+            try:
+                bal_text = await page.evaluate("""
+                    () => {
+                        // Look for any element with dollar amount in Balance-related classes
+                        const els = document.querySelectorAll('[class*="Balance"]');
+                        for (const el of els) {
+                            const t = el.textContent || '';
+                            const m = t.match(/\\$([\\d,.]+)/);
+                            if (m) return m[1];
+                        }
+                        // Fallback: scan the whole page header for dollar amounts
+                        const body = document.body.innerText || '';
+                        const bm = body.match(/Balance\\$([\\d,.]+)/);
+                        if (bm) return bm[1];
+                        return null;
+                    }
+                """)
+                if bal_text:
+                    balance = float(bal_text.replace(",", ""))
+                    logged_in = True
+                    break
+            except Exception:
+                pass
 
-        if not logged_in:
-            # Also check if "Log In" button disappeared (another indicator)
-            login_gone = True
+            # Also check if "Log In" button disappeared
             login_btns = page.get_by_text("Log In", exact=True)
+            login_visible = False
             for i in range(await login_btns.count()):
                 try:
                     if await login_btns.nth(i).is_visible():
-                        login_gone = False
+                        login_visible = True
                         break
                 except Exception:
                     pass
+            if not login_visible:
+                logged_in = True
+                break
 
-            if not login_gone:
-                await browser.__aexit__(None, None, None)
-                return {"success": False, "error": "bet365 login failed — still showing Log In button"}
-
-        # Extract balance
-        balance = 0.0
-        if await balance_el.count() > 0:
-            balance_text = await balance_el.first.text_content()
-            if balance_text:
-                m = re.search(r'[\d,.]+', balance_text)
-                if m:
-                    balance = float(m.group().replace(",", ""))
+        if not logged_in:
+            await browser.__aexit__(None, None, None)
+            return {"success": False, "error": "bet365 login failed — timed out waiting for balance"}
 
         # Store persistent session
         _browser_sessions[session_id] = {

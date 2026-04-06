@@ -37,7 +37,8 @@ from models import (
     BetHistoryResponse, SGMMarketResponse,
 )
 
-# Load .env from parent dir
+# Load .env — try same directory first, then parent
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 logging.basicConfig(

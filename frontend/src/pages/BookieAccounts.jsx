@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api';
 import {
   Users,
@@ -36,6 +36,70 @@ const BOOKMAKERS = [
 ];
 
 const PLATFORM_LABELS = { betmakers: 'BetMakers', amused: 'Amused', sportsbet: 'Sportsbet', bet365: 'bet365', tab: 'TAB' };
+
+function BookmakerSearch({ value, onChange }) {
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  const filtered = search
+    ? BOOKMAKERS.filter((b) => b.name.toLowerCase().includes(search.toLowerCase()))
+    : BOOKMAKERS;
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Bookmaker</label>
+      <input
+        type="text"
+        value={open ? search : value}
+        onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
+        onFocus={() => { setSearch(''); setOpen(true); }}
+        className="t-input"
+        style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
+        placeholder="Search bookmaker..."
+        autoComplete="off"
+      />
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+          maxHeight: 240, overflowY: 'auto', marginTop: 4, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+        }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: '10px 12px', color: 'var(--text-muted)', fontSize: 13 }}>No matches</div>
+          ) : (
+            filtered.map((b) => (
+              <div
+                key={b.name}
+                onClick={() => { onChange(b.name); setSearch(''); setOpen(false); }}
+                style={{
+                  padding: '8px 12px', cursor: 'pointer', fontSize: 14,
+                  color: b.name === value ? 'var(--accent)' : 'var(--text-primary)',
+                  fontWeight: b.name === value ? 600 : 400,
+                  background: b.name === value ? 'var(--accent-muted)' : 'transparent',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--secondary)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = b.name === value ? 'var(--accent-muted)' : 'transparent'}
+              >
+                {b.name}
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
+                  {PLATFORM_LABELS[b.platform] || b.platform}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AccountModal({ account, onClose, onSaved }) {
   const isEdit = !!account;
@@ -166,22 +230,13 @@ function AccountModal({ account, onClose, onSaved }) {
             </div>
           </div>
 
-          <div>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Bookmaker</label>
-            <select
-              value={form.bookmaker}
-              onChange={(e) => setForm({ ...form, bookmaker: e.target.value })}
-              className="t-input"
-              style={{ width: '100%', border: '1px solid var(--border)', padding: '9px 12px', fontSize: 14 }}
-            >
-              {BOOKMAKERS.map((b) => (
-                <option key={b.name} value={b.name}>{b.name}</option>
-              ))}
-            </select>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, display: 'block' }}>
-              Platform: {PLATFORM_LABELS[platform] || platform}
-            </span>
-          </div>
+          <BookmakerSearch
+            value={form.bookmaker}
+            onChange={(name) => setForm({ ...form, bookmaker: name })}
+          />
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: -8, display: 'block' }}>
+            Platform: {PLATFORM_LABELS[platform] || platform}
+          </span>
 
           <div>
             <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>Login Email</label>
