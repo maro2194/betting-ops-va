@@ -88,6 +88,7 @@ async def shutdown():
 
 APP_USERS = {
     "maro": {"password_hash": "aeb2f863f78934afccf548e82d786e0ed39fb52c2dfb23663d8333dd6b608ca5", "name": "Maro"},
+    "maro_auto": {"password_hash": "aeb2f863f78934afccf548e82d786e0ed39fb52c2dfb23663d8333dd6b608ca5", "name": "Maro Auto"},
     "diji": {"password_hash": "0489c36a7155b8b671acbab078697dd365e1da635343fa63fee1415b7af516e8", "name": "Diji"},
     "shadow": {"password_hash": "224e690ddf7786edfd76b8cc372fffad88be3c5694268e1e439fa9740080bd18", "name": "Shadow"},
     "smd": {"password_hash": "758dcca888a1f019019cde2f3f127107590de40e344a1b2dd0dc566baad9d009", "name": "SMD"},
