@@ -284,14 +284,18 @@ class SportsbetClient(PlatformClient):
 
     async def find_race(self, session: dict, track: str, race_number: int) -> dict | None:
         """Find a race by track name and race number."""
+        access_token = session.get("access_token")
+        customer_id = session.get("customer_id")
         proxy = session.get("proxy_url")
+
+        headers = _std_headers(access_token, customer_id) if access_token else _public_headers()
 
         async with AsyncSession(
             impersonate="chrome131",
             proxy=proxy if proxy else None,
         ) as s:
             url = f"{BASE_URL}/apigw/sportsbook-racing/Sportsbook/Racing/AllRacing/sportsbet"
-            resp = await s.get(url, headers=_public_headers(), timeout=15)
+            resp = await s.get(url, headers=headers, timeout=15)
 
         if resp.status_code != 200:
             logger.warning(f"Sportsbet get_races failed: HTTP {resp.status_code}")
@@ -324,14 +328,17 @@ class SportsbetClient(PlatformClient):
         if not event_id:
             return []
 
+        access_token = session.get("access_token")
+        customer_id = session.get("customer_id")
         proxy = session.get("proxy_url")
+        headers = _std_headers(access_token, customer_id) if access_token else _public_headers()
         url = f"{BASE_URL}/apigw/sportsbook-racing/Sportsbook/Racing/Events/{event_id}/Racecard"
 
         async with AsyncSession(
             impersonate="chrome131",
             proxy=proxy if proxy else None,
         ) as s:
-            resp = await s.get(url, headers=_public_headers(), timeout=15)
+            resp = await s.get(url, headers=headers, timeout=15)
 
         if resp.status_code != 200:
             logger.warning(f"Sportsbet racecard failed: HTTP {resp.status_code}")

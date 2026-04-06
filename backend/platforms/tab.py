@@ -18,17 +18,27 @@ class TabClient(PlatformClient):
     """TAB platform client — wraps existing login/betting modules for allocation."""
 
     async def login(self, email: str, password: str, proxy_url: str, brand_config: dict) -> dict:
-        """Login to TAB using the existing auth flow (Auth0 ROPC + legacy)."""
+        """Login to TAB — always does a fresh login for reliable token+proxy pairing."""
         try:
+            # Always do a fresh login to ensure token and proxy are paired correctly
             from login import browser_login
-            from betting import legacy_authenticate
+            from betting import legacy_authenticate, get_account_info
 
             result = await browser_login(email, password, proxy_url)
             if not result.get("token"):
                 return {"success": False, "error": f"TAB login failed: {result.get('error', 'no token')}"}
 
             access_token = result["token"]
-            account_number = result.get("account_number", "")
+            customer_id = result.get("account_number", "")  # browser_login returns custId as account_number
+
+            # Resolve real account number from customer ID
+            account_number = ""
+            try:
+                info = get_account_info(access_token, customer_id, proxy_url)
+                account_number = info.get("account_number", customer_id)
+            except Exception as e:
+                logger.warning(f"TAB account info failed: {e}")
+                account_number = customer_id
 
             # Legacy auth for bet placement
             legacy_token = ""
@@ -46,7 +56,7 @@ class TabClient(PlatformClient):
                 "access_token": access_token,
                 "legacy_token": legacy_token,
                 "account_number": account_number,
-                "customer_id": result.get("customer_id", ""),
+                "customer_id": customer_id,
                 "email": email,
                 "password": password,
                 "proxy_url": proxy_url,
@@ -66,26 +76,47 @@ class TabClient(PlatformClient):
 
             access_token = session.get("access_token")
             proxy_url = session.get("proxy_url")
+
+            # TAB API is geo-restricted — MUST use AU proxy
             s = _make_session(proxy_url)
             s.headers.update(_api_beta_headers(access_token))
 
+            logger.info(f"TAB find_race: token={access_token[:20] if access_token else 'NO'}... proxy={proxy_url[:40] if proxy_url else 'NO'}")
+
             # TAB racing endpoint
             url = "https://api.beta.tab.com.au/v1/tab-info-service/racing/dates/today/meetings?jurisdiction=NSW"
-            resp = s.get(url, timeout=15)
+            meetings = []
+            try:
+                resp = s.get(url, timeout=15)
+                ct = resp.headers.get("content-type", "")
+                logger.info(f"TAB racing API: HTTP {resp.status_code} CT={ct[:30]}")
+                if resp.status_code == 401:
+                    logger.error(f"TAB racing 401: {resp.text[:200]}")
+                elif "html" in ct:
+                    logger.error(f"TAB racing returned HTML (geo-blocked?)")
+                elif resp.status_code == 200:
+                    import json as _json
+                    data = _json.loads(resp.text)
+                    meetings = data.get("meetings", [])
+                    logger.info(f"TAB racing: {len(meetings)} meetings found")
+            except Exception as e:
+                logger.error(f"TAB racing request failed: {e}")
+
             s.close()
 
-            if resp.status_code != 200:
-                logger.warning(f"TAB racing meetings: HTTP {resp.status_code}")
+            if not meetings:
+                logger.error(f"TAB find_race: no meetings found (proxy={bool(proxy_url)})")
                 return None
 
-            data = resp.json()
             track_lower = track.lower().strip()
+            logger.info(f"TAB find_race: searching {len(meetings)} meetings for '{track}' R{race_number}")
 
-            for meeting in data.get("meetings", []):
+            for meeting in meetings:
                 meeting_name = (meeting.get("meetingName", "") or "").lower()
                 venue_name = (meeting.get("venueMnemonic", "") or "").lower()
 
                 if track_lower in meeting_name or meeting_name in track_lower or track_lower == venue_name:
+                    logger.info(f"TAB: matched meeting '{meeting.get('meetingName')}'")
                     for race in meeting.get("races", []):
                         if race.get("raceNumber") == race_number:
                             return {
@@ -98,6 +129,10 @@ class TabClient(PlatformClient):
                                 "race_status": race.get("raceStatus"),
                                 "_race_data": race,
                             }
+
+            # Log what meetings were available for debugging
+            available = [m.get("meetingName", "?") for m in meetings[:20]]
+            logger.warning(f"TAB: track '{track}' not found. Available: {available}")
             return None
         except Exception as e:
             logger.error(f"TAB find_race error: {e}")
@@ -250,7 +285,9 @@ class TabClient(PlatformClient):
             proxy_url = session.get("proxy_url")
             result = tab_balance(access_token, customer_id, proxy_url)
             if isinstance(result, dict):
-                return float(result.get("balance", result.get("accountBalance", 0)))
+                bal_str = result.get("account_balance", result.get("accountBalance", "0"))
+                # Strip $ and parse
+                return float(str(bal_str).replace("$", "").replace(",", "") or "0")
             return float(result)
         except Exception as e:
             logger.error(f"TAB balance error: {e}")

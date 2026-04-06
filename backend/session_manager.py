@@ -99,10 +99,6 @@ class SessionManager:
         platform = account["platform"]
         brand = account["brand"]
 
-        if platform == "tab":
-            # TAB uses its own login module — not handled here yet
-            return {"success": False, "error": "TAB login not yet implemented in session manager"}
-
         # Sportsbet: try token farm for browser login, refresh_token for fast path
         if platform == "sportsbet":
             return await self._login_sportsbet(account)

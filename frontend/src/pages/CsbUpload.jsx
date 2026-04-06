@@ -715,10 +715,26 @@ export default function CsbUpload() {
           const newBal = rawBal ? parseFloat(String(rawBal).replace(/[$,]/g, '')) : runningBalances[currentAcc.id] - stake;
           runningBalances[currentAcc.id] = newBal;
           setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: newBal }));
-          setBetStatuses((prev) => ({
-            ...prev,
-            [i]: { status: 'placed', account: currentAcc.id, ticket_number: result.ticket_number, combined_odds: result.combined_odds, matched_odds: result.resolved?.matched_odds },
-          }));
+          setBetStatuses((prev) => {
+            const existing = prev[i] || {};
+            const placements = existing.placements || [];
+            return {
+              ...prev,
+              [i]: {
+                status: 'placed',
+                account: currentAcc.id,
+                ticket_number: result.ticket_number,
+                combined_odds: result.combined_odds,
+                matched_odds: result.resolved?.matched_odds,
+                placements: [...placements, {
+                  account: currentAcc.id,
+                  ticket_number: result.ticket_number,
+                  combined_odds: result.combined_odds,
+                  matched_odds: result.resolved?.matched_odds,
+                }],
+              },
+            };
+          });
         } else {
           const errMsg = result.error || 'Unknown error';
           if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.toLowerCase().includes('insufficient')) {
@@ -1266,23 +1282,36 @@ export default function CsbUpload() {
                         })()}
                       </td>
                       <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <StatusIcon status={st?.status} />
-                          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                            {st?.status === 'placed' && (st?.ticket_number ? `#${st.ticket_number}` : 'Placed')}
-                            {st?.status === 'placed' && st?.combined_odds && (
-                              <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>@{st.combined_odds}</span>
-                            )}
-                            {st?.status === 'resolved' && `OK @${st.combined_odds || '?'}`}
-                            {st?.status === 'below_min' && `Below min @${st.combined_odds || '?'}`}
-                            {st?.status === 'failed' && (st?.error || 'Failed')}
-                            {st?.status === 'placing' && 'Placing...'}
-                            {st?.status === 'resolving' && 'Resolving...'}
-                            {st?.status === 'pending' && 'Pending'}
-                            {!st && '-'}
-                          </span>
-                        </div>
-                        {st?.account && (
+                        {st?.status === 'placed' && st?.placements?.length > 0 ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {st.placements.map((p, pi) => (
+                              <div key={pi} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <StatusIcon status="placed" />
+                                <span style={{ fontSize: 12, color: 'var(--success)' }}>
+                                  {p.ticket_number ? `#${p.ticket_number}` : 'Placed'}
+                                  {p.combined_odds && <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>@{p.combined_odds}</span>}
+                                </span>
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                  {sessions[p.account]?.accountLabel || sessions[p.account]?.email || ''}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <StatusIcon status={st?.status} />
+                            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                              {st?.status === 'resolved' && `OK @${st.combined_odds || '?'}`}
+                              {st?.status === 'below_min' && `Below min @${st.combined_odds || '?'}`}
+                              {st?.status === 'failed' && (st?.error || 'Failed')}
+                              {st?.status === 'placing' && 'Placing...'}
+                              {st?.status === 'resolving' && 'Resolving...'}
+                              {st?.status === 'pending' && 'Pending'}
+                              {!st && '-'}
+                            </span>
+                          </div>
+                        )}
+                        {st?.status !== 'placed' && st?.account && (
                           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                             {sessions[st.account]?.accountLabel || sessions[st.account]?.email || ''}
                           </div>
