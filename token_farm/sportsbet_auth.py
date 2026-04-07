@@ -76,11 +76,13 @@ async def sportsbet_browser_login(email: str, password: str, proxy_url: str | No
             nonlocal captured_token
             if "/ciam/token" in response.url and response.status == 200:
                 try:
-                    data = await response.json()
-                    if "access_token" in data:
-                        captured_token = data
-                except Exception:
-                    pass
+                    text = await response.text()
+                    if "access_token" in text:
+                        import json as _json
+                        captured_token = _json.loads(text)
+                        logger.info(f"Captured token from {response.url}")
+                except Exception as e:
+                    logger.warning(f"Token capture error: {e}")
 
         page.on("response", handle_response)
 
