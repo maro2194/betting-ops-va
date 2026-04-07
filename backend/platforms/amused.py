@@ -427,6 +427,146 @@ class AmusedClient(PlatformClient):
             # Any other code is an error
             return {"success": False, "error": f"{code}: {message}", "details": data}
 
+    async def get_user_promos(self, session: dict) -> dict:
+        """Fetch user-specific promo tokens via BlackStream promotions API.
+        Returns dict with token counts and promo details."""
+        access_token = session.get("access_token", "")
+        brand_config = session["brand_config"]
+        org_id = brand_config["org_id"]
+        proxy_url = session.get("proxy_url")
+
+        url = f"{API_BASE}/api/promotion/v1/user/v2/promotions"
+        headers = _api_get_headers(access_token, org_id)
+
+        async with AsyncSession(impersonate="chrome") as s:
+            try:
+                resp = await s.get(url, headers=headers, proxy=proxy_url, timeout=15)
+            except Exception as e:
+                logger.error(f"Amused get_user_promos failed: {e}")
+                return {"boost_tokens": 0, "bonus_back_tokens": 0, "deposit_match_tokens": 0, "promos": [], "redeemed": []}
+
+            if resp.status_code != 200:
+                logger.error(f"Amused user promos: HTTP {resp.status_code} {resp.text[:200]}")
+                return {"boost_tokens": 0, "bonus_back_tokens": 0, "deposit_match_tokens": 0, "promos": [], "redeemed": []}
+
+            data = resp.json()
+            # May be wrapped: {code, data: {...}} or direct
+            promo_data = data.get("data", data) if isinstance(data, dict) and "data" in data else data
+
+            boost_tokens = 0
+            bonus_back_tokens = 0
+            deposit_match_tokens = 0
+            promos = []
+
+            # Price Boosts (Racing Singles, SGM, Multi)
+            for key, label in [
+                ("priceBoostRacingSingles", "Racing Singles Boost"),
+                ("priceBoostSGM", "SGM Boost"),
+                ("priceBoostMulti", "Multi Boost"),
+            ]:
+                boost = promo_data.get(key)
+                if boost and boost.get("remainingTokenCount", 0) > 0:
+                    count = boost["remainingTokenCount"]
+                    max_stake = boost.get("maxStake", 0)
+                    boost_tokens += count
+                    desc = f"{label} (Max ${max_stake:.0f})" if max_stake else label
+                    promos.append({
+                        "promo_id": key,
+                        "type": "Boost",
+                        "description": desc,
+                        "status": boost.get("status", "Active"),
+                        "tokens": count,
+                        "tokens_remaining": count,
+                        "expiry_date": boost.get("expiryDateTime", ""),
+                        "boost_data": {
+                            "boost_type": key,
+                            "boost_percentage": 0,
+                        },
+                        "bonus_back_data": None,
+                        "deposit_match_data": None,
+                    })
+
+            # ULMBS (Bonus Backs)
+            for ulmb in promo_data.get("ulmbs", []):
+                count = ulmb.get("remainingTokenCount", 0)
+                if count > 0:
+                    bonus_back_tokens += count
+                    max_bb = ulmb.get("maximumBonusBack", 0)
+                    event_types = ulmb.get("masterEventType", [])
+                    # masterEventType can be strings ["Racing"] or ints [0, 1]
+                    type_labels = []
+                    for et in event_types:
+                        if et == 0 or et == "Racing":
+                            type_labels.append("Racing")
+                        elif et == 1 or et == "Sports":
+                            type_labels.append("Sports")
+                        elif isinstance(et, str):
+                            type_labels.append(et)
+
+                    # Extract criteria (2nd, 2nd/3rd, 1 leg fails, etc.)
+                    criteria = "BonusBack"
+                    offer_criteria = ulmb.get("offerCriteria", [])
+                    for oc in offer_criteria:
+                        if oc.get("field") == "SelectionFinalPosition":
+                            positions = oc.get("values", [])
+                            if "3" in positions:
+                                criteria = "BonusBack3rd"
+                            else:
+                                criteria = "BonusBack2nd"
+                        elif oc.get("field") == "FailedLegCount":
+                            criteria = "BonusBackMulti"
+
+                    # Extract event type from eligibility (Thoroughbred, Greyhounds, etc.)
+                    elig_event_types = []
+                    for ec in ulmb.get("eligibilityCriteria", []):
+                        if ec.get("field") == "EventType" and ec.get("operator") == "IN":
+                            elig_event_types = ec.get("values", [])
+
+                    promos.append({
+                        "promo_id": ulmb.get("promotionId", ulmb.get("title", "ulmb")),
+                        "type": "BonusBack",
+                        "description": ulmb.get("title", ulmb.get("description", "Bonus Back")),
+                        "status": "Active",
+                        "tokens": count,
+                        "tokens_remaining": count,
+                        "expiry_date": ulmb.get("expiryDateTime", ""),
+                        "boost_data": None,
+                        "bonus_back_data": {
+                            "details": ulmb.get("description", ""),
+                            "criteria": criteria,
+                            "event_config_type": "Global",
+                            "global_config": [{"event_type": t} for t in (elig_event_types or type_labels)],
+                            "event_config": [],
+                            "max_deposit": int(max_bb * 100),
+                            "field_size": 0,
+                        },
+                        "deposit_match_data": None,
+                    })
+
+            # Deposit Offers
+            for dep in promo_data.get("depositOffers", []):
+                deposit_match_tokens += 1
+                promos.append({
+                    "promo_id": "depositOffer",
+                    "type": "DepositMatch",
+                    "description": "Deposit Match Offer",
+                    "status": "Active",
+                    "tokens": 1,
+                    "tokens_remaining": 1,
+                    "expiry_date": dep.get("expiryDateTime", ""),
+                    "boost_data": None,
+                    "bonus_back_data": None,
+                    "deposit_match_data": dep,
+                })
+
+            return {
+                "boost_tokens": boost_tokens,
+                "bonus_back_tokens": bonus_back_tokens,
+                "deposit_match_tokens": deposit_match_tokens,
+                "promos": promos,
+                "redeemed": [],
+            }
+
     async def get_balance(self, session: dict) -> float:
         """Get account cash balance."""
         b = await self.get_balances(session)

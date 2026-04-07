@@ -30,6 +30,7 @@ BETMAKERS_BRANDS = {
         "platform_host": "platform.terrybet.bmapollo.com",
         "referer": "https://terrybet.com.au/",
         "product_keyword": "TBF",
+        "domain": "terrybet.com.au",
     },
     "crownbet": {
         "cognito_client_id": "1b8vvipjgq694cqt6koarsuqrj",
@@ -38,6 +39,7 @@ BETMAKERS_BRANDS = {
         "platform_host": "platform.crownbet.bmapollo.com",
         "referer": "https://crownbet.com.au/",
         "product_keyword": "TBF",
+        "domain": "crownbet.com.au",
     },
     "ponybet": {
         "cognito_client_id": "1va9olufe5nbf1r704durfkfa5",
@@ -46,6 +48,7 @@ BETMAKERS_BRANDS = {
         "platform_host": "platform.ponybet.bmapollo.com",
         "referer": "https://ponybet.com.au/",
         "product_keyword": "TBF",
+        "domain": "ponybet.com.au",
     },
     "betit": {
         "cognito_client_id": "7m70ns60lc6g3ovhhdjhs0lcb6",
@@ -54,6 +57,7 @@ BETMAKERS_BRANDS = {
         "platform_host": "platform.betit.bmapollo.com",
         "referer": "https://betit.com.au/",
         "product_keyword": "TBF",
+        "domain": "betit.com.au",
     },
     "diamondbet": {
         "cognito_client_id": "65tumqa6elclm410pq4bqklra3",
@@ -62,6 +66,7 @@ BETMAKERS_BRANDS = {
         "platform_host": "platform.diamondbet.bmapollo.com",
         "referer": "https://diamondbet.com.au/",
         "product_keyword": "TBF",
+        "domain": "diamondbet.com.au",
     },
     "betdash": {
         "cognito_client_id": "4cq6ubu5rfga8aq3uqoa0iu707",
@@ -70,6 +75,7 @@ BETMAKERS_BRANDS = {
         "platform_host": "platform.betdash.bmapollo.com",
         "referer": "https://betdash.com.au/",
         "product_keyword": "TBF",
+        "domain": "betdash.com.au",
     },
     "swiftbet": {
         "cognito_client_id": "2k7qfmkk7jaisoack274e4em7i",
@@ -78,10 +84,52 @@ BETMAKERS_BRANDS = {
         "platform_host": "platform.swiftbet.bmapollo.com",
         "referer": "https://swiftbet.com.au/",
         "product_keyword": "TBF",
+        "domain": "swiftbet.com.au",
     },
 }
 
 # ─── GraphQL Queries ────────────────────────────────────────────────────────
+
+ELIGIBLE_PROMOS_QUERY = """
+query GetEligiblePromosForUser($sourceId: BetSource!) {
+  getEligiblePromosForUser(source_id: $sourceId) {
+    promo_id
+    promo_type
+    description
+    promo_status
+    number_of_tokens
+    user_token_balance
+    boost_data {
+      boost_type
+      boost_percentage
+    }
+    bonus_back_data {
+      is_fixed_odds
+      max_deposit
+      field_size
+      criteria
+      reward_type
+      details
+      event_config_type
+      global_config { start_date end_date event_type }
+      event_config { venue race_numbers }
+    }
+    deposit_match_data {
+      max_deposit
+      percentage
+      details
+    }
+    start_date
+    end_date
+    expiry_date
+  }
+  getRedeemedPromoInfoForUser {
+    promo_id
+    promo_type
+    event_ids
+  }
+}
+"""
 
 NEXT_TO_JUMP_QUERY = """
 query nextToJumpRaces($limit: Int, $meeting_type: [MeetingType!], $track_country_include: [String!]) {
@@ -497,6 +545,153 @@ class BetMakersClient(PlatformClient):
                 "status": status,
                 "bets": bets,
             }
+
+    async def get_user_promos(self, session: dict) -> dict:
+        """Fetch user-specific promo tokens via authenticated GraphQL.
+        Returns dict with token counts and promo details:
+        {
+            "boost_tokens": int,
+            "bonus_back_tokens": int,
+            "deposit_match_tokens": int,
+            "promos": [
+                {
+                    "promo_id": str,
+                    "type": str,  # "Boost" | "BonusBack" | "DepositMatch"
+                    "description": str,
+                    "status": str,
+                    "tokens": int,
+                    "tokens_remaining": int,
+                    "expiry_date": str,
+                    "boost_data": dict | None,
+                    "bonus_back_data": dict | None,
+                    "deposit_match_data": dict | None,
+                },
+            ],
+            "redeemed": [...],
+        }
+        """
+        access_token = session.get("access_token", "")
+        brand_config = session["brand_config"]
+        platform_host = brand_config["platform_host"]
+        api_key = brand_config["cognito_client_id"]
+        referer = brand_config["referer"]
+        proxy_url = session.get("proxy_url")
+
+        url = f"https://{platform_host}/query"
+        headers = _platform_headers(access_token, api_key, referer)
+        payload = {
+            "query": ELIGIBLE_PROMOS_QUERY,
+            "variables": {"sourceId": "Web"},
+        }
+
+        async with AsyncSession(impersonate="chrome") as s:
+            try:
+                resp = await s.post(url, json=payload, headers=headers, proxy=proxy_url, timeout=15)
+            except Exception as e:
+                logger.error(f"BetMakers get_user_promos failed: {e}")
+                return {"boost_tokens": 0, "bonus_back_tokens": 0, "deposit_match_tokens": 0, "promos": [], "redeemed": []}
+
+            if resp.status_code != 200:
+                logger.error(f"BetMakers user promos: HTTP {resp.status_code}")
+                return {"boost_tokens": 0, "bonus_back_tokens": 0, "deposit_match_tokens": 0, "promos": [], "redeemed": []}
+
+            data = resp.json()
+            if data.get("errors"):
+                logger.error(f"BetMakers user promos GQL error: {data['errors']}")
+                return {"boost_tokens": 0, "bonus_back_tokens": 0, "deposit_match_tokens": 0, "promos": [], "redeemed": []}
+
+            eligible = data.get("data", {}).get("getEligiblePromosForUser", []) or []
+            redeemed = data.get("data", {}).get("getRedeemedPromoInfoForUser", []) or []
+
+            boost_tokens = 0
+            bonus_back_tokens = 0
+            deposit_match_tokens = 0
+            promos = []
+
+            for p in eligible:
+                if p.get("promo_status") != "Active":
+                    continue
+                tokens = p.get("user_token_balance", 0) or 0
+                ptype = p.get("promo_type", "")
+
+                if ptype == "Boost":
+                    boost_tokens += tokens
+                elif ptype == "BonusBack":
+                    bonus_back_tokens += tokens
+                elif ptype == "DepositMatch":
+                    deposit_match_tokens += tokens
+
+                promos.append({
+                    "promo_id": p.get("promo_id", ""),
+                    "type": ptype,
+                    "description": p.get("description", ""),
+                    "status": p.get("promo_status", ""),
+                    "tokens": p.get("number_of_tokens", 0),
+                    "tokens_remaining": tokens,
+                    "expiry_date": p.get("expiry_date", ""),
+                    "boost_data": p.get("boost_data"),
+                    "bonus_back_data": p.get("bonus_back_data"),
+                    "deposit_match_data": p.get("deposit_match_data"),
+                })
+
+            return {
+                "boost_tokens": boost_tokens,
+                "bonus_back_tokens": bonus_back_tokens,
+                "deposit_match_tokens": deposit_match_tokens,
+                "promos": promos,
+                "redeemed": redeemed,
+            }
+
+    @staticmethod
+    async def get_promotions(brand: str) -> list[dict]:
+        """Fetch public promotions for a BetMakers brand (no auth needed).
+        Returns list of dicts with id, type, description, route, start_date, end_date."""
+        brand_config = BETMAKERS_BRANDS.get(brand)
+        if not brand_config:
+            return []
+        domain = brand_config.get("domain", f"{brand}.com.au")
+        url = f"https://{domain}/api/v1/promotions"
+
+        async with AsyncSession(impersonate="chrome") as s:
+            try:
+                resp = await s.get(url, headers={
+                    "accept": "application/json",
+                    "user-agent": USER_AGENT,
+                    "referer": brand_config["referer"],
+                }, timeout=10)
+            except Exception as e:
+                logger.error(f"BetMakers get_promotions failed for {brand}: {e}")
+                return []
+
+            if resp.status_code != 200:
+                logger.error(f"BetMakers promotions {brand}: HTTP {resp.status_code}")
+                return []
+
+            data = resp.json()
+            promos = []
+            for p in data.get("promotions", []):
+                if not p.get("enabled"):
+                    continue
+                # Extract plain-text terms from rich-text structure
+                terms_text = []
+                for block in p.get("terms", []):
+                    if block.get("type") == "bulletList":
+                        for item in block.get("content", []):
+                            for para in item.get("content", []):
+                                for node in para.get("content", []):
+                                    if node.get("type") == "text":
+                                        terms_text.append(node["text"])
+                promos.append({
+                    "id": p["id"],
+                    "type": p.get("promotion_type", ""),
+                    "description": p.get("description", ""),
+                    "route": p.get("route", ""),
+                    "start_date": p.get("start_date", ""),
+                    "end_date": p.get("end_date", ""),
+                    "image": p.get("image", ""),
+                    "terms": terms_text[:3],  # first 3 bullet points
+                })
+            return promos
 
     async def get_balance(self, session: dict) -> float:
         """Get account cash balance."""

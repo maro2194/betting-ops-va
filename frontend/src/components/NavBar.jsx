@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   Zap,
   BookOpen,
+  Gift,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -50,6 +51,7 @@ const NAV_GROUPS = [
     label: 'Multi-Bookie',
     items: [
       { to: '/bookie-accounts', label: 'Bookie Accounts', icon: Users },
+      { to: '/promos', label: 'Promos', icon: Gift },
     ],
   },
   {
@@ -98,10 +100,7 @@ export default function NavBar({ sidebarOpen, onToggleSidebar }) {
         {/* Logo */}
         <div style={{ padding: '20px 16px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
-              <rect x="1" y="1" width="30" height="30" rx="7" fill="#0a0a0f" stroke="oklch(55% .22 165)" strokeWidth="1.5" />
-              <text x="16" y="21" textAnchor="middle" fill="oklch(55% .22 165)" fontFamily="'JetBrains Mono', monospace" fontWeight="700" fontSize="13">BO</text>
-            </svg>
+            <img src="/brand/icon-sidebar.svg" alt="BotOps" width="32" height="32" style={{ flexShrink: 0 }} />
             <span style={{ fontWeight: 700, fontSize: 18, color: 'var(--sidebar-foreground)', letterSpacing: '-0.02em' }}>
               BotOps
             </span>

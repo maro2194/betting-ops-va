@@ -19,6 +19,7 @@ import CsbResults from './pages/CsbResults';
 import Sportsbet from './pages/Sportsbet';
 import LiveStats from './pages/LiveStats';
 import Disposals from './pages/Disposals';
+import Promos from './pages/Promos';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -59,6 +60,7 @@ function AppRoutes() {
         <Route path="/sportsbet" element={<Sportsbet />} />
         <Route path="/live" element={<LiveStats />} />
         <Route path="/disposals" element={<Disposals />} />
+        <Route path="/promos" element={<Promos />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

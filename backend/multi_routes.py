@@ -161,6 +161,167 @@ async def api_test_login(account_id: str, user: dict = Depends(_verify_app_token
         raise HTTPException(400, f"Login failed: {str(e)}")
 
 
+# ─── Promo Scanner ────────────────────────────────────────────────────────
+
+
+class PromoScanRequest(BaseModel):
+    brands: list[str] | None = None  # filter to specific brands, or None for all
+
+
+@multi_router.post("/scan-promos")
+async def api_scan_promos(
+    body: PromoScanRequest = None,
+    user: dict = Depends(_verify_app_token),
+):
+    """Scan bookie accounts for tokens/bonus balances and available promotions.
+    Returns SSE stream with real-time progress per account."""
+    import json as _json
+    from fastapi.responses import StreamingResponse
+    from platforms.registry import get_client, normalize_bookmaker
+    from platforms.betmakers import BETMAKERS_BRANDS, BetMakersClient
+    import random
+
+    accounts = await get_bookie_accounts(user["username"])
+
+    brand_filter = None
+    if body and body.brands:
+        brand_filter = {b.lower().strip() for b in body.brands}
+
+    # Platforms that don't support promo scanning yet
+    # bet365: fully browser-automated, no API for promos
+    SKIP_PLATFORMS = {"bet365"}
+
+    # Filter accounts
+    filtered = []
+    for acct in accounts:
+        brand = normalize_bookmaker(acct["brand"])
+        if brand_filter and brand not in brand_filter:
+            continue
+        if acct["platform"] in SKIP_PLATFORMS:
+            continue
+        filtered.append(acct)
+
+    async def stream():
+        results = []
+        seen_brands = set()
+        total = len(filtered)
+
+        # Send initial count
+        yield f"data: {_json.dumps({'type': 'start', 'total': total})}\n\n"
+
+        for idx, acct in enumerate(filtered):
+            brand = normalize_bookmaker(acct["brand"])
+            platform = acct["platform"]
+            seen_brands.add((platform, brand))
+
+            # Send "scanning" event
+            yield f"data: {_json.dumps({'type': 'scanning', 'index': idx, 'total': total, 'brand': acct['brand'], 'initials': acct['initials'], 'platform': platform})}\n\n"
+
+            # Build brand config
+            brand_config = {}
+            if platform == "betmakers":
+                brand_config = BETMAKERS_BRANDS.get(brand, {}) or {}
+            elif platform == "amused":
+                from platforms.amused import AMUSED_BRANDS
+                brand_config = AMUSED_BRANDS.get(brand, {}) or {}
+
+            # Generate proxy URL
+            proxy_base = acct.get("proxy_base", "")
+            if proxy_base:
+                # Strip http:// prefix if it's just an Oxylabs username (no @ = not a full URL)
+                cleaned = proxy_base
+                if "://" in cleaned and "@" not in cleaned:
+                    cleaned = cleaned.split("://", 1)[1]
+                if "@" in cleaned:
+                    # Full proxy URL (user:pass@host:port)
+                    proxy_url = proxy_base
+                else:
+                    # Oxylabs username prefix
+                    sess_id = str(random.randint(1000000000, 9999999999))
+                    sess_time = 120 if platform == "sportsbet" else 10
+                    proxy_url = f"http://{cleaned}-sessid-{sess_id}-sesstime-{sess_time}:K5E=2qcyhfyFZs~@pr.oxylabs.io:7777"
+            else:
+                proxy_url = ""
+
+            client = get_client(platform)
+            entry = {
+                "account_id": acct["id"],
+                "brand": acct["brand"],
+                "platform": platform,
+                "initials": acct["initials"],
+                "email": acct["email"],
+                "cash": 0.0,
+                "bonus": 0.0,
+                "status": "pending",
+                "error": None,
+            }
+
+            try:
+                # Sportsbet uses SessionManager for Token Farm cascade login
+                if platform == "sportsbet":
+                    from session_manager import SessionManager
+                    import token_farm_client
+                    # Quick check: is Token Farm reachable?
+                    farm_health = await token_farm_client.health()
+                    if farm_health.get("status") in ("unreachable", "error"):
+                        entry["status"] = "error"
+                        entry["error"] = "Token Farm offline — can't login to Sportsbet"
+                        results.append(entry)
+                        yield f"data: {_json.dumps({'type': 'account', 'index': idx, 'total': total, 'account': entry})}\n\n"
+                        continue
+                    _sm = SessionManager()
+                    session = await _sm.get_or_create(acct)
+                else:
+                    session = await client.login(
+                        email=acct["email"], password=acct["password"],
+                        proxy_url=proxy_url, brand_config=brand_config,
+                    )
+
+                if not session.get("success"):
+                    entry["status"] = "login_failed"
+                    entry["error"] = session.get("error", "Unknown")
+                    results.append(entry)
+                    yield f"data: {_json.dumps({'type': 'account', 'index': idx, 'total': total, 'account': entry})}\n\n"
+                    continue
+
+                if not session.get("proxy_url"):
+                    session["proxy_url"] = proxy_url
+
+                balances = await client.get_balances(session)
+                entry["cash"] = balances.get("cash", 0.0)
+                entry["bonus"] = balances.get("bonus", 0.0)
+                entry["status"] = "ok"
+
+                # Fetch per-user promo tokens
+                if hasattr(client, "get_user_promos"):
+                    session["brand_config"] = brand_config
+                    user_promos = await client.get_user_promos(session)
+                    entry["boost_tokens"] = user_promos.get("boost_tokens", 0)
+                    entry["bonus_back_tokens"] = user_promos.get("bonus_back_tokens", 0)
+                    entry["deposit_match_tokens"] = user_promos.get("deposit_match_tokens", 0)
+                    entry["user_promos"] = user_promos.get("promos", [])
+                    entry["redeemed"] = user_promos.get("redeemed", [])
+            except Exception as e:
+                entry["status"] = "error"
+                entry["error"] = str(e)
+
+            results.append(entry)
+            yield f"data: {_json.dumps({'type': 'account', 'index': idx, 'total': total, 'account': entry})}\n\n"
+
+        # Fetch public promotions per brand (BetMakers only for now)
+        promotions = {}
+        for platform, brand in seen_brands:
+            if platform == "betmakers":
+                promos = await BetMakersClient.get_promotions(brand)
+                if promos:
+                    promotions[brand] = promos
+
+        # Send final result
+        yield f"data: {_json.dumps({'type': 'done', 'accounts': results, 'promotions': promotions})}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
 # ─── CSV Upload & Validation ──────────────────────────────────────────────
 
 @multi_router.post("/csv/upload", response_model=CsvUploadResponse)

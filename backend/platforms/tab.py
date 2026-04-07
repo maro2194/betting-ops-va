@@ -301,6 +301,147 @@ class TabClient(PlatformClient):
             logger.error(f"TAB place_bet error: {e}")
             return {"success": False, "error": f"TAB placement failed: {e}"}
 
+    async def get_user_promos(self, session: dict) -> dict:
+        """Fetch user-specific promo tokens from TAB promotions service.
+        Returns dict with token counts and promo details."""
+        from curl_cffi.requests import AsyncSession
+
+        access_token = session.get("access_token")
+        account_number = session.get("account_number")
+        proxy_url = session.get("proxy_url")
+
+        if not access_token or not account_number:
+            return {"boost_tokens": 0, "bonus_back_tokens": 0, "deposit_match_tokens": 0, "promos": [], "redeemed": []}
+
+        base = "https://api.beta.tab.com.au/v1/tab-promotions-service"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+
+        boost_tokens = 0
+        bonus_back_tokens = 0
+        deposit_match_tokens = 0
+        promos = []
+
+        async with AsyncSession(impersonate="chrome", proxy=proxy_url if proxy_url else None) as s:
+            # 1. Bet Tokens (boosts, free bets)
+            try:
+                resp = await s.get(
+                    f"{base}/accounts/{account_number}/bet-tokens?venueToken=",
+                    headers=headers, timeout=15,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    tokens = data if isinstance(data, list) else data.get("betTokens", data.get("data", []))
+                    if isinstance(tokens, list):
+                        for t in tokens:
+                            count = int(t.get("quantity", t.get("count", 1)))
+                            boost_tokens += count
+                            promos.append({
+                                "promo_id": t.get("id", t.get("tokenId", "")),
+                                "type": "Boost",
+                                "description": t.get("name", t.get("description", "Bet Token")),
+                                "status": "Active",
+                                "tokens": count,
+                                "tokens_remaining": count,
+                                "expiry_date": t.get("expiryDate", t.get("expiry", "")),
+                                "boost_data": {"boost_type": t.get("type", "BetToken"), "boost_percentage": 0},
+                                "bonus_back_data": None,
+                                "deposit_match_data": None,
+                            })
+            except Exception as e:
+                logger.warning(f"TAB bet-tokens fetch failed: {e}")
+
+            # 2. Bonus Bets
+            try:
+                resp = await s.get(
+                    f"{base}/accounts/{account_number}/bonus-bets?bonusBetStatus=ACTIVE",
+                    headers=headers, timeout=15,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    bets = data if isinstance(data, list) else data.get("bonusBets", data.get("data", []))
+                    if isinstance(bets, list):
+                        for b in bets:
+                            amount = float(b.get("amount", b.get("value", 0)))
+                            if amount <= 0:
+                                continue
+                            bonus_back_tokens += 1
+                            promos.append({
+                                "promo_id": b.get("id", b.get("bonusBetToken", "")),
+                                "type": "BonusBack",
+                                "description": f"${amount:.2f} Bonus Bet",
+                                "status": "Active",
+                                "tokens": 1,
+                                "tokens_remaining": 1,
+                                "expiry_date": b.get("expiryDate", b.get("expiry", "")),
+                                "boost_data": None,
+                                "bonus_back_data": {
+                                    "details": f"Bonus bet worth ${amount:.2f}",
+                                    "criteria": "BonusBet",
+                                    "event_config_type": "Global",
+                                    "global_config": [],
+                                    "event_config": [],
+                                    "max_deposit": int(amount * 100),
+                                    "field_size": 0,
+                                },
+                                "deposit_match_data": None,
+                            })
+            except Exception as e:
+                logger.warning(f"TAB bonus-bets fetch failed: {e}")
+
+            # 3. Promotions (general)
+            try:
+                resp = await s.get(
+                    f"{base}/accounts/{account_number}/promotions?bonusBetStatus=ACTIVE",
+                    headers=headers, timeout=15,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    promo_list = data if isinstance(data, list) else data.get("promotions", data.get("data", []))
+                    if isinstance(promo_list, list):
+                        for p in promo_list:
+                            ptype = p.get("type", p.get("promotionType", ""))
+                            desc = p.get("name", p.get("description", ptype))
+                            # Avoid duplicates from bet-tokens/bonus-bets above
+                            pid = p.get("id", p.get("promotionId", ""))
+                            if any(existing["promo_id"] == pid for existing in promos):
+                                continue
+                            count = int(p.get("quantity", p.get("count", 1)))
+                            if "bonus" in ptype.lower() or "free" in ptype.lower():
+                                bonus_back_tokens += count
+                                cat = "BonusBack"
+                            elif "deposit" in ptype.lower() or "match" in ptype.lower():
+                                deposit_match_tokens += count
+                                cat = "DepositMatch"
+                            else:
+                                boost_tokens += count
+                                cat = "Boost"
+                            promos.append({
+                                "promo_id": pid,
+                                "type": cat,
+                                "description": desc,
+                                "status": "Active",
+                                "tokens": count,
+                                "tokens_remaining": count,
+                                "expiry_date": p.get("expiryDate", p.get("expiry", "")),
+                                "boost_data": {"boost_type": ptype, "boost_percentage": 0} if cat == "Boost" else None,
+                                "bonus_back_data": None,
+                                "deposit_match_data": None,
+                            })
+            except Exception as e:
+                logger.warning(f"TAB promotions fetch failed: {e}")
+
+        return {
+            "boost_tokens": boost_tokens,
+            "bonus_back_tokens": bonus_back_tokens,
+            "deposit_match_tokens": deposit_match_tokens,
+            "promos": promos,
+            "redeemed": [],
+        }
+
     async def get_balances(self, session: dict) -> dict:
         bal = await self.get_balance(session)
         return {"cash": bal, "bonus": 0.0}

@@ -38,10 +38,7 @@ export default function Login() {
       <div style={{ width: '100%', maxWidth: 400 }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginBottom: 16 }}>
-            <rect x="1.5" y="1.5" width="45" height="45" rx="10" fill="#0a0a0f" stroke="oklch(55% .22 165)" strokeWidth="2" />
-            <text x="24" y="31" textAnchor="middle" fill="oklch(55% .22 165)" fontFamily="'JetBrains Mono', monospace" fontWeight="700" fontSize="18">BO</text>
-          </svg>
+          <img src="/brand/logo-dark.svg" alt="BotOps" width="64" height="64" style={{ marginBottom: 16 }} />
           <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>
             BotOps
           </h1>
