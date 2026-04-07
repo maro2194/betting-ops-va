@@ -213,14 +213,27 @@ async def sportsbet_get_promos(email: str, password: str, proxy_url: str | None 
             await page.goto(f"{BASE_URL}/promotions", wait_until="domcontentloaded", timeout=20000)
             await page.wait_for_timeout(8000)
         except Exception:
-            pass  # promotions page might redirect, that's ok
-
-        # Also try account page which triggers freebet loading
-        try:
-            await page.goto(f"{BASE_URL}/account/my-offers", wait_until="domcontentloaded", timeout=20000)
-            await page.wait_for_timeout(5000)
-        except Exception:
             pass
+
+        # Navigate to bet-returns page to get customer-facing descriptions with $ values
+        bet_returns_text = ""
+        try:
+            await page.goto(f"{BASE_URL}/account/bet-returns", wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_timeout(8000)
+            bet_returns_text = await page.evaluate("() => document.body.innerText")
+            logger.info(f"Bet returns page: {len(bet_returns_text)} chars")
+        except Exception as e:
+            logger.warning(f"Bet returns page failed: {e}")
+
+        # Navigate to power-plays page for Power Play descriptions
+        power_plays_text = ""
+        try:
+            await page.goto(f"{BASE_URL}/account/power-plays", wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_timeout(8000)
+            power_plays_text = await page.evaluate("() => document.body.innerText")
+            logger.info(f"Power plays page: {len(power_plays_text)} chars")
+        except Exception as e:
+            logger.warning(f"Power plays page failed: {e}")
 
         logger.info(f"Promo capture: vouchers={'YES' if voucher_data else 'NO'} freebets={'YES' if freebet_data else 'NO'} promos={'YES' if promo_data else 'NO'}")
 
@@ -232,33 +245,95 @@ async def sportsbet_get_promos(email: str, password: str, proxy_url: str | None 
         return {"success": False, "error": str(e),
                 "boost_tokens": 0, "bonus_back_tokens": 0, "deposit_match_tokens": 0, "promos": [], "redeemed": []}
 
+    # Parse page text to extract customer-facing promo descriptions
+    import re as _re
+
+    # Extract bet returns info: "ANY GREYHOUND RACE\nGet up to $50 back..."
+    bet_return_entries = []
+    if bet_returns_text:
+        # Split by sections — each bet return has a title and description with $value
+        lines = [l.strip() for l in bet_returns_text.split("\n") if l.strip()]
+        for i, line in enumerate(lines):
+            m = _re.search(r'[Gg]et up to \$(\d+)', line)
+            if m:
+                value = int(m.group(1))
+                # Title is usually 1-2 lines before
+                title = lines[i - 1] if i > 0 else "Bet Return"
+                bet_return_entries.append({"title": title, "value": value, "desc": line})
+
+    # Extract power plays info
+    power_play_entries = []
+    if power_plays_text:
+        lines = [l.strip() for l in power_plays_text.split("\n") if l.strip()]
+        for i, line in enumerate(lines):
+            if "power play" in line.lower() and i + 1 < len(lines):
+                power_play_entries.append({"title": line, "desc": lines[i + 1] if i + 1 < len(lines) else ""})
+
+    logger.info(f"Parsed {len(bet_return_entries)} bet returns, {len(power_play_entries)} power play descriptions")
+
     # Parse captured data into unified format
     boost_tokens = 0
     bonus_back_tokens = 0
     deposit_match_tokens = 0
     promos: list[dict] = []
 
-    # 1. Vouchers — Power Plays
+    # 1. Vouchers — Power Plays + Bet Returns
     if voucher_data:
         vouchers = voucher_data if isinstance(voucher_data, list) else voucher_data.get("vouchers", [])
+        bet_return_idx = 0
         for v in (vouchers if isinstance(vouchers, list) else []):
             vtype = v.get("type", v.get("voucherType", "POWERPLAY"))
-            desc = v.get("description", v.get("name", vtype))
+            raw_name = v.get("name", v.get("description", vtype))
             expiry = v.get("absoluteExpiryDate", v.get("expiryDate", v.get("expiry", "")))
             if isinstance(expiry, (int, float)) and expiry > 0:
                 import datetime
                 expiry = datetime.datetime.utcfromtimestamp(expiry).isoformat()
             status_raw = v.get("status", "ACTIVE")
+
+            # Enrich description from page text
+            desc = raw_name
+            value = 0
+            is_bet_return = "BR" in raw_name.upper() or "bet return" in raw_name.lower()
+
+            if is_bet_return and bet_return_idx < len(bet_return_entries):
+                entry = bet_return_entries[bet_return_idx]
+                desc = f"{entry['title']} — {entry['desc']}"
+                value = entry["value"]
+                bet_return_idx += 1
+                promo_type = "BonusBack"
+            else:
+                # Try to match with power play page descriptions
+                matched = False
+                for pp in power_play_entries:
+                    if not pp.get("_used"):
+                        desc = f"{pp['title']}: {pp['desc']}" if pp['desc'] else pp['title']
+                        pp["_used"] = True
+                        matched = True
+                        break
+                if not matched:
+                    # Decode internal name for readability
+                    if "BTL" in raw_name:
+                        name_parts = raw_name.replace("BTL ", "").replace("MDG ", "")
+                        desc = f"Power Play: {name_parts}"
+                    else:
+                        desc = raw_name
+                promo_type = "Boost"
+
             boost_tokens += 1
             promos.append({
                 "promo_id": str(v.get("id", v.get("voucherId", v.get("rewardId", "")))),
-                "type": "Boost",
+                "type": promo_type,
                 "description": desc,
                 "status": "Active" if status_raw == "ACTIVE" else status_raw.capitalize(),
                 "tokens": 1, "tokens_remaining": 1,
                 "expiry_date": str(expiry),
-                "boost_data": {"boost_type": vtype, "boost_percentage": 0},
-                "bonus_back_data": None, "deposit_match_data": None,
+                "boost_data": {"boost_type": vtype, "boost_percentage": 0} if promo_type == "Boost" else None,
+                "bonus_back_data": {
+                    "details": desc, "criteria": "BetReturn",
+                    "event_config_type": "Global", "global_config": [], "event_config": [],
+                    "max_deposit": value * 100, "field_size": 0,
+                } if promo_type == "BonusBack" else None,
+                "deposit_match_data": None,
             })
 
     # 2. Freebets
