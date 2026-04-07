@@ -71,9 +71,11 @@ export default function Promos() {
   const logRef = useRef(null);
   const abortRef = useRef(null);
 
-  // Brand selection for filtered scan
+  // Account selection for filtered scan
   const [allBrands, setAllBrands] = useState([]);
-  const [selectedBrands, setSelectedBrands] = useState(new Set());
+  const [allAccounts, setAllAccounts] = useState([]);
+  const [selectedAccounts, setSelectedAccounts] = useState(new Set());
+  const [expandedSelector, setExpandedSelector] = useState({});
 
   // Auto-scroll log
   useEffect(() => {
@@ -83,33 +85,54 @@ export default function Promos() {
   // Platforms that don't support promo scanning
   const SKIP_PLATFORMS = new Set(['bet365']);
 
-  // Load registered accounts on mount to get available brands
+  // Load registered accounts on mount
   useEffect(() => {
     api.get('/api/multi/accounts').then((data) => {
+      const accts = (data.accounts || []).filter((a) => !SKIP_PLATFORMS.has(a.platform));
+      setAllAccounts(accts);
+
       const brandMap = {};
-      for (const a of data.accounts || []) {
-        if (SKIP_PLATFORMS.has(a.platform)) continue;
+      for (const a of accts) {
         const key = a.brand.toLowerCase();
-        if (!brandMap[key]) brandMap[key] = { brand: a.brand, platform: a.platform, count: 0 };
-        brandMap[key].count++;
+        if (!brandMap[key]) brandMap[key] = { brand: a.brand, platform: a.platform, accounts: [] };
+        brandMap[key].accounts.push(a);
       }
       const brands = Object.values(brandMap).sort((a, b) => a.brand.localeCompare(b.brand));
       setAllBrands(brands);
-      setSelectedBrands(new Set(brands.map((b) => b.brand.toLowerCase())));
+      setSelectedAccounts(new Set(accts.map((a) => a.id)));
     }).catch(() => {});
   }, []);
 
-  const toggleBrandSelection = (brand) => {
-    setSelectedBrands((prev) => {
+  // Derived: which brands have any selected accounts
+  const selectedBrands = new Set();
+  for (const a of allAccounts) {
+    if (selectedAccounts.has(a.id)) selectedBrands.add(a.brand.toLowerCase());
+  }
+
+  const toggleAccountSelection = (id) => {
+    setSelectedAccounts((prev) => {
       const next = new Set(prev);
-      if (next.has(brand)) next.delete(brand);
-      else next.add(brand);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
 
-  const selectAll = () => setSelectedBrands(new Set(allBrands.map((b) => b.brand.toLowerCase())));
-  const selectNone = () => setSelectedBrands(new Set());
+  const toggleBrandSelection = (brand) => {
+    const brandAccounts = allAccounts.filter((a) => a.brand.toLowerCase() === brand);
+    const allSelected = brandAccounts.every((a) => selectedAccounts.has(a.id));
+    setSelectedAccounts((prev) => {
+      const next = new Set(prev);
+      for (const a of brandAccounts) {
+        if (allSelected) next.delete(a.id);
+        else next.add(a.id);
+      }
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelectedAccounts(new Set(allAccounts.map((a) => a.id)));
+  const selectNone = () => setSelectedAccounts(new Set());
 
   const addLog = (msg, type = 'info') => {
     const ts = new Date().toLocaleTimeString('en-AU', { hour12: false });
@@ -127,8 +150,15 @@ export default function Promos() {
     setLogs([]);
     setScanProgress(null);
 
-    const brands = isSingle ? [brandsFilter] : [...selectedBrands];
-    addLog(`Starting scan for ${brands.length} brand${brands.length !== 1 ? 's' : ''}...`);
+    // Build account IDs to scan
+    let accountIds;
+    if (isSingle) {
+      accountIds = allAccounts.filter((a) => a.brand.toLowerCase() === brandsFilter).map((a) => a.id);
+    } else {
+      accountIds = [...selectedAccounts];
+    }
+    const brandCount = new Set(allAccounts.filter((a) => accountIds.includes(a.id)).map((a) => a.brand)).size;
+    addLog(`Starting scan for ${accountIds.length} account${accountIds.length !== 1 ? 's' : ''} across ${brandCount} brand${brandCount !== 1 ? 's' : ''}...`);
 
     // Collect results from stream
     const streamAccounts = [];
@@ -140,7 +170,7 @@ export default function Promos() {
       const resp = await fetch('/api/multi/scan-promos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ brands }),
+        body: JSON.stringify({ account_ids: accountIds }),
         signal: controller.signal,
       });
 
@@ -278,48 +308,87 @@ export default function Promos() {
           <button
             className="btn btn-primary"
             onClick={() => scan()}
-            disabled={scanning || scanningBrand || selectedBrands.size === 0}
+            disabled={scanning || scanningBrand || selectedAccounts.size === 0}
             style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px' }}
           >
             {scanning ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-            {scanning ? 'Scanning...' : selectedBrands.size === allBrands.length ? 'Scan All' : `Scan ${selectedBrands.size} Brand${selectedBrands.size !== 1 ? 's' : ''}`}
+            {scanning ? 'Scanning...' : selectedAccounts.size === allAccounts.length ? 'Scan All' : `Scan ${selectedAccounts.size} Account${selectedAccounts.size !== 1 ? 's' : ''}`}
           </button>
         </div>
       </div>
 
-      {/* Brand Selector */}
+      {/* Brand + Account Selector */}
       {allBrands.length > 0 && (
         <div className="card" style={{ padding: '12px 16px', marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
             <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
-              Select Brands
+              Select Accounts ({selectedAccounts.size}/{allAccounts.length})
             </span>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn btn-ghost" style={{ fontSize: 11, padding: '2px 8px' }} onClick={selectAll}>All</button>
               <button className="btn btn-ghost" style={{ fontSize: 11, padding: '2px 8px' }} onClick={selectNone}>None</button>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {allBrands.map((b) => {
               const key = b.brand.toLowerCase();
-              const selected = selectedBrands.has(key);
+              const brandAccts = b.accounts || [];
+              const selectedCount = brandAccts.filter((a) => selectedAccounts.has(a.id)).length;
+              const allSelected = selectedCount === brandAccts.length;
+              const someSelected = selectedCount > 0 && !allSelected;
+              const isExpanded = expandedSelector[key];
+
               return (
-                <button
-                  key={key}
-                  onClick={() => toggleBrandSelection(key)}
-                  style={{
-                    padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                    border: '1px solid',
-                    borderColor: selected ? 'var(--primary)' : 'var(--border)',
-                    background: selected ? 'oklch(55% .22 165 / 0.1)' : 'transparent',
-                    color: selected ? 'var(--primary)' : 'var(--text-muted)',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  {b.brand}
-                  <span style={{ marginLeft: 4, opacity: 0.6 }}>({b.count})</span>
-                </button>
+                <div key={key}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={(el) => { if (el) el.indeterminate = someSelected; }}
+                      onChange={() => toggleBrandSelection(key)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <button
+                      onClick={() => setExpandedSelector((p) => ({ ...p, [key]: !p[key] }))}
+                      style={{
+                        flex: 1, display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '5px 8px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                        border: 'none', background: 'transparent', cursor: 'pointer',
+                        color: selectedCount > 0 ? 'var(--text-primary)' : 'var(--text-muted)',
+                      }}
+                    >
+                      {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      {b.brand}
+                      <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.6 }}>
+                        {selectedCount}/{brandAccts.length}
+                      </span>
+                    </button>
+                  </div>
+                  {isExpanded && (
+                    <div style={{ paddingLeft: 32, display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 4 }}>
+                      {brandAccts.map((a) => (
+                        <label
+                          key={a.id}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8, padding: '3px 8px',
+                            borderRadius: 4, cursor: 'pointer', fontSize: 12,
+                            color: selectedAccounts.has(a.id) ? 'var(--text-primary)' : 'var(--text-muted)',
+                            background: selectedAccounts.has(a.id) ? 'oklch(55% .22 165 / 0.05)' : 'transparent',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedAccounts.has(a.id)}
+                            onChange={() => toggleAccountSelection(a.id)}
+                            style={{ cursor: 'pointer' }}
+                          />
+                          <span style={{ fontWeight: 500 }}>{a.initials}</span>
+                          <span style={{ opacity: 0.5 }}>{a.label || a.email}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>

@@ -166,6 +166,7 @@ async def api_test_login(account_id: str, user: dict = Depends(_verify_app_token
 
 class PromoScanRequest(BaseModel):
     brands: list[str] | None = None  # filter to specific brands, or None for all
+    account_ids: list[str] | None = None  # filter to specific account IDs
 
 
 @multi_router.post("/scan-promos")
@@ -187,19 +188,28 @@ async def api_scan_promos(
     if body and body.brands:
         brand_filter = {b.lower().strip() for b in body.brands}
 
+    account_id_filter = None
+    if body and body.account_ids:
+        account_id_filter = set(body.account_ids)
+
     # Platforms that don't support promo scanning yet
     # bet365: fully browser-automated, no API for promos
     SKIP_PLATFORMS = {"bet365"}
 
-    # Filter accounts
+    # Filter accounts — account_ids takes priority over brands
     filtered = []
     for acct in accounts:
-        brand = normalize_bookmaker(acct["brand"])
-        if brand_filter and brand not in brand_filter:
-            continue
         if acct["platform"] in SKIP_PLATFORMS:
             continue
-        filtered.append(acct)
+        if account_id_filter:
+            if acct["id"] in account_id_filter:
+                filtered.append(acct)
+        elif brand_filter:
+            brand = normalize_bookmaker(acct["brand"])
+            if brand in brand_filter:
+                filtered.append(acct)
+        else:
+            filtered.append(acct)
 
     async def stream():
         results = []
