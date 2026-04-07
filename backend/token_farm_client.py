@@ -58,6 +58,60 @@ async def sportsbet_login(email: str, password: str, proxy_url: str | None = Non
         return {"success": False, "error": f"Token farm error: {e}"}
 
 
+async def sportsbet_get_promos(email: str, password: str, proxy_url: str | None = None) -> dict:
+    """Fetch Sportsbet promotions via the token farm browser.
+
+    The farm logs in via patchright and intercepts vouchers/freebets/promos
+    responses from SB's frontend — ensures Kasada cookies are present.
+
+    Returns unified promo structure:
+      {success, boost_tokens, bonus_back_tokens, deposit_match_tokens, promos, redeemed}
+    """
+    try:
+        payload = {"email": email, "password": password}
+        if proxy_url:
+            payload["proxy_url"] = proxy_url
+        async with httpx.AsyncClient(timeout=FARM_TIMEOUT) as client:
+            resp = await client.post(
+                f"{FARM_URL}/auth/sportsbet/promos",
+                headers=_headers(),
+                json=payload,
+            )
+        if resp.status_code != 200:
+            return {
+                "success": False,
+                "error": f"Farm returned HTTP {resp.status_code}: {resp.text[:200]}",
+                "boost_tokens": 0,
+                "bonus_back_tokens": 0,
+                "deposit_match_tokens": 0,
+                "promos": [],
+                "redeemed": [],
+            }
+        data = resp.json()
+        data.setdefault("success", True)
+        return data
+    except httpx.ConnectError:
+        return {
+            "success": False,
+            "error": "Token farm unreachable — check WireGuard tunnel",
+            "boost_tokens": 0,
+            "bonus_back_tokens": 0,
+            "deposit_match_tokens": 0,
+            "promos": [],
+            "redeemed": [],
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Token farm promos error: {e}",
+            "boost_tokens": 0,
+            "bonus_back_tokens": 0,
+            "deposit_match_tokens": 0,
+            "promos": [],
+            "redeemed": [],
+        }
+
+
 async def sportsbet_refresh(refresh_token: str, proxy_url: str | None = None) -> dict:
     """Refresh Sportsbet token via the farm (no browser needed, but routes through farm)."""
     try:

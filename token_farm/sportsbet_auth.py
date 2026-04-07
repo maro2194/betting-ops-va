@@ -131,6 +131,205 @@ async def sportsbet_browser_login(email: str, password: str, proxy_url: str | No
         return {"success": False, "error": f"Browser login failed: {e}"}
 
 
+async def sportsbet_get_promos(email: str, password: str, proxy_url: str | None = None) -> dict:
+    """Fetch Sportsbet promotions via browser login + API interception.
+
+    Logs in via patchright, then intercepts promo API responses that SB's
+    frontend auto-fetches (vouchers, freebets, preferred-promotions).
+    This ensures Kasada cookies are present for all API calls.
+
+    Returns unified promo structure:
+      {success, boost_tokens, bonus_back_tokens, deposit_match_tokens, promos, redeemed}
+    """
+    try:
+        from patchright.async_api import async_playwright
+    except ImportError:
+        return {"success": False, "error": "patchright not installed",
+                "boost_tokens": 0, "bonus_back_tokens": 0, "deposit_match_tokens": 0, "promos": [], "redeemed": []}
+
+    proxy = _parse_proxy(proxy_url)
+    voucher_data = None
+    freebet_data = None
+    promo_data = None
+
+    try:
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(
+            channel="chrome", headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+            proxy=proxy,
+        )
+        context = await browser.new_context(
+            user_agent=CHROME_UA,
+            viewport={"width": 1920, "height": 1080},
+            proxy=proxy,
+        )
+        page = await context.new_page()
+
+        # Intercept promo-related responses
+        async def handle_response(response):
+            nonlocal voucher_data, freebet_data, promo_data
+            url = response.url
+            try:
+                if "/vouchers/customer/voucher" in url and response.status == 200:
+                    text = await response.text()
+                    import json as _json
+                    voucher_data = _json.loads(text)
+                    logger.info(f"Captured vouchers: {len(voucher_data.get('vouchers', []))} items")
+                elif "/accounts/freebets" in url and response.status == 200:
+                    text = await response.text()
+                    import json as _json
+                    freebet_data = _json.loads(text)
+                elif "/preferred-promotions/" in url and "/customers/" in url and response.status == 200:
+                    text = await response.text()
+                    import json as _json
+                    promo_data = _json.loads(text)
+                    logger.info(f"Captured preferred promos: {len(promo_data.get('promotions', []))} items")
+            except Exception:
+                pass
+
+        page.on("response", handle_response)
+
+        # Navigate and login
+        await page.goto(f"{BASE_URL}/", wait_until="domcontentloaded", timeout=60000)
+        await page.wait_for_timeout(10000)
+
+        login_btn = page.locator('[data-automation-id="header-login-touchable"]')
+        await login_btn.wait_for(state="visible", timeout=15000)
+        await login_btn.click(timeout=15000)
+        await page.wait_for_timeout(2000)
+
+        await page.locator('[data-automation-id="login-username"]').fill(email)
+        await page.wait_for_timeout(500)
+        await page.locator('[data-automation-id="login-password"]').fill(password)
+        await page.wait_for_timeout(500)
+        await page.locator('button[type="submit"]').click()
+
+        # Wait for login + promo data to load (SB frontend auto-fetches promos after login)
+        await page.wait_for_timeout(15000)
+
+        await browser.close()
+        await pw.stop()
+
+    except Exception as e:
+        logger.error(f"sportsbet_get_promos browser error: {e}")
+        return {"success": False, "error": str(e),
+                "boost_tokens": 0, "bonus_back_tokens": 0, "deposit_match_tokens": 0, "promos": [], "redeemed": []}
+
+    # Parse captured data into unified format
+    boost_tokens = 0
+    bonus_back_tokens = 0
+    deposit_match_tokens = 0
+    promos: list[dict] = []
+
+    # 1. Vouchers — Power Plays
+    if voucher_data:
+        vouchers = voucher_data if isinstance(voucher_data, list) else voucher_data.get("vouchers", [])
+        for v in (vouchers if isinstance(vouchers, list) else []):
+            vtype = v.get("type", v.get("voucherType", "POWERPLAY"))
+            desc = v.get("description", v.get("name", vtype))
+            expiry = v.get("absoluteExpiryDate", v.get("expiryDate", v.get("expiry", "")))
+            if isinstance(expiry, (int, float)) and expiry > 0:
+                import datetime
+                expiry = datetime.datetime.utcfromtimestamp(expiry).isoformat()
+            status_raw = v.get("status", "ACTIVE")
+            boost_tokens += 1
+            promos.append({
+                "promo_id": str(v.get("id", v.get("voucherId", v.get("rewardId", "")))),
+                "type": "Boost",
+                "description": desc,
+                "status": "Active" if status_raw == "ACTIVE" else status_raw.capitalize(),
+                "tokens": 1, "tokens_remaining": 1,
+                "expiry_date": str(expiry),
+                "boost_data": {"boost_type": vtype, "boost_percentage": 0},
+                "bonus_back_data": None, "deposit_match_data": None,
+            })
+
+    # 2. Freebets
+    if freebet_data:
+        fb_list = freebet_data if isinstance(freebet_data, list) else freebet_data.get("freebetTokens", freebet_data.get("freebets", []))
+        for fb in (fb_list if isinstance(fb_list, list) else []):
+            amount = float(fb.get("amount", fb.get("value", fb.get("tokenValue", 0))))
+            if amount <= 0:
+                continue
+            expiry = fb.get("expiryDate", fb.get("expiry", ""))
+            bonus_back_tokens += 1
+            promos.append({
+                "promo_id": str(fb.get("freebetTokenId", fb.get("id", ""))),
+                "type": "BonusBack",
+                "description": f"${amount:.2f} Bonus Bet",
+                "status": "Active", "tokens": 1, "tokens_remaining": 1,
+                "expiry_date": str(expiry),
+                "boost_data": None,
+                "bonus_back_data": {
+                    "details": f"Bonus bet worth ${amount:.2f}",
+                    "criteria": fb.get("freebetTokenType", "SPORTS"),
+                    "event_config_type": "Global", "global_config": [], "event_config": [],
+                    "max_deposit": int(amount * 100), "field_size": 0,
+                },
+                "deposit_match_data": None,
+            })
+
+    # 3. Preferred promotions — Second Chance SGM, racing promos
+    if promo_data:
+        plist = promo_data if isinstance(promo_data, list) else promo_data.get("promotions", [])
+        for p in (plist if isinstance(plist, list) else []):
+            title = p.get("title", p.get("name", p.get("displayName", "Promotion")))
+            promo_id = str(p.get("promotionId", p.get("id", p.get("offerId", ""))))
+            # Extract dollar value from various fields
+            value = 0.0
+            for vk in ["value", "amount", "tokenValue", "maxPayout", "bonusAmount"]:
+                try:
+                    v = float(p.get(vk, 0))
+                    if v > 0:
+                        value = v
+                        break
+                except (TypeError, ValueError):
+                    pass
+            # Also check description/title for dollar amounts
+            if value == 0:
+                import re
+                m = re.search(r'\$(\d+(?:\.\d{2})?)', str(title) + str(p.get("description", "")))
+                if m:
+                    value = float(m.group(1))
+
+            desc = title
+            if value > 0:
+                desc += f" (${value:.0f})"
+
+            expiry = p.get("expiryDate", p.get("endDate", p.get("absoluteExpiryDate", "")))
+            if isinstance(expiry, (int, float)) and expiry > 0:
+                import datetime
+                expiry = datetime.datetime.utcfromtimestamp(expiry).isoformat()
+
+            # Categorize: Second Chance / racing promos → BonusBack
+            bonus_back_tokens += 1
+            promos.append({
+                "promo_id": promo_id,
+                "type": "BonusBack",
+                "description": desc,
+                "status": "Active", "tokens": 1, "tokens_remaining": 1,
+                "expiry_date": str(expiry),
+                "boost_data": None,
+                "bonus_back_data": {
+                    "details": desc,
+                    "criteria": p.get("type", p.get("promotionType", p.get("cardType", "Promotion"))),
+                    "event_config_type": "Global", "global_config": [], "event_config": [],
+                    "max_deposit": int(value * 100), "field_size": 0,
+                },
+                "deposit_match_data": None,
+            })
+
+    return {
+        "success": True,
+        "boost_tokens": boost_tokens,
+        "bonus_back_tokens": bonus_back_tokens,
+        "deposit_match_tokens": deposit_match_tokens,
+        "promos": promos,
+        "redeemed": [],
+    }
+
+
 async def sportsbet_token_refresh(refresh_token: str, proxy_url: str | None = None) -> dict:
     """Refresh JWT via API (no browser needed)."""
     try:

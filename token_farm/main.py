@@ -15,7 +15,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
-from sportsbet_auth import sportsbet_browser_login, sportsbet_token_refresh
+from sportsbet_auth import sportsbet_browser_login, sportsbet_token_refresh, sportsbet_get_promos
 from bet365_auth import bet365_browser_login, bet365_place_browser_bet, bet365_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -91,6 +91,22 @@ async def sb_login(req: SBLoginRequest, _=Depends(verify_key)):
 async def sb_refresh(req: SBRefreshRequest, _=Depends(verify_key)):
     """Refresh Sportsbet JWT (no browser needed)."""
     return await sportsbet_token_refresh(req.refresh_token, proxy_url=req.proxy_url)
+
+
+class SBPromosRequest(BaseModel):
+    email: str
+    password: str
+    proxy_url: str | None = None
+
+@app.post("/auth/sportsbet/promos")
+async def sb_get_promos(req: SBPromosRequest, _=Depends(verify_key)):
+    """Fetch Sportsbet promotions via browser login + API interception.
+
+    Logs in via patchright browser, intercepts vouchers/freebets/promos
+    responses that SB frontend auto-fetches after login.
+    """
+    logger.info(f"SB promos request for {req.email}")
+    return await sportsbet_get_promos(req.email, req.password, proxy_url=req.proxy_url)
 
 
 # ─── bet365 endpoints ───────────────────────────────────────────────────────
