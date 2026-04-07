@@ -205,8 +205,24 @@ async def sportsbet_get_promos(email: str, password: str, proxy_url: str | None 
         await page.wait_for_timeout(500)
         await page.locator('button[type="submit"]').click()
 
-        # Wait for login + promo data to load (SB frontend auto-fetches promos after login)
-        await page.wait_for_timeout(15000)
+        # Wait for login to complete
+        await page.wait_for_timeout(12000)
+
+        # Navigate to trigger promo loading — SB loads vouchers on page transitions
+        try:
+            await page.goto(f"{BASE_URL}/promotions", wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_timeout(8000)
+        except Exception:
+            pass  # promotions page might redirect, that's ok
+
+        # Also try account page which triggers freebet loading
+        try:
+            await page.goto(f"{BASE_URL}/account/my-offers", wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_timeout(5000)
+        except Exception:
+            pass
+
+        logger.info(f"Promo capture: vouchers={'YES' if voucher_data else 'NO'} freebets={'YES' if freebet_data else 'NO'} promos={'YES' if promo_data else 'NO'}")
 
         await browser.close()
         await pw.stop()
