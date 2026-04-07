@@ -303,34 +303,33 @@ class TabClient(PlatformClient):
 
     async def get_user_promos(self, session: dict) -> dict:
         """Fetch user-specific promo tokens from TAB promotions service.
+        Uses legacy TabcorpAuth token (not Bearer) — promotions service requires it.
         Returns dict with token counts and promo details."""
-        from curl_cffi.requests import AsyncSession
+        from betting import _make_session, _webapi_headers
 
-        access_token = session.get("access_token")
+        legacy_token = session.get("legacy_token")
         account_number = session.get("account_number")
         proxy_url = session.get("proxy_url")
 
-        if not access_token or not account_number:
+        if not legacy_token or not account_number:
             return {"boost_tokens": 0, "bonus_back_tokens": 0, "deposit_match_tokens": 0, "promos": [], "redeemed": []}
 
         base = "https://api.beta.tab.com.au/v1/tab-promotions-service"
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Accept": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
 
         boost_tokens = 0
         bonus_back_tokens = 0
         deposit_match_tokens = 0
         promos = []
 
-        async with AsyncSession(impersonate="chrome", proxy=proxy_url if proxy_url else None) as s:
+        s = _make_session(proxy_url)
+        s.headers.update(_webapi_headers(legacy_token))
+
+        try:
             # 1. Bet Tokens (boosts, free bets)
             try:
-                resp = await s.get(
+                resp = s.get(
                     f"{base}/accounts/{account_number}/bet-tokens?venueToken=",
-                    headers=headers, timeout=15,
+                    timeout=15,
                 )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -356,16 +355,17 @@ class TabClient(PlatformClient):
 
             # 2. Bonus Bets
             try:
-                resp = await s.get(
+                resp = s.get(
                     f"{base}/accounts/{account_number}/bonus-bets?bonusBetStatus=ACTIVE",
-                    headers=headers, timeout=15,
+                    timeout=15,
                 )
                 if resp.status_code == 200:
                     data = resp.json()
                     bets = data if isinstance(data, list) else data.get("bonusBets", data.get("data", []))
                     if isinstance(bets, list):
                         for b in bets:
-                            amount = float(b.get("amount", b.get("value", 0)))
+                            raw_amt = b.get("amount", b.get("value", 0))
+                            amount = float(str(raw_amt).replace("$", "").replace(",", "") or 0)
                             if amount <= 0:
                                 continue
                             bonus_back_tokens += 1
@@ -394,9 +394,9 @@ class TabClient(PlatformClient):
 
             # 3. Promotions (general)
             try:
-                resp = await s.get(
+                resp = s.get(
                     f"{base}/accounts/{account_number}/promotions?bonusBetStatus=ACTIVE",
-                    headers=headers, timeout=15,
+                    timeout=15,
                 )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -433,6 +433,10 @@ class TabClient(PlatformClient):
                             })
             except Exception as e:
                 logger.warning(f"TAB promotions fetch failed: {e}")
+        except Exception as e:
+            logger.error(f"TAB get_user_promos error: {e}")
+        finally:
+            s.close()
 
         return {
             "boost_tokens": boost_tokens,

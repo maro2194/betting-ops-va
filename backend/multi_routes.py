@@ -296,6 +296,11 @@ async def api_scan_promos(
 
                 if not session.get("proxy_url"):
                     session["proxy_url"] = proxy_url
+                # Ensure session has email/password for promo fetching (SB needs browser login)
+                if not session.get("email"):
+                    session["email"] = acct["email"]
+                if not session.get("password"):
+                    session["password"] = acct["password"]
 
                 balances = await client.get_balances(session)
                 entry["cash"] = balances.get("cash", 0.0)
