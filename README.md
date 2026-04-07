@@ -227,6 +227,7 @@ Camoufox browser login → persistent browser session for subsequent bet placeme
 | History | `/history` | Unified history across ALL bookies, bookie filter, P/L stats |
 | bet365 | `/bet365` | Telegram pick pipeline, browser control, manual picks |
 | Sportsbet | `/sportsbet` | SB-specific dashboard |
+| Promos | `/promos` | Multi-bookie promo scanner with per-account selection |
 | Disposals | `/disposals` | AFL disposal live tracker |
 | Live Stats | `/live-stats` | Real-time game stats |
 | Bet Ledger | `/bet-ledger` | Cross-bookie ledger |
@@ -389,6 +390,43 @@ Tables auto-created on startup.
 | `TOKEN_FARM_URL` | Token farm URL (default: `http://192.168.1.139:9000`) |
 | `TOKEN_FARM_API_KEY` | Token farm API key |
 
+## Promotions Scanner
+
+The Promos page (`/promos`) scans all registered accounts for tokens, bonus bets, and promotional offers.
+
+### Per-Account Selection
+- Expand any brand to see individual accounts with checkboxes
+- Select/deselect specific accounts (e.g. 2 of 7 Sportsbet accounts)
+- Brand checkbox toggles all accounts for that brand
+- Scan button shows selected count
+
+### What's Scanned Per Platform
+
+| Platform | Promos Fetched | Method |
+|----------|---------------|--------|
+| **TAB** | Bonus bets, bet tokens, promotions | Legacy TabcorpAuth → `/tab-promotions-service` |
+| **Sportsbet** | Power Plays, freebets, bet returns ($values), Second Chance SGM, racing promos | Token farm browser login → intercept voucher/promo API responses + scrape bet-returns page for $ values |
+| **BetMakers** | Bonus cash, racing promos | GraphQL `getUser` + brand-specific promo endpoints |
+| **Amused** | Bonus bets, promotions | REST API promo endpoints |
+| **bet365** | Not supported (no promo API) | — |
+
+### Key Details
+- **SB Power Plays**: Captured from `/apigw/vouchers/customer/voucher` (requires Kasada cookies from browser)
+- **SB Bet Returns**: Browser navigates to `/account/bet-returns` to scrape customer-facing descriptions with $ values (e.g. "Get up to $50 back in Bonus Bets")
+- **SB Second Chance**: From `/apigw/preferred-promotions/v2/models/trending/customers/{id}/promotions`
+- **TAB Bonus Bets**: Uses `TabcorpAuth` header (not Bearer) — promotions service rejects ROPC tokens
+- **TAB promos require legacy auth** — the ROPC Bearer token doesn't have promotions scope
+
+## WireGuard Auto-Recovery
+
+The token farm on the mini PC connects to the VPS via WireGuard tunnel. Auto-recovery handles dynamic home IP:
+
+1. **Mini PC** reports public IP to VPS every 5 minutes (`/opt/report-ip.sh` → SSH → `/opt/home-ip.txt`)
+2. **VPS** checks tunnel health every 5 minutes (`/opt/wg-update-endpoint.sh`)
+3. If tunnel is down and IP changed, VPS auto-updates WireGuard peer endpoint
+
+No manual intervention needed when ISP changes your home IP.
+
 ## Key Technical Notes
 
 - **Customer ID != Account Number** — TAB JWT `customerId` differs from `accountNumber`. Resolved via account-list endpoint.
@@ -398,8 +436,11 @@ Tables auto-created on startup.
 - **Kasada bypass** — Patchright uses real system Chrome (matching UA + TLS fingerprint). UA must match Chrome version exactly.
 - **TAB racing API is public** — No Bearer auth needed, just AU proxy for geo-restriction.
 - **TAB racing betslip** — Uses `propositionNumber` from racing endpoint as `propositionId` in betslip. Flat leg structure (no nested propositions).
+- **TAB promotions use legacy auth** — Bearer token gets 401 on promotions service. Must use `TabcorpAuth` header.
+- **SB promos need browser cookies** — Voucher/freebet APIs require Kasada cookies. Token farm browser intercepts responses after login.
 - **bet365 has no API** — Everything browser-automated via Camoufox. Persistent sessions for bet placement.
 - **bet365 balance takes 12-16s** — DOM elements appear quickly but dollar values populate slowly. Poll with retries.
 - **Amused tokens expire in 300s** — Auto-refreshed before each operation.
 - **BetMakers amounts in cents** — `amount: 500` = $5.00. Position always 0, is_boxed always false.
 - **Systemd services** — `botops` on VPS, `token-farm` on mini PC. Use `systemctl restart` not manual kill/start.
+- **Never assume credential issues** — When logins fail, debug proxy/browser/network. The user manages accounts daily and knows passwords are correct.
