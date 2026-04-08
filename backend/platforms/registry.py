@@ -11,6 +11,7 @@ from .sportsbet import SportsbetClient
 from .bet365 import Bet365Client
 from .tab import TabClient
 from .pointsbet import PointsbetClient
+from .ladbrokes import EntainClient
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +42,13 @@ BOOKMAKER_PLATFORM_MAP: dict[str, tuple[str, str]] = {
     "bet365": ("bet365", "bet365"),
     # PointsBet (own platform, browser-auth via token farm)
     "pointsbet": ("pointsbet", "pointsbet"),
+    # Entain v2 brands (Ladbrokes + Neds — same platform, different base URLs)
+    "ladbrokes": ("ladbrokes", "ladbrokes"),
+    "neds": ("ladbrokes", "neds"),
 }
 
 # Unsupported (yet)
-UNSUPPORTED_BOOKMAKERS = {"neds", "ladbrokes"}
+UNSUPPORTED_BOOKMAKERS: set[str] = set()
 
 # Singleton client instances
 _clients: dict[str, PlatformClient] = {}
@@ -77,6 +81,8 @@ def get_client(platform: str) -> PlatformClient:
             _clients[platform] = TabClient()
         elif platform == "pointsbet":
             _clients[platform] = PointsbetClient()
+        elif platform == "ladbrokes":
+            _clients[platform] = EntainClient()
         else:
             raise ValueError(f"Unknown platform: {platform}")
     return _clients[platform]
