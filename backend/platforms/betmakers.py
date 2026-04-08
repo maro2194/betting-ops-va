@@ -471,16 +471,16 @@ class BetMakersClient(PlatformClient):
         url = f"https://{platform_host}/query"
         headers = _platform_headers(access_token, api_key, referer)
 
-        bet_input = {
-            "account_type": "Platform",
-            "source": "Web",
-            "ticket_id": str(uuid.uuid4()),
-            "bets": [{
+        stake_lower = (stake_type or "cash").lower()
+        is_bonus_cash = stake_lower in ("bonus",)
+        is_promo = stake_lower in ("promo", "token")
+
+        bet_obj = {
                 "id": str(uuid.uuid4()),
                 "bet_type": "win",
                 "original_amount": stake_cents,
                 "original_percentage": 0,
-                "is_bonus_bet": stake_type in ("token", "promo"),
+                "is_bonus_bet": is_bonus_cash,
                 "is_boxed": False,
                 "currency": "AUD",
                 "legs": [{
@@ -494,7 +494,22 @@ class BetMakersClient(PlatformClient):
                         "position": 0,
                     }],
                 }],
-            }],
+        }
+
+        # Attach BonusBack promo token if stake_type is promo/token
+        if is_promo:
+            promo_token = await self._find_bonus_back_token(session, race_info)
+            if promo_token:
+                bet_obj["promotion_ids"] = [promo_token["promo_id"]]
+                logger.info(f"BetMakers: attaching promo {promo_token['promo_id']}")
+            else:
+                logger.warning("BetMakers: no matching BonusBack token found, placing as mug bet")
+
+        bet_input = {
+            "account_type": "Platform",
+            "source": "Web",
+            "ticket_id": str(uuid.uuid4()),
+            "bets": [bet_obj],
         }
 
         payload = {
@@ -641,6 +656,65 @@ class BetMakersClient(PlatformClient):
                 "promos": promos,
                 "redeemed": redeemed,
             }
+
+    async def _find_bonus_back_token(self, session: dict, race_info: dict) -> dict | None:
+        """Find the best matching BonusBack promo token for the given race.
+
+        Priority:
+          1. EventSpecific tokens that match the venue + race number (use these first — they're restricted)
+          2. Global tokens that match the racing type (Thoroughbreds/Greyhounds/Harness)
+        """
+        try:
+            session["brand_config"] = session.get("brand_config", {})
+            promos = await self.get_user_promos(session)
+            bb_promos = [
+                p for p in promos.get("promos", [])
+                if p.get("type") == "BonusBack" and p.get("tokens_remaining", 0) > 0
+            ]
+            if not bb_promos:
+                return None
+
+            venue = (race_info.get("track") or "").lower().strip()
+            race_num = str(race_info.get("race_number", ""))
+            meeting_type = (race_info.get("meeting_type") or race_info.get("racing_type") or "").lower()
+
+            # Map meeting type to global config event_type
+            type_map = {
+                "thoroughbred": "thoroughbreds",
+                "greyhound": "greyhounds",
+                "harness": "harness",
+            }
+            global_type = type_map.get(meeting_type, "")
+
+            # 1. EventSpecific — match venue + race number
+            for p in bb_promos:
+                bb_data = p.get("bonus_back_data") or {}
+                if bb_data.get("event_config_type") != "EventSpecific":
+                    continue
+                for ec in bb_data.get("event_config", []):
+                    ec_venue = (ec.get("venue") or "").lower().strip()
+                    ec_races = ec.get("race_numbers", [])
+                    if ec_venue and venue and ec_venue in venue or venue in ec_venue:
+                        if not ec_races or race_num in [str(r) for r in ec_races]:
+                            logger.info(f"BetMakers: matched EventSpecific token {p['promo_id']} for {ec_venue} R{race_num}")
+                            return p
+
+            # 2. Global — match racing type
+            for p in bb_promos:
+                bb_data = p.get("bonus_back_data") or {}
+                if bb_data.get("event_config_type") != "Global":
+                    continue
+                for gc in bb_data.get("global_config", []):
+                    gc_type = (gc.get("event_type") or "").lower()
+                    if global_type and gc_type and global_type in gc_type:
+                        logger.info(f"BetMakers: matched Global token {p['promo_id']} for {gc_type}")
+                        return p
+
+            logger.info("BetMakers: no matching BonusBack token for this race")
+            return None
+        except Exception as e:
+            logger.warning(f"BetMakers _find_bonus_back_token error: {e}")
+            return None
 
     @staticmethod
     async def get_promotions(brand: str) -> list[dict]:

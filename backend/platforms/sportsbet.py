@@ -727,14 +727,10 @@ class SportsbetClient(PlatformClient):
     # ── Promotions ────────────────────────────────────────────────
 
     async def get_user_promos(self, session: dict) -> dict:
-        """Fetch user-specific promo tokens via the token farm.
+        """Fetch user-specific promo tokens.
 
-        Routes through the token farm so the promo API calls carry the same
-        browser-authenticated cookies (Kasada) that SB requires. The farm calls
-        all 3 endpoints: vouchers (Power Plays), freebets, and preferred-promotions
-        (Second Chance SGM, racing promos).
-
-        Falls back to an empty result on any farm connectivity error.
+        Uses voucher/freebet data captured during token farm login (Kasada cookies)
+        plus direct API calls for preferred-promotions.
         """
         access_token = session.get("access_token")
         customer_id = session.get("customer_id")
@@ -746,43 +742,193 @@ class SportsbetClient(PlatformClient):
             "deposit_match_tokens": 0,
             "promos": [],
             "redeemed": [],
+            "bonus_cash": 0.0,
         }
 
-        email = session.get("email", session.get("username", ""))
-        password = session.get("password", "")
-
-        if not email or not password:
+        if not access_token or not customer_id:
             return _empty
 
-        try:
-            from token_farm_client import sportsbet_get_promos as _farm_promos
-        except ImportError:
-            logger.warning("token_farm_client not available — promos unavailable")
-            return _empty
+        headers = _std_headers(access_token, customer_id)
+        boost_tokens = 0
+        bonus_back_tokens = 0
+        deposit_match_tokens = 0
+        bonus_cash = 0.0
+        promos = []
 
-        result = await _farm_promos(email, password, proxy_url=proxy)
+        # Use voucher/freebet data captured during login (browser had Kasada cookies)
+        login_vouchers = session.get("voucher_data")
+        login_freebets = session.get("freebet_data")
 
-        if not result.get("success"):
-            logger.warning(f"Token farm promos failed: {result.get('error')}")
-            return _empty
+        async with AsyncSession(
+            impersonate="chrome131",
+            proxy=proxy if proxy else None,
+        ) as s:
+            # 1. Vouchers (Power Plays, Bet Returns) — from login capture or API
+            try:
+                if login_vouchers:
+                    data = login_vouchers
+                    logger.info(f"Using {len(data.get('vouchers', []))} vouchers from login capture")
+                else:
+                    resp = await s.get(
+                        f"{BASE_URL}/apigw/vouchers/customer/voucher",
+                        headers=headers, timeout=15,
+                    )
+                    data = resp.json() if resp.status_code == 200 else {}
+                if data:
+                    vouchers = data if isinstance(data, list) else data.get("vouchers", [])
+                    for v in (vouchers if isinstance(vouchers, list) else []):
+                        vtype = v.get("type", v.get("voucherType", "POWERPLAY"))
+                        raw_name = v.get("name", v.get("description", vtype))
+                        expiry = v.get("absoluteExpiryDate", v.get("expiryDate", ""))
+                        max_stake = v.get("value", 0)  # e.g. 50.0
+                        place = v.get("place", "")  # SECOND, SECOND_OR_THIRD
+                        min_runners = v.get("minRunners", 0)
+
+                        # Detect bet returns (MBS type with place field) vs power plays
+                        is_bet_return = vtype == "MBS" or place or any(k in raw_name.upper() for k in ("BR", "BET RETURN"))
+                        promo_type = "BonusBack" if is_bet_return else "Boost"
+
+                        if promo_type == "BonusBack":
+                            bonus_back_tokens += 1
+                        else:
+                            boost_tokens += 1
+
+                        # Build human-readable description
+                        # Extract racing types from hierarchies
+                        racing_types = set()
+                        for h in v.get("hierarchies", []):
+                            cn = h.get("className", "").lower()
+                            if "greyhound" in cn:
+                                racing_types.add("Greyhounds")
+                            elif "harness" in cn:
+                                racing_types.add("Harness")
+                            elif "horse" in cn:
+                                racing_types.add("Horses")
+
+                        if is_bet_return:
+                            # Build bet return description: "$50 Bet Return — Run 2nd/3rd, 8+ runners, All Racing"
+                            place_str = "2nd/3rd" if "THIRD" in place else "2nd"
+                            sports = ", ".join(sorted(racing_types)) if racing_types else "All Racing"
+                            parts = [f"${max_stake:.0f} Bet Return" if max_stake else "Bet Return"]
+                            parts.append(f"Run {place_str}")
+                            if min_runners:
+                                parts.append(f"{min_runners}+ runners")
+                            parts.append(sports)
+                            desc = " — ".join(parts)
+                        else:
+                            # Power play — clean up internal name
+                            desc = raw_name
+                            if "BTL" in desc or "MDG" in desc:
+                                desc = desc.replace("BTL ", "").replace("MDG ", "")
+                            desc = f"Power Play: {desc}"
+
+                        promos.append({
+                            "promo_id": str(v.get("id", v.get("voucherId", ""))),
+                            "type": promo_type,
+                            "description": desc,
+                            "status": "Active",
+                            "tokens": 1, "tokens_remaining": 1,
+                            "expiry_date": str(expiry),
+                            "boost_data": {"boost_type": vtype, "boost_percentage": 0} if promo_type == "Boost" else None,
+                            "bonus_back_data": {
+                                "details": desc, "criteria": "BetReturn",
+                                "event_config_type": "Global", "global_config": [], "event_config": [],
+                                "max_deposit": int(max_stake * 100) if max_stake else 0,
+                                "field_size": min_runners,
+                                "place": place,
+                            } if promo_type == "BonusBack" else None,
+                            "deposit_match_data": None,
+                        })
+                    logger.info(f"SB vouchers for {customer_id}: {len(vouchers)} found")
+            except Exception as e:
+                logger.warning(f"SB vouchers fetch failed: {e}")
+
+            # 2. Freebets (bonus bets with $ value) — from login capture or API
+            try:
+                if login_freebets:
+                    data = login_freebets
+                    logger.info("Using freebets from login capture")
+                else:
+                    resp = await s.get(
+                        f"{BASE_URL}/apigw/accounts/freebets?freebetTokenType=SPORTS",
+                        headers=headers, timeout=15,
+                    )
+                    data = resp.json() if resp.status_code == 200 else {}
+                if data:
+                    fb_list = data if isinstance(data, list) else data.get("freebetTokens", data.get("freebets", []))
+                    for fb in (fb_list if isinstance(fb_list, list) else []):
+                        amount = float(fb.get("amount", fb.get("value", fb.get("tokenValue", 0))))
+                        if amount <= 0:
+                            continue
+                        expiry = fb.get("expiryDate", fb.get("expiry", ""))
+                        bonus_back_tokens += 1
+                        bonus_cash += amount
+                        promos.append({
+                            "promo_id": str(fb.get("freebetTokenId", fb.get("id", ""))),
+                            "type": "BonusBack",
+                            "description": f"${amount:.2f} Bonus Bet",
+                            "status": "Active", "tokens": 1, "tokens_remaining": 1,
+                            "expiry_date": str(expiry),
+                            "boost_data": None,
+                            "bonus_back_data": {
+                                "details": f"Bonus bet worth ${amount:.2f}",
+                                "criteria": fb.get("freebetTokenType", "SPORTS"),
+                                "event_config_type": "Global", "global_config": [], "event_config": [],
+                                "max_deposit": int(amount * 100), "field_size": 0,
+                            },
+                            "deposit_match_data": None,
+                        })
+                    logger.info(f"SB freebets for {customer_id}: {len(fb_list) if isinstance(fb_list, list) else 0} found")
+            except Exception as e:
+                logger.warning(f"SB freebets fetch failed: {e}")
+
+            # 3. Preferred promotions — site-wide promo cards (awareness, not redeemable tokens)
+            #    These are promotional offers like Second Chance SGM, Fair Go Refund, etc.
+            #    They do NOT count as tokens — just informational cards shown to the user.
+            try:
+                resp = await s.get(
+                    f"{BASE_URL}/apigw/preferred-promotions/v2/models/trending/customers/{customer_id}/promotions?limit=10&loggedIn=true&includeCrmOffers=true",
+                    headers=headers, timeout=15,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    plist = data if isinstance(data, list) else data.get("promotions", [])
+                    for p in (plist if isinstance(plist, list) else []):
+                        title = p.get("title", p.get("name", p.get("displayName", "Promotion")))
+                        promo_id = str(p.get("promotionId", p.get("id", p.get("offerId", ""))))
+                        desc = p.get("description", "")
+                        tabs = p.get("displayOnTabs", [])
+                        category = "racing" if "racing" in tabs else "sports"
+
+                        promos.append({
+                            "promo_id": promo_id,
+                            "type": "Promo",
+                            "description": title,
+                            "status": "Active", "tokens": 0, "tokens_remaining": 0,
+                            "expiry_date": str(p.get("expiryDate", p.get("endDate", ""))),
+                            "boost_data": None,
+                            "bonus_back_data": None,
+                            "deposit_match_data": None,
+                        })
+                    logger.info(f"SB preferred promos for {customer_id}: {len(plist) if isinstance(plist, list) else 0} found")
+                else:
+                    logger.warning(f"SB preferred promos HTTP {resp.status_code}")
+            except Exception as e:
+                logger.warning(f"SB preferred promos fetch failed: {e}")
 
         return {
-            "boost_tokens": result.get("boost_tokens", 0),
-            "bonus_back_tokens": result.get("bonus_back_tokens", 0),
-            "deposit_match_tokens": result.get("deposit_match_tokens", 0),
-            "promos": result.get("promos", []),
-            "redeemed": result.get("redeemed", []),
+            "boost_tokens": boost_tokens,
+            "bonus_back_tokens": bonus_back_tokens,
+            "deposit_match_tokens": deposit_match_tokens,
+            "promos": promos,
+            "redeemed": [],
+            "bonus_cash": bonus_cash,
         }
 
     # ── Balance ───────────────────────────────────────────────────
 
     async def get_balances(self, session: dict) -> dict:
         """Get cash + bonus balances for multi-bookie framework."""
-        bal = await self.get_balance(session)
-        return {"cash": bal, "bonus": 0.0}
-
-    async def get_balance(self, session: dict) -> float:
-        """Get account cash balance."""
         access_token = session.get("access_token")
         customer_id = session.get("customer_id")
         proxy = session.get("proxy_url")
@@ -799,7 +945,14 @@ class SportsbetClient(PlatformClient):
             raise RuntimeError(f"Balance check failed: HTTP {resp.status_code}")
 
         data = resp.json()
-        # Balance can be in different formats
+        cash = 0.0
+        bonus = 0.0
         if isinstance(data, dict):
-            return float(data.get("balance", data.get("accountBalance", {}).get("balance", 0)))
-        return 0.0
+            cash = float(data.get("balance", data.get("accountBalance", {}).get("balance", 0)))
+            bonus = float(data.get("freebetAmount", 0))
+        return {"cash": cash, "bonus": bonus}
+
+    async def get_balance(self, session: dict) -> float:
+        """Get account cash balance."""
+        balances = await self.get_balances(session)
+        return balances["cash"]

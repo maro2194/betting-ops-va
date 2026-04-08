@@ -10,6 +10,7 @@ from .amused import AmusedClient
 from .sportsbet import SportsbetClient
 from .bet365 import Bet365Client
 from .tab import TabClient
+from .pointsbet import PointsbetClient
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +39,12 @@ BOOKMAKER_PLATFORM_MAP: dict[str, tuple[str, str]] = {
     "sportsbet": ("sportsbet", "sportsbet"),
     # bet365 (browser-automated via token farm)
     "bet365": ("bet365", "bet365"),
+    # PointsBet (own platform, browser-auth via token farm)
+    "pointsbet": ("pointsbet", "pointsbet"),
 }
 
 # Unsupported (yet)
-UNSUPPORTED_BOOKMAKERS = {"neds", "ladbrokes", "pointsbet"}
+UNSUPPORTED_BOOKMAKERS = {"neds", "ladbrokes"}
 
 # Singleton client instances
 _clients: dict[str, PlatformClient] = {}
@@ -72,6 +75,8 @@ def get_client(platform: str) -> PlatformClient:
             _clients[platform] = Bet365Client()
         elif platform == "tab":
             _clients[platform] = TabClient()
+        elif platform == "pointsbet":
+            _clients[platform] = PointsbetClient()
         else:
             raise ValueError(f"Unknown platform: {platform}")
     return _clients[platform]

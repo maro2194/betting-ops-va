@@ -69,11 +69,20 @@ async def startup():
     # Wire DB save into pipeline
     from pick_pipeline import pick_pipeline
     pick_pipeline._save_pick_fn = save_pick_to_db
-    # Restore sessions from DB
+    # Restore sessions from DB, purge expired ones
     global app_tokens, sessions
     app_tokens.update(await load_all_app_sessions())
-    sessions.update(await load_all_tab_sessions())
-    logger.info(f"Restored {len(app_tokens)} app sessions and {len(sessions)} TAB sessions from DB")
+    all_sessions = await load_all_tab_sessions()
+    purged = 0
+    for sid, sdata in list(all_sessions.items()):
+        claims = decode_token_claims(sdata.get("token", ""))
+        exp = claims.get("exp", 0)
+        if exp and time.time() > exp:
+            await delete_tab_session(sid)
+            purged += 1
+        else:
+            sessions[sid] = sdata
+    logger.info(f"Restored {len(sessions)} TAB sessions ({purged} expired purged) and {len(app_tokens)} app sessions from DB")
 
 
 @app.on_event("shutdown")
@@ -1954,4 +1963,24 @@ app.include_router(sportsbet_router)
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "active_sessions": len(sessions)}
+    valid = 0
+    for s in sessions.values():
+        claims = decode_token_claims(s.get("token", ""))
+        exp = claims.get("exp", 0)
+        if exp and time.time() < exp - 300:
+            valid += 1
+    return {"status": "ok", "active_sessions": valid, "total_sessions": len(sessions)}
+
+
+@app.post("/api/sessions/purge")
+async def purge_expired_sessions(_user: dict = Depends(_verify_app_token)):
+    """Remove all expired TAB sessions from memory and DB."""
+    purged = 0
+    for sid in list(sessions.keys()):
+        claims = decode_token_claims(sessions[sid].get("token", ""))
+        exp = claims.get("exp", 0)
+        if exp and time.time() > exp:
+            del sessions[sid]
+            await delete_tab_session(sid)
+            purged += 1
+    return {"purged": purged, "remaining": len(sessions)}

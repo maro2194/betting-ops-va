@@ -18,6 +18,7 @@ const PROMO_TYPE_COLORS = {
   Boost: { bg: '#d2afff22', color: '#d2afff', label: 'Boost' },
   BonusBack: { bg: '#4af2d422', color: '#4af2d4', label: 'Bonus Back' },
   DepositMatch: { bg: '#fcc43222', color: '#fcc432', label: 'Deposit Match' },
+  Promo: { bg: '#60a5fa22', color: '#60a5fa', label: 'Promo' },
 };
 
 function PromoTypeBadge({ type }) {

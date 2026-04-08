@@ -316,6 +316,19 @@ async def api_scan_promos(
                     entry["deposit_match_tokens"] = user_promos.get("deposit_match_tokens", 0)
                     entry["user_promos"] = user_promos.get("promos", [])
                     entry["redeemed"] = user_promos.get("redeemed", [])
+
+                    # Sum bonus cash from bonus bet promos if not already in balance
+                    # SB's get_balances now returns freebetAmount; TAB's doesn't
+                    if entry.get("bonus", 0.0) == 0.0:
+                        promo_bonus = user_promos.get("bonus_cash", 0.0)
+                        if not promo_bonus:
+                            for p in entry.get("user_promos", []):
+                                if p.get("type") == "BonusBack" and p.get("bonus_back_data"):
+                                    max_dep = p["bonus_back_data"].get("max_deposit", 0)
+                                    if max_dep > 0 and p["bonus_back_data"].get("criteria") in ("BonusBet", "SPORTS", "RACING", "freeBet"):
+                                        promo_bonus += max_dep / 100.0
+                        if promo_bonus > 0:
+                            entry["bonus"] = promo_bonus
             except Exception as e:
                 entry["status"] = "error"
                 entry["error"] = str(e)
