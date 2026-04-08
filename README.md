@@ -1,6 +1,6 @@
 # BotOps
 
-Multi-bookie automated betting platform. Operates across TAB, Sportsbet, bet365, BetMakers (7 brands), and Amused (7 brands) with a unified web dashboard.
+Multi-bookie automated betting platform. Operates across TAB, Sportsbet, bet365, PointsBet, BetMakers (7 brands), and Amused (7 brands) with a unified web dashboard.
 
 ## Architecture
 
@@ -16,6 +16,7 @@ Multi-bookie automated betting platform. Operates across TAB, Sportsbet, bet365,
                               │                                     │
                               │  TAB ──► api.beta.tab.com.au        │
                               │  Sportsbet ──► sportsbet.com.au     │
+                              │  PointsBet ──► api.au.pointsbet.com │
                               │  BetMakers ──► GraphQL (7 brands)   │
                               │  Amused ──► REST (7 brands)         │
                               │  bet365 ──► Browser (Camoufox)      │
@@ -27,6 +28,7 @@ Multi-bookie automated betting platform. Operates across TAB, Sportsbet, bet365,
                     │  bets, multi_bets    │  │  Port 9000 via WireGuard│
                     └─────────────────────┘  │                         │
                                              │  Patchright (SB Kasada) │
+                                             │  Xvfb+Patchright (PB)   │
                                              │  Camoufox (bet365)      │
                                              └─────────────────────────┘
 ```
@@ -36,7 +38,8 @@ Multi-bookie automated betting platform. Operates across TAB, Sportsbet, bet365,
 | Platform | Bookies | Auth Method | Racing | Sports |
 |----------|---------|-------------|--------|--------|
 | **TAB** | TAB | Auth0 ROPC + Akamai bypass | Yes | Yes |
-| **Sportsbet** | Sportsbet | Browser (Patchright + Kasada) via Token Farm | - | Yes |
+| **Sportsbet** | Sportsbet | Browser (Patchright + Kasada) via Token Farm | Yes | Yes |
+| **PointsBet** | PointsBet | Browser (Xvfb + Patchright + Kasada) via Token Farm | Yes | - |
 | **BetMakers** | CrownBet, DiamondBet, BetDash, TerryBet, PonyBet, BetIt, SwiftBet | Cognito (GraphQL) | Yes | - |
 | **Amused** | BetNation, BetDeluxe, Surge, PulseBet, BigBet, YesBet, MightyBet | Auth0 (REST) | Yes | - |
 | **bet365** | bet365 | Browser (Camoufox) via Token Farm | - | Yes |
@@ -109,6 +112,8 @@ Browser-based auth service running on a Proxmox mini PC (VM 800, Lubuntu 24.04).
 |--------|------|-------------|
 | POST | `/auth/sportsbet/login` | Browser login (Patchright + Kasada) |
 | POST | `/auth/sportsbet/refresh` | JWT refresh (curl-cffi, no browser) |
+| POST | `/auth/sportsbet/promos` | Browser promo scrape (vouchers, freebets) |
+| POST | `/auth/pointsbet/login` | Browser login (Xvfb + Patchright + Kasada) |
 | POST | `/auth/bet365/login` | Browser login (Camoufox) |
 | GET | `/auth/bet365/status` | Active browser sessions |
 | POST | `/bet365/place-bet` | Browser-automated bet placement |
@@ -134,6 +139,7 @@ Unified abstraction for all bookies beyond TAB.
 | `betmakers.py` | BetMakers/Apollo | 7 | GraphQL + Cognito auth |
 | `amused.py` | Amused/BlackStream | 7 | REST + Auth0 (300s token!) |
 | `sportsbet.py` | Sportsbet | 1 | Token Farm → JWT + racing/sports API |
+| `pointsbet.py` | PointsBet | 1 | Token Farm (Xvfb) → JWT + REST API |
 | `bet365.py` | bet365 | 1 | Token Farm → Camoufox session |
 | `base.py` | Abstract base | - | PlatformClient ABC |
 
@@ -149,8 +155,9 @@ BOOKMAKER_PLATFORM_MAP = {
     "crownbet": ("betmakers", "crownbet"),
     "betnation": ("amused", "betnation"),
     "sportsbet": ("sportsbet", "sportsbet"),
+    "pointsbet": ("pointsbet", "pointsbet"),
     "bet365": ("bet365", "bet365"),
-    # ... 21 bookies total
+    # ... 22 bookies total
 }
 ```
 
@@ -212,6 +219,13 @@ AWS Cognito `USER_PASSWORD_AUTH` → AccessToken for GraphQL platform endpoint. 
 ### Amused (7 brands)
 Auth0 password grant → JWT for REST API. **Token only lasts 300 seconds** — auto-refreshed. Per-brand config: client_id, connection, audience.
 
+### PointsBet
+1. Token Farm browser login (Xvfb + Patchright, headless=False required for Kasada) → captures JWT from `auth.au.pointsbet.com/token`
+2. OAuth2 Resource Owner Password Grant, client_id `02dfe37d70d241cd8b7adc58ae74f532`
+3. Token lasts 7 days with refresh_token
+4. All API calls via `api.au.pointsbet.com` — no Kasada on API tier, only on auth
+5. Bet placement: `POST /api/betting/v1/bets` — mug (no promo) or promo (attach tokenId from `/api/promo-tokens/v2/tokens`)
+
 ### bet365
 Camoufox browser login → persistent browser session for subsequent bet placement. No REST API — everything browser-automated.
 
@@ -265,7 +279,18 @@ GWS vs COL,Nick Daicos 25+ Disposals/Josh Kelly 20+ Disposals,afl,tab,MRT,5.00,1
 
 Flow: Parse & Validate → preview (racing + sports tables) → Execute Batch → system logs into each account (token farm for SB/bet365, Akamai for TAB, Cognito for BetMakers, Auth0 for Amused) → finds races/events → matches horses/selections → places bets with human delays → live status updates.
 
-**Supported platforms**: TAB, Sportsbet, bet365, CrownBet, TerryBet, PonyBet, BetIt, DiamondBet, BetDash, SwiftBet, BetNation, BetDeluxe, Surge, PulseBet, BigBet, YesBet, MightyBet (21 bookies total).
+**Supported platforms**: TAB, Sportsbet, PointsBet, bet365, CrownBet, TerryBet, PonyBet, BetIt, DiamondBet, BetDash, SwiftBet, BetNation, BetDeluxe, Surge, PulseBet, BigBet, YesBet, MightyBet (22 bookies total).
+
+### Bet Types (Allocation)
+
+| stake_type | Meaning | PointsBet | BetMakers | Sportsbet | TAB |
+|------------|---------|-----------|-----------|-----------|-----|
+| `cash` / `win` | Mug bet (regular cash) | No promo field | `is_bonus_bet: false` | Standard | Standard |
+| `promo` / `token` | Promo bet (attach payback token) | `promo: {promoId, promoType}` | `promotion_ids: [id]` | Voucher attached | N/A |
+| `bonus` | Bonus cash bet | N/A | `is_bonus_bet: true` | N/A | N/A |
+| `place` | Place bet (not win) | `RacingFixedPlace` | N/A | `legType: P` | `legType: P` |
+
+**BetMakers promo token selection**: EventSpecific tokens (venue+race) are used first, then Global tokens (racing type). This preserves Global tokens for races without event-specific offers.
 
 ### Human-Like Delays
 - 2-6 seconds between bets (randomised)
@@ -405,8 +430,9 @@ The Promos page (`/promos`) scans all registered accounts for tokens, bonus bets
 | Platform | Promos Fetched | Method |
 |----------|---------------|--------|
 | **TAB** | Bonus bets, bet tokens, promotions | Legacy TabcorpAuth → `/tab-promotions-service` |
-| **Sportsbet** | Power Plays, freebets, bet returns ($values), Second Chance SGM, racing promos | Token farm browser login → intercept voucher/promo API responses + scrape bet-returns page for $ values |
-| **BetMakers** | Bonus cash, racing promos | GraphQL `getUser` + brand-specific promo endpoints |
+| **Sportsbet** | Power Plays, freebets, bet returns ($values), Second Chance SGM | Vouchers from login capture (Kasada cookies) + direct API for preferred-promos |
+| **PointsBet** | Payback tokens, odds boosts, SGM paybacks, multi paybacks, beast mode | Direct API: `/api/promo-tokens/v2/tokens` + `/api/v2/oddsboost/getremainingboost` |
+| **BetMakers** | Boost tokens, BonusBack tokens (event-specific + global) | GraphQL `getEligiblePromosForUser` + `getRedeemedPromoInfoForUser` |
 | **Amused** | Bonus bets, promotions | REST API promo endpoints |
 | **bet365** | Not supported (no promo API) | — |
 
@@ -437,7 +463,16 @@ No manual intervention needed when ISP changes your home IP.
 - **TAB racing API is public** — No Bearer auth needed, just AU proxy for geo-restriction.
 - **TAB racing betslip** — Uses `propositionNumber` from racing endpoint as `propositionId` in betslip. Flat leg structure (no nested propositions).
 - **TAB promotions use legacy auth** — Bearer token gets 401 on promotions service. Must use `TabcorpAuth` header.
-- **SB promos need browser cookies** — Voucher/freebet APIs require Kasada cookies. Token farm browser intercepts responses after login.
+- **SB promos need browser cookies** — Voucher/freebet APIs require Kasada cookies. Token farm captures during login (navigates to /promotions, /account/bet-returns, /account/power-plays).
+- **SB promo display** — Vouchers (power plays, bet returns) = actual tokens. Preferred-promotions = informational cards (type "Promo", not counted as tokens).
+- **SB balance includes freebets** — `freebetAmount` from balance API shown as Bonus Cash.
+- **PointsBet Kasada** — Auth endpoint (`auth.au.pointsbet.com/token`) blocked by Kasada in headless mode. Requires `Xvfb + headless=False` on the token farm. API endpoints (`api.au.pointsbet.com`) have NO Kasada.
+- **PointsBet promo bets** — Add `promo: {promoCategory: "Token", promoId: "<uuid>", promoType: "PAYBACK"}` to bet payload. Token ID from `/api/promo-tokens/v2/tokens`.
+- **PointsBet race URLs** — `/racing/{racingType}/{countryCode}/{venue}/race/{raceId}` (SPA routing).
+- **PointsBet race prices** — NOT on runner objects. In `markets[]` array: `marketType: "FixedWin"/"FixedPlc"`, each with `selections[{runnerId, price, legacyMarketId}]`.
+- **BetMakers promo bets** — Add `promotion_ids: ["<promo_id>"]` to the bet object in createBet mutation. Token is consumed server-side. EventSpecific tokens match by venue+race, Global tokens match by racing type.
+- **BetMakers is_bonus_bet** — ONLY for bonus cash balance, NOT for promo tokens. `promotion_ids` is the field for token attachment.
+- **Session cleanup** — Expired TAB sessions purged on startup. Health endpoint shows valid count. Manual purge via `POST /api/sessions/purge`.
 - **bet365 has no API** — Everything browser-automated via Camoufox. Persistent sessions for bet placement.
 - **bet365 balance takes 12-16s** — DOM elements appear quickly but dollar values populate slowly. Poll with retries.
 - **Amused tokens expire in 300s** — Auto-refreshed before each operation.
