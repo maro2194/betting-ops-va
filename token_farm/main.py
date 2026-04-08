@@ -16,6 +16,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from sportsbet_auth import sportsbet_browser_login, sportsbet_token_refresh, sportsbet_get_promos
+from pointsbet_auth import pointsbet_browser_login
 from bet365_auth import bet365_browser_login, bet365_place_browser_bet, bet365_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -54,6 +55,11 @@ class SBLoginRequest(BaseModel):
 
 class SBRefreshRequest(BaseModel):
     refresh_token: str
+    proxy_url: str | None = None
+
+class PBLoginRequest(BaseModel):
+    email: str
+    password: str
     proxy_url: str | None = None
 
 class B365LoginRequest(BaseModel):
@@ -107,6 +113,25 @@ async def sb_get_promos(req: SBPromosRequest, _=Depends(verify_key)):
     """
     logger.info(f"SB promos request for {req.email}")
     return await sportsbet_get_promos(req.email, req.password, proxy_url=req.proxy_url)
+
+
+# ─── PointsBet endpoints ────────────────────────────────────────────────────
+
+@app.post("/auth/pointsbet/login")
+async def pb_login(req: PBLoginRequest, _=Depends(verify_key)):
+    """Browser-based PointsBet login (patchright + Kasada bypass)."""
+    logger.info(f"PointsBet login request for {req.email}")
+    result = await pointsbet_browser_login(req.email, req.password, proxy_url=req.proxy_url)
+    if result.get("success"):
+        key = f"pb:{result.get('customer_id', req.email)}"
+        _sessions[key] = {
+            "bookie": "pointsbet",
+            "customer_id": result.get("customer_id"),
+            "email": req.email,
+            "expires_at": result.get("expires_at"),
+            "logged_in_at": time.time(),
+        }
+    return result
 
 
 # ─── bet365 endpoints ───────────────────────────────────────────────────────

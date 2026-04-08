@@ -391,9 +391,15 @@ class AmusedClient(PlatformClient):
             "AcceptOddsChange": True,
         }
 
-        # Add bonus bet flag if applicable
+        # Add bonus bet flag and promotion ID if applicable
         if stake_type in ("token", "promo", "bonus"):
             payload["IsBonusBet"] = True
+            promo_token = await self._find_best_promo(session, race_info)
+            if promo_token:
+                payload["PromotionId"] = promo_token["promo_id"]
+                logger.info(f"Amused: attaching promo {promo_token['promo_id']} ({promo_token.get('description', '')})")
+            else:
+                logger.warning("Amused: no matching BonusBack token found, placing with IsBonusBet=True only")
 
         async with AsyncSession(impersonate="chrome") as s:
             if proxy_url:
@@ -426,6 +432,60 @@ class AmusedClient(PlatformClient):
 
             # Any other code is an error
             return {"success": False, "error": f"{code}: {message}", "details": data}
+
+    async def _find_best_promo(self, session: dict, race_info: dict) -> dict | None:
+        """Find the best matching BonusBack promo token for the given race.
+
+        Priority:
+          1. BonusBack tokens matching the specific racing type (Thoroughbred/Greyhound/Harness)
+          2. BonusBack tokens with generic Racing eligibility
+          3. Any BonusBack token with remaining balance
+        """
+        try:
+            promos_data = await self.get_user_promos(session)
+            bb_promos = [
+                p for p in promos_data.get("promos", [])
+                if p.get("type") == "BonusBack" and p.get("tokens_remaining", 0) > 0
+            ]
+            if not bb_promos:
+                return None
+
+            meeting_type = (race_info.get("meeting_type") or race_info.get("racing_type") or "").lower()
+
+            # Map meeting type to BlackStream eligibilityCriteria event_type values
+            type_map = {
+                "thoroughbred": "thoroughbred",
+                "greyhound": "greyhound",
+                "harness": "harness",
+            }
+            race_event_type = type_map.get(meeting_type, "")
+
+            # 1. Match by specific event type from eligibilityCriteria
+            if race_event_type:
+                for p in bb_promos:
+                    bb_data = p.get("bonus_back_data") or {}
+                    for gc in bb_data.get("global_config", []):
+                        gc_type = (gc.get("event_type") or "").lower()
+                        if gc_type and race_event_type in gc_type:
+                            logger.info(f"Amused: matched BonusBack token {p['promo_id']} for event_type={gc_type}")
+                            return p
+
+            # 2. Match by generic Racing eligibility
+            for p in bb_promos:
+                bb_data = p.get("bonus_back_data") or {}
+                for gc in bb_data.get("global_config", []):
+                    gc_type = (gc.get("event_type") or "").lower()
+                    if gc_type in ("racing", ""):
+                        logger.info(f"Amused: matched generic Racing BonusBack token {p['promo_id']}")
+                        return p
+
+            # 3. Any BonusBack token with tokens remaining
+            logger.info(f"Amused: no event-type match, using first available BonusBack token {bb_promos[0]['promo_id']}")
+            return bb_promos[0]
+
+        except Exception as e:
+            logger.warning(f"Amused _find_best_promo error: {e}")
+            return None
 
     async def get_user_promos(self, session: dict) -> dict:
         """Fetch user-specific promo tokens via BlackStream promotions API.

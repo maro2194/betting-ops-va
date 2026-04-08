@@ -65,7 +65,7 @@ class Bet365Client(PlatformClient):
                 "type": "racing",
                 "track": race_info.get("track"),
                 "race_number": race_info.get("race_number"),
-                "runner": runner.get("name"),
+                "runner_name": runner.get("name"),
                 "runner_number": runner.get("number"),
                 "stake": stake,
                 "stake_type": stake_type,

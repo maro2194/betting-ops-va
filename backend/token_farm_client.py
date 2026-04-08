@@ -133,6 +133,33 @@ async def sportsbet_refresh(refresh_token: str, proxy_url: str | None = None) ->
         return {"success": False, "error": f"Token farm refresh error: {e}"}
 
 
+# ─── PointsBet ───────────────────────────────────────────────────────────────
+
+async def pointsbet_login(email: str, password: str, proxy_url: str | None = None) -> dict:
+    """Request browser-based PointsBet login from the token farm."""
+    try:
+        payload = {"email": email, "password": password}
+        if proxy_url:
+            payload["proxy_url"] = proxy_url
+        async with httpx.AsyncClient(timeout=FARM_TIMEOUT) as client:
+            resp = await client.post(
+                f"{FARM_URL}/auth/pointsbet/login",
+                headers=_headers(),
+                json=payload,
+            )
+        if resp.status_code != 200:
+            return {"success": False, "error": f"Farm returned HTTP {resp.status_code}: {resp.text[:200]}"}
+        data = resp.json()
+        data.setdefault("success", True)
+        return data
+    except httpx.TimeoutException:
+        return {"success": False, "error": "Token farm timeout (PointsBet browser login took too long)"}
+    except httpx.ConnectError:
+        return {"success": False, "error": "Token farm unreachable — check WireGuard tunnel"}
+    except Exception as e:
+        return {"success": False, "error": f"Token farm error: {e}"}
+
+
 # ─── bet365 ──────────────────────────────────────────────────────────────────
 
 async def bet365_login(username: str, password: str, proxy_url: str | None = None) -> dict:

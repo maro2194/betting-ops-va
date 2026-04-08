@@ -8,13 +8,33 @@ import uuid
 from dataclasses import dataclass
 
 from platforms.registry import get_platform_and_brand, get_client, is_supported, normalize_bookmaker
-from session_manager import session_manager, _session_key
+from session_manager import session_manager, _session_key, _generate_proxy
 from multi_database import (
     find_account_by_initials_brand, update_csv_row, update_batch_summary,
     save_multi_bet,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _fresh_sb_session(session: dict, account: dict) -> dict:
+    """Return a copy of the session with a rotated proxy URL for Sportsbet.
+
+    Oxylabs residential proxies throttle when many requests reuse the same
+    sticky session ID.  Generating a new sessid per bet spreads load across
+    the proxy pool and avoids rate-limit errors during batch allocation.
+
+    Only acts when proxy_base is an Oxylabs username prefix (not a full URL).
+    """
+    proxy_base = account.get("proxy_base", "")
+    if not proxy_base or ("://" in proxy_base and "@" in proxy_base):
+        # Full URL or no proxy — nothing to rotate
+        return session
+
+    new_proxy = _generate_proxy(proxy_base)
+    rotated = dict(session)
+    rotated["proxy_url"] = new_proxy
+    return rotated
 
 
 @dataclass
@@ -265,15 +285,39 @@ async def process_batch(batch_id: str, rows: list[dict], username: str):
                     target_odds = float(row.get("odds") or row.get("target_odds", 0) or 0)
                     min_odds = float(row.get("min_odds", 0) or 0)
 
-                    result = await client.place_sports_bet(session, {
-                        "event": event,
-                        "bet_desc": bet_desc,
-                        "sport": sport,
-                        "odds": target_odds,
-                        "min_odds": min_odds,
-                        "stake": float(row["stake"]),
-                        "stake_type": row.get("stake_type", "cash"),
-                    })
+                    # Rotate proxy per bet for Sportsbet to avoid Oxylabs rate limiting
+                    sports_session = _fresh_sb_session(session, account) if platform == "sportsbet" else session
+                    try:
+                        result = await client.place_sports_bet(sports_session, {
+                            "event": event,
+                            "bet_desc": bet_desc,
+                            "sport": sport,
+                            "odds": target_odds,
+                            "min_odds": min_odds,
+                            "stake": float(row["stake"]),
+                            "stake_type": row.get("stake_type", "cash"),
+                        })
+                    except Exception as proxy_err:
+                        if platform == "sportsbet" and any(
+                            kw in str(proxy_err).lower()
+                            for kw in ("proxy", "connect", "timeout", "ssl", "network")
+                        ):
+                            logger.warning(
+                                f"SB proxy error on sports bet ({event}): {proxy_err} — retrying with new proxy"
+                            )
+                            await asyncio.sleep(random.uniform(3.0, 5.0))
+                            retry_session = _fresh_sb_session(session, account)
+                            result = await client.place_sports_bet(retry_session, {
+                                "event": event,
+                                "bet_desc": bet_desc,
+                                "sport": sport,
+                                "odds": target_odds,
+                                "min_odds": min_odds,
+                                "stake": float(row["stake"]),
+                                "stake_type": row.get("stake_type", "cash"),
+                            })
+                        else:
+                            raise
 
                     if result.get("success"):
                         await update_csv_row(row["id"], {
@@ -359,15 +403,43 @@ async def process_batch(batch_id: str, rows: list[dict], username: str):
                 # Human delay: simulate reviewing odds before betting
                 await asyncio.sleep(random.uniform(1.5, 3.0))
 
+                # Rotate proxy per bet for Sportsbet to avoid Oxylabs rate limiting.
+                # A fresh sessid spreads load across the proxy pool rather than
+                # hammering the same sticky session with rapid-fire requests.
+                bet_session = _fresh_sb_session(session, account) if platform == "sportsbet" else session
+
                 # Place the bet — brand_config is in the session (set by session_manager)
-                result = await client.place_bet(
-                    session=session,
-                    race_info=race_info,
-                    runner=matched_runner,
-                    stake=float(row["stake"]),
-                    stake_type=row.get("stake_type", "cash"),
-                    brand_config=session.get("brand_config", {}),
-                )
+                try:
+                    result = await client.place_bet(
+                        session=bet_session,
+                        race_info=race_info,
+                        runner=matched_runner,
+                        stake=float(row["stake"]),
+                        stake_type=row.get("stake_type", "cash"),
+                        brand_config=bet_session.get("brand_config", {}),
+                    )
+                except Exception as proxy_err:
+                    # Proxy connection error — wait briefly and retry once with a new session
+                    if platform == "sportsbet" and any(
+                        kw in str(proxy_err).lower()
+                        for kw in ("proxy", "connect", "timeout", "ssl", "network")
+                    ):
+                        logger.warning(
+                            f"SB proxy error on {row.get('track')} R{row.get('race')} "
+                            f"({bet_session.get('proxy_url', '')[:50]}): {proxy_err} — retrying with new proxy"
+                        )
+                        await asyncio.sleep(random.uniform(3.0, 5.0))
+                        retry_session = _fresh_sb_session(session, account)
+                        result = await client.place_bet(
+                            session=retry_session,
+                            race_info=race_info,
+                            runner=matched_runner,
+                            stake=float(row["stake"]),
+                            stake_type=row.get("stake_type", "cash"),
+                            brand_config=retry_session.get("brand_config", {}),
+                        )
+                    else:
+                        raise
 
                 if result.get("success"):
                     await update_csv_row(row["id"], {
