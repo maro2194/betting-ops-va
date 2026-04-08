@@ -15,6 +15,7 @@ import {
   Search,
   StopCircle,
   Zap,
+  RefreshCw,
 } from 'lucide-react';
 
 const CSB_SPORTS = [
@@ -169,6 +170,8 @@ export default function CsbUpload() {
   const [placing, setPlacing] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
   const [betStatuses, setBetStatuses] = useState({});
   const [currentBetIndex, setCurrentBetIndex] = useState(-1);
   const [currentAccountIdx, setCurrentAccountIdx] = useState(0);
@@ -593,16 +596,27 @@ export default function CsbUpload() {
           runningBalances[currentAcc.id] = newBalance;
           setAccountBalances((prev) => ({ ...prev, [currentAcc.id]: newBalance }));
 
-          setBetStatuses((prev) => ({
-            ...prev,
-            [i]: {
-              status: 'placed',
-              account: currentAcc.id,
-              ticket_number: result.ticket_number,
-              combined_odds: result.combined_odds,
-              matched_odds: result.resolved?.matched_odds,
-            },
-          }));
+          setBetStatuses((prev) => {
+            const existing = prev[i] || {};
+            const prevPlacements = existing.placements || [];
+            return {
+              ...prev,
+              [i]: {
+                status: 'placed',
+                account: currentAcc.id,
+                ticket_number: result.ticket_number,
+                combined_odds: result.combined_odds,
+                matched_odds: result.resolved?.matched_odds,
+                placements: [...prevPlacements, {
+                  account: currentAcc.id,
+                  accountLabel: sessions[currentAcc.id]?.accountLabel || sessions[currentAcc.id]?.email || '',
+                  ticket_number: result.ticket_number,
+                  combined_odds: result.combined_odds,
+                  stake: result.stake || stake,
+                }],
+              },
+            };
+          });
         } else {
           const errMsg = result.error || 'Unknown error';
           if (errMsg.includes('INSUFFICIENT_FUNDS') || errMsg.toLowerCase().includes('insufficient')) {
@@ -728,9 +742,11 @@ export default function CsbUpload() {
                 matched_odds: result.resolved?.matched_odds,
                 placements: [...placements, {
                   account: currentAcc.id,
+                  accountLabel: sessions[currentAcc.id]?.accountLabel || sessions[currentAcc.id]?.email || '',
                   ticket_number: result.ticket_number,
                   combined_odds: result.combined_odds,
                   matched_odds: result.resolved?.matched_odds,
+                  stake: result.stake || stake,
                 }],
               },
             };
@@ -758,6 +774,19 @@ export default function CsbUpload() {
 
   const handleAbort = () => {
     abortRef.current = true;
+  };
+
+  const handleSyncManualBets = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const result = await api.syncManualBets();
+      setSyncResult(result);
+    } catch (err) {
+      setSyncResult({ imported: 0, error: err.message });
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const placedCount = Object.values(betStatuses).filter((s) => s.status === 'placed').length;
@@ -1163,7 +1192,18 @@ export default function CsbUpload() {
               <RotateCcw size={16} />
               Reset
             </button>
+            <button onClick={handleSyncManualBets} disabled={syncing || placing || retrying} className="btn btn-secondary" style={{ marginLeft: 'auto' }}>
+              {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              {syncing ? 'Syncing...' : 'Sync Manual Bets'}
+            </button>
           </div>
+          {syncResult && (
+            <div style={{ fontSize: 12, padding: '8px 12px', borderRadius: 6, background: syncResult.imported > 0 ? 'var(--success-muted)' : 'var(--bg-card)', color: syncResult.error ? 'var(--danger)' : 'var(--text-secondary)' }}>
+              {syncResult.error ? syncResult.error : syncResult.imported > 0 ? (
+                <><CheckCircle size={13} style={{ color: 'var(--success)', verticalAlign: 'middle', marginRight: 4 }} />{syncResult.imported} manual bet{syncResult.imported !== 1 ? 's' : ''} imported ({syncResult.accounts_checked?.length || 0} accounts checked)</>
+              ) : `No new manual bets found (${syncResult.accounts_checked?.length || 0} accounts checked)`}
+            </div>
+          )}
 
           {/* Bets Table */}
           <div style={{ overflowX: 'auto' }}>
@@ -1283,19 +1323,18 @@ export default function CsbUpload() {
                       </td>
                       <td>
                         {st?.status === 'placed' && st?.placements?.length > 0 ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            {st.placements.map((p, pi) => (
-                              <div key={pi} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <StatusIcon status="placed" />
-                                <span style={{ fontSize: 12, color: 'var(--success)' }}>
-                                  {p.ticket_number ? `#${p.ticket_number}` : 'Placed'}
-                                  {p.combined_odds && <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>@{p.combined_odds}</span>}
-                                </span>
-                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  {sessions[p.account]?.accountLabel || sessions[p.account]?.email || ''}
-                                </span>
-                              </div>
-                            ))}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {st.placements.map((p, pi) => {
+                              const label = (p.accountLabel || sessions[p.account]?.accountLabel || sessions[p.account]?.email || '').split('@')[0].substring(0, 3).toUpperCase();
+                              return (
+                                <div key={pi} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                                  <StatusIcon status="placed" />
+                                  <span style={{ color: 'var(--success)', fontWeight: 600 }}>{label}</span>
+                                  <span style={{ color: 'var(--text-primary)' }}>${parseFloat(p.stake || 0).toFixed(0)}</span>
+                                  <span style={{ color: 'var(--text-muted)' }}>@{p.combined_odds || '?'}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         ) : (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

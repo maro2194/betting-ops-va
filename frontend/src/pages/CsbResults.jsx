@@ -97,6 +97,8 @@ export default function CsbResults() {
   const [bets, setBets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
   const [legResults, setLegResults] = useState({}); // betId -> [legResult, ...]
   const [legResultsLoading, setLegResultsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -189,6 +191,23 @@ export default function CsbResults() {
     }
   };
 
+  const handleSyncManualBets = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const result = await api.syncManualBets();
+      setSyncResult(result);
+      if (result.imported > 0) {
+        const allBets = await fetchBets();
+        if (allBets.length) fetchLegResults(allBets);
+      }
+    } catch (err) {
+      setSyncResult({ imported: 0, error: err.message });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleRefreshLegResults = async () => {
     // Force re-fetch leg results for currently visible bets
     fetchedBetIds.current.clear();
@@ -254,7 +273,18 @@ export default function CsbResults() {
             {checking ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             {checking ? 'Checking...' : 'Check Results'}
           </button>
+          <button onClick={handleSyncManualBets} disabled={syncing} className="btn btn-secondary" style={{ padding: '6px 14px', fontSize: 12 }}>
+            {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            {syncing ? 'Syncing...' : 'Sync Manual Bets'}
+          </button>
         </div>
+        {syncResult && (
+          <div style={{ fontSize: 12, padding: '8px 14px', marginTop: 8, borderRadius: 6, background: syncResult.imported > 0 ? 'var(--success-muted)' : 'var(--bg-card)', color: syncResult.error ? 'var(--danger)' : 'var(--text-secondary)' }}>
+            {syncResult.error ? syncResult.error : syncResult.imported > 0 ? (
+              <><CheckCircle size={13} style={{ color: 'var(--success)', verticalAlign: 'middle', marginRight: 4 }} />{syncResult.imported} manual bet{syncResult.imported !== 1 ? 's' : ''} imported</>
+            ) : `No new manual bets found (${syncResult.accounts_checked?.length || 0} accounts checked)`}
+          </div>
+        )}
       </div>
 
       {/* Stats Cards: Floor / Current / Ceiling */}

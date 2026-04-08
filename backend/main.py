@@ -1279,108 +1279,163 @@ async def api_csb_resolve_one(req: CsbBet, _user: dict = Depends(_verify_app_tok
     return resolved
 
 
+def _kelly_drift_stake(original_stake: float, units: float, tipped_odds: float,
+                       actual_odds: float, min_odds: float) -> float:
+    """Recalculate stake when odds drift using Shadow's Kelly ratio formula.
+    Same logic as frontend applyOddsDrift + getStakeForBet."""
+    if not actual_odds or not tipped_odds or actual_odds >= tipped_odds:
+        return original_stake  # Odds same or better — keep full stake
+    if not min_odds or min_odds <= 1:
+        return original_stake
+    if actual_odds <= min_odds:
+        return 0  # Below min — no edge
+
+    p = 1.0 / min_odds  # True probability from min odds
+    ev_target = (p * tipped_odds) - 1
+    ev_actual = (p * actual_odds) - 1
+    if ev_target <= 0 or ev_actual <= 0:
+        return 0
+
+    kelly_target = ev_target / (tipped_odds - 1)
+    kelly_actual = ev_actual / (actual_odds - 1)
+    multiplier = kelly_actual / kelly_target
+
+    # Derive unit_size from original stake/units, apply drift
+    unit_size = original_stake / units if units > 0 else original_stake
+    new_stake = max(0.5, units * multiplier * unit_size)
+    # Round to nearest $0.50 (TAB minimum increment)
+    return round(new_stake * 2) / 2
+
+
 @app.post("/api/csb-place-one")
 async def api_csb_place_one(req: CsbBet, _user: dict = Depends(_verify_app_token)):
-    """Resolve and place a single CSB bet."""
+    """Resolve and place a single CSB bet. Auto-reprices on 'Price has changed' (up to 3 attempts)."""
     s = _get_session(req.session_id)
     if not s.get("legacy_token"):
         raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
 
-    resolved = resolve_csb_bet(
-        token=s["token"],
-        proxy_url=s["proxy_url"],
-        bet_type=req.bet_type,
-        game_id=req.game_id,
-        bet_description=req.bet,
-        stake=str(req.stake),
-        min_odds=req.min_odds,
-        sport=req.sport,
-        competition=req.competition,
-    )
+    MAX_PRICE_RETRIES = 3
+    resolved = None
+    place_result = None
+    current_stake = req.stake
 
-    if not resolved["resolved"] or not resolved["meets_minimum"]:
-        return {"success": False, "resolved": resolved, "error": resolved.get("error")}
+    for attempt in range(1, MAX_PRICE_RETRIES + 1):
+        # (Re-)resolve to get fresh prices on every attempt
+        resolved = resolve_csb_bet(
+            token=s["token"],
+            proxy_url=s["proxy_url"],
+            bet_type=req.bet_type,
+            game_id=req.game_id,
+            bet_description=req.bet,
+            stake=str(req.stake),
+            min_odds=req.min_odds,
+            sport=req.sport,
+            competition=req.competition,
+        )
 
-    try:
-        if req.bet_type.upper() == "SGM":
-            place_result = place_sgm_bet(
-                legacy_token=s["legacy_token"],
-                account_number=s["account_number"],
-                propositions=resolved["propositions"],
-                combined_odds=resolved["combined_odds"],
-                stake=str(req.stake),
-                proxy_url=s["proxy_url"],
-            )
-        else:
-            place_result = place_multi_bet(
-                legacy_token=s["legacy_token"],
-                account_number=s["account_number"],
-                legs=[{"propositionId": p["propositionId"], "odds": p["odds"]} for p in resolved["propositions"]],
-                stake=str(req.stake),
-                proxy_url=s["proxy_url"],
-            )
+        if not resolved["resolved"] or not resolved["meets_minimum"]:
+            return {"success": False, "resolved": resolved, "error": resolved.get("error")}
 
-        # Save to DB on success
-        if place_result.get("success"):
-            acct_label = ""
+        # Recalculate stake on retry if odds drifted
+        if attempt > 1 and req.units > 0 and req.odds > 0 and req.min_odds > 0:
+            new_odds = float(resolved.get("combined_odds", 0))
+            if new_odds > 0:
+                current_stake = _kelly_drift_stake(req.stake, req.units, req.odds, new_odds, req.min_odds)
+                if current_stake <= 0:
+                    return {"success": False, "error": "Odds drifted below minimum on retry — skipped", "resolved": resolved}
+                logger.info(f"CSB retry {attempt}: repriced stake ${req.stake:.2f} -> ${current_stake:.2f} (odds {req.odds} -> {new_odds})")
+
+        try:
+            if req.bet_type.upper() == "SGM":
+                place_result = place_sgm_bet(
+                    legacy_token=s["legacy_token"],
+                    account_number=s["account_number"],
+                    propositions=resolved["propositions"],
+                    combined_odds=resolved["combined_odds"],
+                    stake=str(current_stake),
+                    proxy_url=s["proxy_url"],
+                )
+            else:
+                place_result = place_multi_bet(
+                    legacy_token=s["legacy_token"],
+                    account_number=s["account_number"],
+                    legs=[{"propositionId": p["propositionId"], "odds": p["odds"]} for p in resolved["propositions"]],
+                    stake=str(current_stake),
+                    proxy_url=s["proxy_url"],
+                )
+        except Exception as e:
+            place_result = {"success": False, "error": str(e)}
+
+        # Check if price changed — if so, retry with fresh prices + recalculated stake
+        err = place_result.get("error", "")
+        if not place_result.get("success") and "price" in err.lower() and "changed" in err.lower() and attempt < MAX_PRICE_RETRIES:
+            logger.info(f"CSB price changed on attempt {attempt}, re-resolving... ({err})")
+            import time as _t
+            _t.sleep(1)  # Brief pause before retry
+            continue
+
+        break  # Success or non-price error — stop retrying
+
+    # Save to DB on success (outside retry loop)
+    if place_result and place_result.get("success"):
+        acct_label = ""
+        try:
+            accounts = await get_accounts(_user["username"])
+            for a in accounts:
+                if a["account_number"] == s["account_number"] or a["email"] == s.get("email"):
+                    acct_label = a["label"]
+                    break
+        except Exception:
+            pass
+
+        tsn = place_result.get("ticket_number")
+        legs_data = [{"name": p.get("name", "")} for p in resolved["propositions"]]
+
+        # Try to get descriptive leg names from TAB
+        if tsn and s.get("legacy_token"):
             try:
-                accounts = await get_accounts(_user["username"])
-                for a in accounts:
-                    if a["account_number"] == s["account_number"] or a["email"] == s.get("email"):
-                        acct_label = a["label"]
+                import time as _t
+                _t.sleep(1)
+                tab_history = get_my_bets(s["legacy_token"], s["account_number"], s["proxy_url"], count=5)
+                for tb in tab_history.get("bets", []):
+                    if tb.get("tsn") == tsn:
+                        tab_legs = tb.get("legs", [])
+                        if tab_legs:
+                            legs_data = [{"name": leg if isinstance(leg, str) else str(leg)} for leg in tab_legs]
                         break
             except Exception:
                 pass
 
-            tsn = place_result.get("ticket_number")
-            legs_data = [{"name": p.get("name", "")} for p in resolved["propositions"]]
+        details = place_result.get("details", {})
+        combined = resolved.get("combined_odds", "0")
+        try:
+            combined = details.get("bets", [{}])[0].get("combinedPrice", combined)
+        except (IndexError, AttributeError):
+            pass
 
-            # Try to get descriptive leg names from TAB
-            if tsn and s.get("legacy_token"):
-                try:
-                    import time as _t
-                    _t.sleep(1)
-                    tab_history = get_my_bets(s["legacy_token"], s["account_number"], s["proxy_url"], count=5)
-                    for tb in tab_history.get("bets", []):
-                        if tb.get("tsn") == tsn:
-                            tab_legs = tb.get("legs", [])
-                            if tab_legs:
-                                legs_data = [{"name": leg if isinstance(leg, str) else str(leg)} for leg in tab_legs]
-                            break
-                except Exception:
-                    pass
+        await save_bet(_user["username"], {
+            "account_number": s["account_number"],
+            "account_label": acct_label,
+            "tsn": tsn,
+            "bet_type": req.bet_type.upper(),
+            "legs": legs_data,
+            "combined_odds": str(combined),
+            "stake": str(current_stake),
+            "status": "Pending",
+            "raw_response": details,
+            "source": "expload",
+        })
 
-            details = place_result.get("details", {})
-            combined = resolved.get("combined_odds", "0")
-            try:
-                combined = details.get("bets", [{}])[0].get("combinedPrice", combined)
-            except (IndexError, AttributeError):
-                pass
-
-            await save_bet(_user["username"], {
-                "account_number": s["account_number"],
-                "account_label": acct_label,
-                "tsn": tsn,
-                "bet_type": req.bet_type.upper(),
-                "legs": legs_data,
-                "combined_odds": str(combined),
-                "stake": str(req.stake),
-                "status": "Pending",
-                "raw_response": details,
-                "source": "expload",
-            })
-
-        return {
-            "success": place_result.get("success", False),
-            "ticket_number": place_result.get("ticket_number"),
-            "combined_odds": resolved.get("combined_odds"),
-            "stake": req.stake,
-            "account_balance": place_result.get("account_balance"),
-            "error": place_result.get("error"),
-            "resolved": resolved,
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e), "resolved": resolved}
+    return {
+        "success": place_result.get("success", False) if place_result else False,
+        "ticket_number": place_result.get("ticket_number") if place_result else None,
+        "combined_odds": resolved.get("combined_odds") if resolved else None,
+        "stake": current_stake,
+        "account_balance": place_result.get("account_balance") if place_result else None,
+        "error": place_result.get("error") if place_result else "No placement attempted",
+        "resolved": resolved,
+        "retries": attempt if attempt > 1 else 0,
+    }
 
 
 # ─── Account Persistence ─────────────────────────────────────────────────────

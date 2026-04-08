@@ -153,6 +153,64 @@ def _normalize(s: str) -> str:
     return re.sub(r'[^a-z0-9]', '', s.lower())
 
 
+# Common player abbreviations/nicknames used by tipsters
+PLAYER_ALIASES = {
+    # NBA
+    "sga": "shai gilgeous-alexander",
+    "naw": "nickeil alexander-walker",
+    "kat": "karl-anthony towns",
+    "pg": "paul george",
+    "ad": "anthony davis",
+    "lbj": "lebron james",
+    "cp3": "chris paul",
+    "rj": "rj barrett",
+    "sjr": "shai gilgeous-alexander",  # alternate
+    "ant": "anthony edwards",
+    "ja": "ja morant",
+    "steph": "stephen curry",
+    "giannis": "giannis antetokounmpo",
+    "jokic": "nikola jokic",
+    "luka": "luka doncic",
+    "tatum": "jayson tatum",
+    "dame": "damian lillard",
+    "kyrie": "kyrie irving",
+    "kd": "kevin durant",
+    "jimmy": "jimmy butler",
+    "bam": "bam adebayo",
+    "fox": "de'aaron fox",
+    "zion": "zion williamson",
+    "chet": "chet holmgren",
+    "herb": "herb jones",
+    "jjj": "jaren jackson jr",
+    "rui": "rui hachimura",
+    "dlo": "d'angelo russell",
+    "ayo": "ayo dosunmu",
+    "tre": "trae young",
+    # AFL
+    "bont": "marcus bontempelli",
+    "gawn": "max gawn",
+    "cripps": "patrick cripps",
+    "neale": "lachie neale",
+    "mills": "callum mills",
+    "danger": "patrick dangerfield",
+    "dusty": "dustin martin",
+    "pendles": "scott pendlebury",
+    # NRL
+    "turbo": "tom trbojevic",
+    "tommy t": "tom trbojevic",
+    "munster": "cameron munster",
+    "ponga": "kalyn ponga",
+    "cleary": "nathan cleary",
+    "latrell": "latrell mitchell",
+}
+
+
+def _expand_alias(player_name: str) -> str:
+    """Expand a player alias/nickname to full name if known."""
+    key = player_name.strip().lower()
+    return PLAYER_ALIASES.get(key, player_name)
+
+
 def _match_proposition(leg: dict, propositions: list) -> Optional[dict]:
     """
     Find the best matching proposition for a leg description.
@@ -160,7 +218,9 @@ def _match_proposition(leg: dict, propositions: list) -> Optional[dict]:
     TAB format: name="Jack Sinclair (STK)", marketName="30+ Disposals"
     CSV format: "Jack Sinclair 30+ Disposals"
     """
-    player_norm = _normalize(leg["player"])
+    # Expand aliases (SGA -> Shai Gilgeous-Alexander) before matching
+    player_raw = _expand_alias(leg["player"])
+    player_norm = _normalize(player_raw)
     market_raw = leg.get("market") or ""  # e.g. "Disposals"
     market_norm = _normalize(market_raw)
     line = leg.get("line")  # e.g. "29.5" for 30+
@@ -197,9 +257,22 @@ def _match_proposition(leg: dict, propositions: list) -> Optional[dict]:
             score += 10
         else:
             # Try last name match
-            last_name = _normalize(leg["player"].split()[-1]) if leg["player"] else ""
+            last_name = _normalize(player_raw.split()[-1]) if player_raw else ""
             if last_name and len(last_name) > 2 and last_name in sel_norm:
                 score += 7
+            else:
+                # Token-based fuzzy match: every word in the player name must appear
+                # in the selection name. Handles "Nickeil A Walker" vs "Nickeil Alexander-Walker"
+                # and abbreviated middle names.
+                player_tokens = [_normalize(t) for t in player_raw.split() if len(t) > 1]
+                if player_tokens and len(player_tokens) >= 2:
+                    matches = sum(1 for tok in player_tokens if tok in sel_norm or sel_norm.startswith(tok[:3]))
+                    # Also try: each token is a PREFIX of a word in sel_clean
+                    sel_words = [_normalize(w) for w in sel_clean.split()]
+                    prefix_matches = sum(1 for tok in player_tokens if any(w.startswith(tok) or tok.startswith(w) for w in sel_words))
+                    best_match = max(matches, prefix_matches)
+                    if best_match >= len(player_tokens) - 1 and best_match >= 2:
+                        score += 6  # Good partial match
 
         if score == 0:
             continue  # Must at least match player name
