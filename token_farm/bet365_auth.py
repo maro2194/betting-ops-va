@@ -680,28 +680,51 @@ async def bet365_place_megaboost(session_id: str, sport: str, match_team: str, s
     logger.info(f"bet365 megaboost: session={session_id} sport={sport} team={match_team} stake=${stake}")
 
     try:
-        # Step 1: Navigate to All Sports > AFL/NRL
+        # Step 1: Navigate to sport — try Trending sidebar first (shows AFL, NRL, NBA)
         sport_map = {"AFL": "Australian Rules", "NRL": "Rugby League", "NBA": "Basketball"}
         sport_name = sport_map.get(sport.upper(), sport)
-        logger.info(f"bet365 megaboost: navigating to {sport_name}")
+        logger.info(f"bet365 megaboost: navigating to {sport.upper()} ({sport_name})")
 
         await page.goto("https://www.bet365.com.au/#/HO/", timeout=30000)
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(4000)
 
-        # Click sport in sidebar
-        try:
-            sport_link = page.get_by_text(sport_name, exact=True)
-            if await sport_link.count() > 0:
-                await sport_link.first.click()
-                await page.wait_for_timeout(3000)
-            else:
-                # Try short name
-                sport_link = page.get_by_text(sport.upper(), exact=True)
-                if await sport_link.count() > 0:
-                    await sport_link.first.click()
-                    await page.wait_for_timeout(3000)
-        except Exception as e:
-            logger.warning(f"bet365 megaboost: sport nav error: {e}")
+        # Try clicking short name from Trending sidebar (NRL, AFL, NBA)
+        sport_clicked = False
+        for name in [sport.upper(), sport_name]:
+            try:
+                links = page.get_by_text(name, exact=True)
+                count = await links.count()
+                for i in range(count):
+                    if await links.nth(i).is_visible():
+                        await links.nth(i).click()
+                        sport_clicked = True
+                        logger.info(f"bet365 megaboost: clicked '{name}' in sidebar")
+                        break
+                if sport_clicked:
+                    break
+            except Exception:
+                continue
+
+        await page.wait_for_timeout(4000)
+
+        # If we landed on a category page (shows Competitions/Featured tabs), click into the competition
+        body_text = await page.evaluate("document.body.innerText")
+        if "Competitions" in body_text and "Featured" in body_text:
+            logger.info("bet365 megaboost: on category page, clicking into competition...")
+            # Try clicking the competition name (AFL, NRL, etc.)
+            for comp_name in [sport.upper(), f"{sport.upper()} Premiership", "AFL", "NRL", "Premiership"]:
+                try:
+                    comp = page.get_by_text(comp_name, exact=True)
+                    if await comp.count() > 0:
+                        for i in range(await comp.count()):
+                            if await comp.nth(i).is_visible():
+                                await comp.nth(i).click()
+                                logger.info(f"bet365 megaboost: clicked competition '{comp_name}'")
+                                await page.wait_for_timeout(3000)
+                                break
+                        break
+                except Exception:
+                    continue
 
         # Step 2: Find and click the match
         logger.info(f"bet365 megaboost: looking for match with '{match_team}'")
@@ -745,66 +768,81 @@ async def bet365_place_megaboost(session_id: str, sport: str, match_team: str, s
         boost_result = await page.evaluate("""
             (targetIndex) => {
                 const boosts = [];
+
+                // Strategy: find elements containing "$XX stake returns $YY" pattern
+                // These are the boost card indicators
                 const allEls = document.querySelectorAll('*');
+                const seen = new Set();
 
                 for (const el of allEls) {
-                    const text = (el.innerText || '').trim();
-                    if (!text.includes('MEGA BOOST') && !text.includes('BET BOOST')) continue;
+                    const text = (el.textContent || '').trim();
+                    if (!/\$\d+\s+stake\s+returns\s+\$/i.test(text)) continue;
                     if (!el.offsetParent) continue;
 
-                    // Walk up to card container
+                    // Walk up to card container (look for reasonable card size)
                     let card = el;
-                    for (let i = 0; i < 10; i++) {
+                    for (let i = 0; i < 15; i++) {
                         if (!card.parentElement) break;
                         card = card.parentElement;
                         const r = card.getBoundingClientRect();
-                        if (r.width > 200 && r.height > 100) break;
+                        if (r.width > 180 && r.height > 120) break;
                     }
 
+                    // Dedup by card element
+                    const cardId = card.getBoundingClientRect().x + ',' + card.getBoundingClientRect().y;
+                    if (seen.has(cardId)) continue;
+                    seen.add(cardId);
+
                     const cardText = card.innerText || '';
-                    const isMega = cardText.includes('MEGA BOOST');
+                    const lines = cardText.split('\\n').map(l => l.trim()).filter(Boolean);
+                    const title = lines[0] || '';
 
-                    // Find the boosted odds (the larger number, typically after >>)
-                    // Look for elements that look like clickable odds
+                    // Find two consecutive odds values (original >> boosted)
+                    // They appear as separate elements — find the LARGER one (boosted odds)
+                    const oddsEls = [];
                     const candidates = card.querySelectorAll('span, div, button, a');
-                    let bestOdds = null;
-                    let bestOddsVal = 0;
-
                     for (const c of candidates) {
                         const ct = (c.textContent || '').trim();
                         if (/^\\d+\\.\\d{2}$/.test(ct) && c.offsetParent) {
-                            const val = parseFloat(ct);
                             const r = c.getBoundingClientRect();
-                            if (r.width > 15 && r.height > 10 && val > bestOddsVal) {
-                                bestOddsVal = val;
-                                bestOdds = { text: ct, x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
+                            if (r.width > 10 && r.width < 150 && r.height > 8 && r.height < 60) {
+                                oddsEls.push({ text: ct, val: parseFloat(ct), x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), el: c });
                             }
                         }
                     }
 
-                    if (bestOdds) {
-                        boosts.push({
-                            type: isMega ? 'MEGA_BOOST' : 'BET_BOOST',
-                            odds: bestOdds.text,
-                            x: bestOdds.x,
-                            y: bestOdds.y,
-                            title: cardText.split('\\n')[0].substring(0, 50),
-                        });
-                    }
+                    if (oddsEls.length < 2) continue;
+
+                    // The boosted (higher) odds is the one we want to click
+                    oddsEls.sort((a, b) => b.val - a.val);
+                    const boosted = oddsEls[0];
+                    const original = oddsEls[1];
+
+                    // Check if "MEGA" appears anywhere in card (text or attributes)
+                    const isMega = cardText.toUpperCase().includes('MEGA') ||
+                                   card.innerHTML.toUpperCase().includes('MEGA');
+
+                    boosts.push({
+                        type: isMega ? 'MEGA_BOOST' : 'BET_BOOST',
+                        title: title.substring(0, 60),
+                        original_odds: original.text,
+                        odds: boosted.text,
+                        x: boosted.x,
+                        y: boosted.y,
+                        returns: cardText.match(/\$(\d+)\s+stake\s+returns\s+\$(\d+)/i) ?
+                            cardText.match(/\$(\d+)\s+stake\s+returns\s+\$(\d+)/i)[0] : '',
+                    });
                 }
 
-                // Dedupe by position
-                const unique = [];
-                for (const b of boosts) {
-                    if (!unique.find(u => Math.abs(u.x - b.x) < 50 && Math.abs(u.y - b.y) < 50))
-                        unique.push(b);
-                }
-                // Mega first
-                unique.sort((a, b) => a.type === 'MEGA_BOOST' ? -1 : 1);
+                // Sort: MEGA first, then by position (left to right)
+                boosts.sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'MEGA_BOOST' ? -1 : 1;
+                    return a.x - b.x;
+                });
 
-                if (targetIndex < unique.length)
-                    return { found: true, boost: unique[targetIndex], all: unique.map(u => ({type: u.type, odds: u.odds, title: u.title})) };
-                return { found: false, all: unique.map(u => ({type: u.type, odds: u.odds, title: u.title})), count: unique.length };
+                if (targetIndex < boosts.length)
+                    return { found: true, boost: boosts[targetIndex], all: boosts.map(b => ({type: b.type, odds: b.odds, title: b.title, returns: b.returns})) };
+                return { found: false, all: boosts.map(b => ({type: b.type, odds: b.odds, title: b.title})), count: boosts.length };
             }
         """, boost_index)
 

@@ -116,7 +116,9 @@ Browser-based auth service running on a Proxmox mini PC (VM 800, Lubuntu 24.04).
 | POST | `/auth/pointsbet/login` | Browser login (Xvfb + Patchright + Kasada) |
 | POST | `/auth/bet365/login` | Browser login (Camoufox) |
 | GET | `/auth/bet365/status` | Active browser sessions |
-| POST | `/bet365/place-bet` | Browser-automated bet placement |
+| POST | `/bet365/place-bet` | Browser-automated bet placement (racing) |
+| POST | `/bet365/megaboost` | Browser-automated Mega Boost / Bet Boost placement |
+| GET | `/bet365/debug/{id}` | Screenshot + page text for debugging |
 | GET | `/health` | Service health + session tracking |
 
 All endpoints require `Authorization: Bearer {TOKEN_FARM_API_KEY}`. All login endpoints accept an optional `proxy_url` field for per-account IP isolation.
@@ -126,6 +128,34 @@ All endpoints require `Authorization: Bearer {TOKEN_FARM_API_KEY}`. All login en
 - **bet365**: Camoufox (anti-detect Firefox) + GeoIP locale matching
 - **Proxies**: Oxylabs rotating AU residential (SB), IPRoyal (bet365)
 - **WireGuard**: VPS 2 (76.13.214.208) ↔ Mini PC (192.168.1.210), ~155ms
+
+## Tab Tokens (SGM Saver Automation)
+
+Multi-account TAB SGM Saver token automation. Dashboard page under **Services > Tab Tokens**.
+
+### Flow
+1. **Import CSV** — paste bets: `account,match,tryscorer,market,short1,short2,sport,competition`
+2. **Review & Resolve** — bet cards with resolved legs, auto-picked short legs (PYOT/PYOL), saver amounts, checkboxes
+3. **Place Bets** — executes across grouped accounts with decoTokens (savers applied)
+
+### Features
+- Fetches SGM Saver tokens via TAB promotions API (TabcorpAuth)
+- Auto-picks safest short legs (lowest odds >= $1.10): PYOT (Under), PYOL (Opposition + line)
+- Opposition detection: PYOL picks opposite team from tryscorer (tested all 16 NRL fixtures)
+- Authenticated pricing with decoTokens for saver activation
+- Stake auto-matched to saver max reward per account
+- Bets saved to Bet Ledger (source: `tab_tokens`)
+- Per-user account filtering (multi-tenant)
+
+### Files
+| File | Purpose |
+|------|---------|
+| `backend/tab_tokens.py` | Saver fetching, proposition resolution, SGM pricing, bet placement |
+| `backend/main.py` (tab-tokens section) | API routes: accounts, fetch-savers, groups, parse-csv, execute |
+| `frontend/src/pages/TabTokens.jsx` | 3-step UI: CSV → Review → Results |
+
+### Working File
+See [BET365_MEGABOOST.md](BET365_MEGABOOST.md) for bet365 Mega Boost automation (WIP).
 
 ## Multi-Bookie Platform Framework
 
