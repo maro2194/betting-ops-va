@@ -20,6 +20,7 @@ import Sportsbet from './pages/Sportsbet';
 import LiveStats from './pages/LiveStats';
 import Disposals from './pages/Disposals';
 import Promos from './pages/Promos';
+import TabTokens from './pages/TabTokens';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -61,6 +62,7 @@ function AppRoutes() {
         <Route path="/live" element={<LiveStats />} />
         <Route path="/disposals" element={<Disposals />} />
         <Route path="/promos" element={<Promos />} />
+        <Route path="/tab-tokens" element={<TabTokens />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

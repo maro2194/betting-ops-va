@@ -19,6 +19,7 @@ const PAGE_TITLES = {
   '/csb-results': 'CSB Results',
   '/ledger': 'Bet Ledger',
   '/csb': 'CSB Upload',
+  '/tab-tokens': 'Tab Tokens',
 };
 
 export default function Layout() {

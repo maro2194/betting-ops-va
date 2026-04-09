@@ -1302,9 +1302,10 @@ def _kelly_drift_stake(original_stake: float, units: float, tipped_odds: float,
 
     # Derive unit_size from original stake/units, apply drift
     unit_size = original_stake / units if units > 0 else original_stake
-    new_stake = max(0.5, units * multiplier * unit_size)
-    # Round to nearest $0.50 (TAB minimum increment)
-    return round(new_stake * 2) / 2
+    new_stake = units * multiplier * unit_size
+    # Anti-detection: round to nearest $10
+    new_stake = round(new_stake / 10) * 10
+    return max(10, new_stake)
 
 
 @app.post("/api/csb-place-one")
@@ -1370,8 +1371,8 @@ async def api_csb_place_one(req: CsbBet, _user: dict = Depends(_verify_app_token
         err = place_result.get("error", "")
         if not place_result.get("success") and "price" in err.lower() and "changed" in err.lower() and attempt < MAX_PRICE_RETRIES:
             logger.info(f"CSB price changed on attempt {attempt}, re-resolving... ({err})")
-            import time as _t
-            _t.sleep(1)  # Brief pause before retry
+            import time as _t, random as _rand
+            _t.sleep(_rand.uniform(0.3, 0.8))  # Anti-detection jitter before retry
             continue
 
         break  # Success or non-price error — stop retrying
@@ -2039,3 +2040,183 @@ async def purge_expired_sessions(_user: dict = Depends(_verify_app_token)):
             await delete_tab_session(sid)
             purged += 1
     return {"purged": purged, "remaining": len(sessions)}
+
+
+# ── Tab Tokens (SGM Savers) ───────────────────────────────────────
+
+import tab_tokens as _tt
+
+# In-memory group assignments: account_number -> group letter
+_tab_token_groups: dict[str, str] = {}
+
+
+@app.get("/api/tab-tokens/accounts")
+async def tab_tokens_accounts(_user: dict = Depends(_verify_app_token)):
+    """List all TAB sessions with saver token status."""
+    results = []
+    for sid, s in sessions.items():
+        claims = decode_token_claims(s.get("token", ""))
+        exp = claims.get("exp", 0)
+        is_valid = bool(exp and time.time() < exp - 300)
+        acct_num = s.get("account_number", "")
+        results.append({
+            "session_id": sid,
+            "email": s.get("email", ""),
+            "account_number": acct_num,
+            "label": s.get("label", sid[:6]),
+            "authenticated": is_valid,
+            "group": _tab_token_groups.get(acct_num, "A"),
+            "saver_count": 0,
+            "savers": [],
+        })
+    return results
+
+
+@app.post("/api/tab-tokens/fetch-savers")
+async def tab_tokens_fetch_savers(_user: dict = Depends(_verify_app_token)):
+    """Fetch SGM saver tokens for all authenticated sessions."""
+    total = 0
+    account_savers = []
+    for sid, s in sessions.items():
+        claims = decode_token_claims(s.get("token", ""))
+        exp = claims.get("exp", 0)
+        if not (exp and time.time() < exp - 300):
+            continue
+        savers = _tt.get_sgm_savers(s.get("token", ""), s.get("account_number", ""), s.get("proxy_url", ""))
+        total += len(savers)
+        acct = s.get("account_number", "")
+        account_savers.append({
+            "session_id": sid, "account_number": acct,
+            "email": s.get("email", ""), "label": s.get("label", ""),
+            "group": _tab_token_groups.get(acct, "A"), "savers": savers,
+        })
+    return {"total": total, "accounts": account_savers}
+
+
+@app.put("/api/tab-tokens/groups")
+async def tab_tokens_set_groups(body: dict, _user: dict = Depends(_verify_app_token)):
+    """Set group assignments. Body: {"groups": {"account_number": "A", ...}}"""
+    _tab_token_groups.update(body.get("groups", {}))
+    return {"ok": True, "groups": _tab_token_groups}
+
+
+@app.post("/api/tab-tokens/parse-csv")
+async def tab_tokens_parse_csv(body: dict, _user: dict = Depends(_verify_app_token)):
+    """Parse and validate CSV of SGM bets."""
+    return {"count": len(b := _tt.parse_bets_csv(body.get("csv_content", ""))), "bets": b}
+
+
+@app.post("/api/tab-tokens/execute")
+async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token)):
+    """Execute SGM saver bets from CSV across grouped sessions."""
+    csv_content = body.get("csv_content", "")
+    dry_run = body.get("dry_run", True)
+    bets = _tt.parse_bets_csv(csv_content)
+    if not bets:
+        return {"error": "No valid bets", "total": 0, "results": []}
+
+    # Group sessions
+    group_sessions: dict[str, list[dict]] = {}
+    for sid, s in sessions.items():
+        claims = decode_token_claims(s.get("token", ""))
+        if not (claims.get("exp", 0) and time.time() < claims["exp"] - 300):
+            continue
+        acct = s.get("account_number", "")
+        grp = _tab_token_groups.get(acct, "A")
+        group_sessions.setdefault(grp, []).append(s)
+
+    matches_cache: dict[str, list] = {}
+    results = []
+
+    for bet in bets:
+        targets = group_sessions.get(bet["group"], [])
+        if not targets:
+            results.append({"account": "N/A", "group": bet["group"], "match": bet["match"],
+                            "legs": bet["legs"], "stake": 0, "odds": None, "has_saver": False,
+                            "success": False, "error": f"No sessions in group '{bet['group']}'", "dry_run": dry_run})
+            continue
+
+        # Cache matches
+        ck = f"{bet['sport']}:{bet['competition']}"
+        if ck not in matches_cache:
+            matches_cache[ck] = _tt.get_matches(targets[0]["token"], bet["sport"], bet["competition"], targets[0].get("proxy_url"))
+
+        match = _tt.find_match(matches_cache[ck], bet["match"])
+        if not match:
+            for s in targets:
+                results.append({"account": s.get("account_number", ""), "email": s.get("email", ""),
+                                "group": bet["group"], "match": bet["match"], "legs": bet["legs"],
+                                "stake": 0, "odds": None, "has_saver": False, "success": False,
+                                "error": f"Match not found: {bet['match']}", "dry_run": dry_run})
+            continue
+
+        for s in targets:
+            token, legacy, acct, proxy = s.get("token", ""), s.get("legacy_token", ""), s.get("account_number", ""), s.get("proxy_url", "")
+
+            markets = _tt.get_sgm_markets(token, match, bet["sport"], bet["competition"], proxy)
+            props = [_tt.resolve_proposition(leg, markets, match) for leg in bet["legs"]]
+            errors = [p for p in props if "error" in p]
+            if errors:
+                results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
+                                "match": bet["match"], "legs": bet["legs"], "stake": 0, "odds": None,
+                                "has_saver": False, "success": False,
+                                "error": str([e["error"] for e in errors]), "dry_run": dry_run})
+                continue
+
+            if any(p["odds"] < 1.10 for p in props):
+                results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
+                                "match": bet["match"], "legs": bet["legs"], "stake": 0, "odds": None,
+                                "has_saver": False, "success": False,
+                                "error": "Leg(s) below $1.10 min", "dry_run": dry_run})
+                continue
+
+            pricing = _tt.get_sgm_price(token, acct, props, proxy)
+            if pricing.get("error") or not pricing.get("combined_odds"):
+                results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
+                                "match": bet["match"], "legs": bet["legs"], "stake": 0, "odds": None,
+                                "has_saver": False, "success": False,
+                                "error": pricing.get("error", "Pricing failed"), "dry_run": dry_run})
+                continue
+
+            co = pricing["combined_odds"]
+            co_f = float(co)
+            deco = pricing.get("deco_tokens", [])
+            leg_deco = pricing.get("leg_deco_token")
+            has_saver = pricing.get("has_saver", bool(deco))
+
+            if co_f < 2.0:
+                results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
+                                "match": bet["match"], "legs": bet["legs"], "stake": 0, "odds": co_f,
+                                "has_saver": has_saver, "success": False,
+                                "error": f"Combined odds {co_f:.2f} < $2.00", "dry_run": dry_run})
+                continue
+
+            # Stake = saver max reward
+            svs = _tt.get_sgm_savers(token, acct, proxy)
+            matching = [sv for sv in svs if bet["match"].lower() in sv.get("match", "").lower()]
+            stake = float(matching[0]["max_reward"]) if matching else 10.0
+
+            if dry_run:
+                results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
+                                "match": bet["match"], "legs": [p["name"] for p in props], "stake": stake,
+                                "odds": co_f, "has_saver": has_saver, "success": True,
+                                "bet_id": None, "error": None, "dry_run": True})
+            else:
+                if not legacy:
+                    results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
+                                    "match": bet["match"], "legs": [p["name"] for p in props], "stake": stake,
+                                    "odds": co_f, "has_saver": has_saver, "success": False,
+                                    "error": "No legacy token", "dry_run": False})
+                    continue
+                pr = _tt.place_sgm_with_saver(legacy, acct, props, stake, co, deco, leg_deco, proxy)
+                results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
+                                "match": bet["match"], "legs": [p["name"] for p in props], "stake": stake,
+                                "odds": co_f, "has_saver": has_saver, "success": pr.get("success", False),
+                                "bet_id": pr.get("bet_id"), "error": pr.get("error"), "dry_run": False})
+            time.sleep(2)
+
+    ok = sum(1 for r in results if r.get("success"))
+    return {"total": len(results), "success": ok, "failed": len(results) - ok,
+            "with_saver": sum(1 for r in results if r.get("has_saver")),
+            "total_stake": sum(r.get("stake", 0) for r in results if r.get("success")),
+            "results": results}
