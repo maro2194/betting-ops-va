@@ -225,8 +225,12 @@ export default function CsbUpload() {
     const result = [];
     for (let i = 0; i < bets.length; i++) {
       const bet = bets[i];
-      const stake = getStakeForBet(bet);
-      const odds = bet.odds || 2;
+      // Use resolved combined odds for drift adjustment if available
+      const resolvedOdds = betStatuses[bet._preservedIdx ?? i]?.combined_odds
+        ? parseFloat(betStatuses[bet._preservedIdx ?? i].combined_odds)
+        : null;
+      const stake = getStakeForBet(bet, resolvedOdds);
+      const odds = resolvedOdds || bet.odds || 2;
       const liability = (odds - 1) * stake;
 
       const origIdx = bet._preservedIdx ?? i;
@@ -264,9 +268,9 @@ export default function CsbUpload() {
   };
 
   const roundToTab = (amount) => {
-    // Human-like rounding: $50+ rounds to nearest $5 down, under $50 to $0.50
-    if (amount >= 50) return Math.floor(amount / 5) * 5;
-    return Math.floor(amount * 2) / 2;
+    // Anti-detection: all stakes must be $10 increments to look like a casual punter
+    if (amount < 10) return 10;
+    return Math.round(amount / 10) * 10;
   };
 
   // Dynamic Kelly odds drift — Shadow's formula
@@ -539,7 +543,9 @@ export default function CsbUpload() {
       const bet = parsedBets[i];
       // Use resolved combined odds for drift adjustment if available
       const resolvedOdds = betStatuses[i]?.combined_odds ? parseFloat(betStatuses[i].combined_odds) : null;
-      const stake = qBet._splitStake || getStakeForBet(bet, resolvedOdds);
+      const rawStake = qBet._splitStake || getStakeForBet(bet, resolvedOdds);
+      // Anti-detection: ensure final stake is always $10 rounded
+      const stake = rawStake < 10 ? 10 : Math.round(rawStake / 10) * 10;
 
       // Skip bets where drift reduced stake to 0 (below min odds)
       if (stake <= 0) {
