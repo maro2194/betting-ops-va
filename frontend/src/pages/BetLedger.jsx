@@ -232,11 +232,26 @@ export default function BetLedger() {
           </>
         )}
 
-        {/* Refresh */}
-        <div style={{ marginLeft: 'auto' }}>
+        {/* Check Results + Refresh */}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button
+            onClick={async () => {
+              setLoading(true);
+              try {
+                await api.post('/api/bets/check-results');
+                await fetchData();
+              } catch (e) { setError(e.message); setLoading(false); }
+            }}
+            disabled={loading}
+            className="btn btn-primary"
+            style={{ padding: '6px 14px', fontSize: 12 }}
+          >
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+            {' '}Check Results
+          </button>
           <button onClick={fetchData} disabled={loading} className="btn btn-secondary" style={{ padding: '6px 14px', fontSize: 12 }}>
             {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            Refresh
+            {' '}Refresh
           </button>
         </div>
       </div>

@@ -129,13 +129,19 @@ def get_live_stats(match_id: int) -> dict:
 
 def find_match_id_by_teams(team_a: str, team_b: str) -> Optional[int]:
     """Find the Footywire match ID for a specific AFL match by team names.
-    Searches both the match list page and homepage for mid= links near team names."""
-    session = Session(impersonate="chrome131")
-    session.proxies = {"http": PROXY, "https": PROXY}
-
-    # Normalize team names — take last word (e.g. "Adelaide Crows" → "adelaide")
+    Searches both the match list page and homepage for mid= links near team names.
+    Results cached for 10 minutes."""
+    # Check cache first
     ta = team_a.lower().split()[-1] if team_a else ""
     tb = team_b.lower().split()[-1] if team_b else ""
+    cache_key = f"fw_mid:{ta}:{tb}"
+    if cache_key in _cache:
+        cached_time, cached_data = _cache[cache_key]
+        if time.time() - cached_time < 600:  # 10 min cache
+            return cached_data
+
+    session = Session(impersonate="chrome131")
+    session.proxies = {"http": PROXY, "https": PROXY}
 
     try:
         for url in [
@@ -157,8 +163,11 @@ def find_match_id_by_teams(team_a: str, team_b: str) -> Optional[int]:
 
                 if ta in chunk_clean and tb in chunk_clean:
                     logger.info(f"Footywire match found: {team_a} vs {team_b} → mid={mid}")
-                    return int(mid)
+                    result = int(mid)
+                    _cache[cache_key] = (time.time(), result)
+                    return result
 
+        _cache[cache_key] = (time.time(), None)
         return None
     except Exception as e:
         logger.error(f"find_match_id_by_teams error: {e}")
