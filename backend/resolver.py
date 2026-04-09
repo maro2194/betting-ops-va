@@ -278,21 +278,35 @@ def _match_proposition(leg: dict, propositions: list) -> Optional[dict]:
             continue  # Must at least match player name
 
         # Market match — TAB betOption is like "30+ Disposals"
-        if full_market_norm and full_market_norm == mkt_norm:
-            score += 8  # Exact market+line match
-        elif full_market_norm and full_market_norm in mkt_norm:
-            score += 6
-        elif market_norm and market_norm in mkt_norm:
-            score += 5
-        elif market_norm:
-            if "disposal" in market_norm and "disposal" in mkt_norm:
+        # STRICT: if CSV specifies a market type, the prop MUST match it.
+        # This prevents "15+ Points" from matching "Double-Double" or "Rebounds".
+        if market_norm:
+            market_matched = False
+            if full_market_norm and full_market_norm == mkt_norm:
+                score += 8  # Exact market+line match
+                market_matched = True
+            elif full_market_norm and full_market_norm in mkt_norm:
+                score += 6
+                market_matched = True
+            elif market_norm in mkt_norm:
                 score += 5
-            elif "goal" in market_norm and "goal" in mkt_norm:
-                score += 5
-            elif "mark" in market_norm and "mark" in mkt_norm:
-                score += 5
-            elif "tackle" in market_norm and "tackle" in mkt_norm:
-                score += 5
+                market_matched = True
+            else:
+                # Keyword fallback for common market types
+                market_keywords = {
+                    "disposal": "disposal", "goal": "goal", "mark": "mark",
+                    "tackle": "tackle", "point": "pt", "rebound": "reb",
+                    "assist": "ast", "hit": "hit", "steal": "steal",
+                    "block": "block", "triple": "triple", "double": "double",
+                }
+                for csv_kw, tab_kw in market_keywords.items():
+                    if csv_kw in market_norm and (csv_kw in mkt_norm or tab_kw in mkt_norm):
+                        score += 5
+                        market_matched = True
+                        break
+
+            if not market_matched:
+                continue  # HARD REJECT: market type doesn't match at all
 
         # Line match
         if line and prop_line and str(line) == str(prop_line):

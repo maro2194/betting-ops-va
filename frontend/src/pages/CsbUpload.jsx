@@ -220,7 +220,7 @@ export default function CsbUpload() {
     const cap = parseFloat(liabilityCap) || 600;
     const increment = 10;
     const numAccounts = enabledAccounts.length;
-    if (numAccounts < 1 || !liabilitySplitEnabled) return bets.map((b, i) => ({ ...b, _origIdx: i, _splitOf: 1, _splitN: 0 }));
+    if (numAccounts < 1 || !liabilitySplitEnabled) return bets.map((b, i) => ({ ...b, _origIdx: b._preservedIdx ?? i, _splitOf: 1, _splitN: 0 }));
 
     const result = [];
     for (let i = 0; i < bets.length; i++) {
@@ -229,15 +229,17 @@ export default function CsbUpload() {
       const odds = bet.odds || 2;
       const liability = (odds - 1) * stake;
 
+      const origIdx = bet._preservedIdx ?? i;
+
       if (liability <= cap || odds <= 1) {
-        result.push({ ...bet, _origIdx: i, _splitOf: 1, _splitN: 0 });
+        result.push({ ...bet, _origIdx: origIdx, _splitOf: 1, _splitN: 0 });
         continue;
       }
 
       // Need to split
       const maxStakePerBet = Math.floor((cap / (odds - 1)) / increment) * increment;
       if (maxStakePerBet <= 0) {
-        result.push({ ...bet, _origIdx: i, _splitOf: 1, _splitN: 0 });
+        result.push({ ...bet, _origIdx: origIdx, _splitOf: 1, _splitN: 0 });
         continue;
       }
 
@@ -251,7 +253,7 @@ export default function CsbUpload() {
         const splitStake = base + (j < remainderChunks ? increment : 0);
         result.push({
           ...bet,
-          _origIdx: i,
+          _origIdx: origIdx,
           _splitOf: numSplits,
           _splitN: j,
           _splitStake: splitStake,
@@ -514,7 +516,10 @@ export default function CsbUpload() {
     setBetStatuses((prev) => ({ ...prev, ...initialStatuses }));
 
     // Build placement queue: apply liability splitting if enabled
-    const selectedList = parsedBets.map((b, i) => selectedBets[i] ? b : null).filter(Boolean);
+    // IMPORTANT: preserve original indices so we place the RIGHT bets
+    const selectedList = parsedBets
+      .map((b, i) => selectedBets[i] ? { ...b, _preservedIdx: i } : null)
+      .filter(Boolean);
     const placementQueue = splitBetsByLiability(selectedList);
 
     let accIdx = 0;
@@ -553,12 +558,92 @@ export default function CsbUpload() {
         accIdx++;
       }
 
+      // If no single account can cover the full stake, try balance-aware split
       if (accIdx >= enabledAccounts.length) {
+        // Collect all accounts with ANY remaining balance (>$1)
+        const partialAccs = enabledAccounts
+          .map((a, idx) => ({ ...a, idx, bal: runningBalances[a.id] || 0 }))
+          .filter((a) => a.bal >= 1)
+          .sort((a, b) => b.bal - a.bal); // Highest balance first
+
+        const totalAvail = partialAccs.reduce((s, a) => s + a.bal, 0);
+
+        if (totalAvail >= stake && partialAccs.length >= 2) {
+          // Split across accounts by available balance
+          let remaining = stake;
+          for (const pAcc of partialAccs) {
+            if (remaining <= 0) break;
+            const chunk = Math.min(remaining, Math.floor(pAcc.bal / 10) * 10); // Round down to $10
+            if (chunk < 1) continue;
+
+            const splitSessionId = sessions[pAcc.id]?.session_id;
+            if (!splitSessionId) continue;
+
+            const splitLabel = ` (bal-split $${chunk})`;
+            setBetStatuses((prev) => ({
+              ...prev,
+              [i]: { ...(prev[i] || {}), status: 'placing', account: pAcc.id, splitLabel },
+            }));
+
+            try {
+              const result = await api.csbPlaceOne(splitSessionId, {
+                bet_type: bet.bet_type, game_id: bet.game_id, bet: bet.bet,
+                odds: bet.odds, min_odds: bet.min_odds, ev_pct: bet.ev_pct,
+                units: bet.units, stake: chunk,
+                sport: sport.sport, competition: sport.competition,
+              });
+
+              if (result.success) {
+                const rawBal = result.account_balance || '';
+                const newBal = rawBal ? parseFloat(String(rawBal).replace(/[$,]/g, '')) : runningBalances[pAcc.id] - chunk;
+                runningBalances[pAcc.id] = newBal;
+                setAccountBalances((prev) => ({ ...prev, [pAcc.id]: newBal }));
+
+                setBetStatuses((prev) => {
+                  const existing = prev[i] || {};
+                  const prevPlacements = existing.placements || [];
+                  return {
+                    ...prev,
+                    [i]: {
+                      status: 'placed',
+                      account: pAcc.id,
+                      combined_odds: result.combined_odds,
+                      placements: [...prevPlacements, {
+                        account: pAcc.id,
+                        accountLabel: sessions[pAcc.id]?.accountLabel || sessions[pAcc.id]?.email || '',
+                        ticket_number: result.ticket_number,
+                        combined_odds: result.combined_odds,
+                        stake: result.stake || chunk,
+                      }],
+                    },
+                  };
+                });
+                remaining -= chunk;
+              } else {
+                setBetStatuses((prev) => ({ ...prev, [i]: { status: 'failed', account: pAcc.id, error: result.error || 'Failed' } }));
+              }
+            } catch (err) {
+              setBetStatuses((prev) => ({ ...prev, [i]: { status: 'failed', account: pAcc.id, error: err.message } }));
+            }
+
+            if (!abortRef.current) await new Promise((r) => setTimeout(r, randomDelay()));
+          }
+
+          if (remaining <= 0) {
+            // Successfully split across accounts, move to next bet
+            accIdx = 0; // Reset for next bet
+            continue;
+          }
+        }
+
+        // Truly no balance left
         for (let j = i; j < parsedBets.length; j++) {
-          setBetStatuses((prev) => ({
-            ...prev,
-            [j]: { status: 'failed', error: 'No accounts with sufficient balance' },
-          }));
+          if (selectedBets[j]) {
+            setBetStatuses((prev) => ({
+              ...prev,
+              [j]: { status: 'failed', error: 'No accounts with sufficient balance' },
+            }));
+          }
         }
         break;
       }

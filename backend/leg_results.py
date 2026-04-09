@@ -323,37 +323,67 @@ def _normalize_player_name(name: str) -> str:
 
 
 def _find_player(players: list[dict], player_name: str) -> Optional[dict]:
-    """Find a player by name with fuzzy matching."""
+    """Find a player by name with fuzzy matching.
+    Handles abbreviated names (Nickeil A-Walker vs Nickeil Alexander-Walker),
+    aliases (SGA vs Shai Gilgeous-Alexander), and partial matches."""
+    # Try alias expansion first
+    try:
+        from resolver import _expand_alias
+        player_name = _expand_alias(player_name)
+    except ImportError:
+        pass
+
     target = _normalize_player_name(player_name)
-    # Split into parts for partial matching
-    target_parts = target.split() if ' ' in player_name else [target]
+    # Token-based: split on spaces AND hyphens BEFORE normalizing to preserve word boundaries
+    import re as _re
+    target_tokens = [_normalize_player_name(t) for t in _re.split(r'[\s\-]+', player_name) if len(t) > 1]
 
     best = None
     best_score = 0
 
     for p in players:
-        pname = _normalize_player_name(p.get("player", "") or p.get("name", "") or "")
+        raw_name = p.get("player", "") or p.get("name", "") or ""
+        pname = _normalize_player_name(raw_name)
         if not pname:
             continue
+        pname_tokens = [_normalize_player_name(t) for t in _re.split(r'[\s\-]+', raw_name) if len(t) > 1]
 
         # Exact match
         if pname == target:
             return p
 
-        # Score: count matching name parts
-        score = sum(1 for part in target_parts if part in pname)
-        # Prefer full last name match
-        name_parts = pname.split() if ' ' in pname else [pname]
-        if target_parts and name_parts:
-            if target_parts[-1] == name_parts[-1] if name_parts else False:
+        score = 0
+
+        # Substring match (full normalized strings)
+        if target in pname or pname in target:
+            score += 5
+
+        # Token matching: each target token is a prefix of (or matches) a box score token
+        if target_tokens and pname_tokens:
+            token_matches = 0
+            for tt in target_tokens:
+                for pt in pname_tokens:
+                    if tt == pt or pt.startswith(tt) or tt.startswith(pt):
+                        token_matches += 1
+                        break
+            if token_matches >= len(target_tokens):
+                score += 5  # All tokens matched
+            elif token_matches >= len(target_tokens) - 1 and token_matches >= 2:
+                score += 3  # Almost all matched (handles abbreviated middle names)
+
+        # Last name exact match (strong signal)
+        if target_tokens and pname_tokens:
+            if target_tokens[-1] == pname_tokens[-1]:
+                score += 3
+            # Also try: last token of target is suffix of last token of pname
+            elif pname_tokens[-1].endswith(target_tokens[-1]) or target_tokens[-1].endswith(pname_tokens[-1]):
                 score += 2
 
         if score > best_score:
             best_score = score
             best = p
 
-    # Require at least matching the surname
-    if best_score >= 1:
+    if best_score >= 2:
         return best
     return None
 

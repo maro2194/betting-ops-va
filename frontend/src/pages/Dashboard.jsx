@@ -413,13 +413,21 @@ export default function Dashboard() {
   useEffect(() => {
     fetchAccounts();
     fetchBetStats();
-    api.getActiveSessions().then((data) => {
-      for (const s of data.sessions || []) {
+    Promise.all([api.getActiveSessions(), api.getAccounts()]).then(([sessData, acctData]) => {
+      const acctMap = {};
+      for (const a of acctData.accounts || []) {
+        acctMap[a.id] = a;
+        if (a.account_number) acctMap[a.account_number] = a;
+        if (a.email) acctMap[a.email.toLowerCase()] = a;
+      }
+      for (const s of sessData.sessions || []) {
+        const acct = acctMap[s.account_id] || acctMap[s.account_number] || acctMap[s.email?.toLowerCase()] || {};
         addSession(s.account_id, {
           session_id: s.session_id,
           email: s.email,
           account_number: s.account_number,
           customer_id: s.customer_id,
+          accountLabel: acct.label || '',
         });
       }
     }).catch(() => {});
