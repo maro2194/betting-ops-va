@@ -127,6 +127,46 @@ def get_live_stats(match_id: int) -> dict:
         session.close()
 
 
+def find_match_id_by_teams(team_a: str, team_b: str) -> Optional[int]:
+    """Find the Footywire match ID for a specific AFL match by team names.
+    Searches both the match list page and homepage for mid= links near team names."""
+    session = Session(impersonate="chrome131")
+    session.proxies = {"http": PROXY, "https": PROXY}
+
+    # Normalize team names — take last word (e.g. "Adelaide Crows" → "adelaide")
+    ta = team_a.lower().split()[-1] if team_a else ""
+    tb = team_b.lower().split()[-1] if team_b else ""
+
+    try:
+        for url in [
+            "https://www.footywire.com",
+            "https://www.footywire.com/afl/footy/ft_match_list",
+        ]:
+            resp = session.get(url, headers={"User-Agent": UA}, timeout=15)
+            if resp.status_code != 200:
+                continue
+
+            # Find all mid= values in the page
+            all_mids = list(dict.fromkeys(re.findall(r'mid=(\d+)', resp.text)))  # unique, ordered
+
+            for mid in all_mids:
+                # Get surrounding text (500 chars each side)
+                idx = resp.text.find(f"mid={mid}")
+                chunk = resp.text[max(0, idx - 500):idx + 500]
+                chunk_clean = re.sub(r'<[^>]+>', ' ', chunk).lower()
+
+                if ta in chunk_clean and tb in chunk_clean:
+                    logger.info(f"Footywire match found: {team_a} vs {team_b} → mid={mid}")
+                    return int(mid)
+
+        return None
+    except Exception as e:
+        logger.error(f"find_match_id_by_teams error: {e}")
+        return None
+    finally:
+        session.close()
+
+
 def find_current_match_id() -> Optional[int]:
     """Find the Footywire match ID for the current/next AFL match.
     Scrapes the Footywire homepage for live match links."""

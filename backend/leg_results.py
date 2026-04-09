@@ -225,32 +225,36 @@ async def _squiggle_get(client: httpx.AsyncClient, params: dict) -> dict:
 
 
 async def _get_afl_current_round(client: httpx.AsyncClient) -> int:
-    """Get the current AFL round number."""
+    """Get the current AFL round number.
+
+    Finds the round that has in-progress games, or the most recent round
+    with incomplete games (complete < 100).
+    """
     cache_key = "squiggle:current_round"
     cached = _cached_get(cache_key)
     if cached is not None:
         return cached
 
-    data = await _squiggle_get(client, {"q": "standings;year=2026"})
-    # Try games endpoint to find current/most recent round
     games_data = await _squiggle_get(client, {"q": "games;year=2026"})
     games = games_data.get("games", [])
     if not games:
         return 1
 
-    # Find the most recent round with results or in progress
-    rounds_with_results = set()
-    rounds_upcoming = set()
+    # Find round with in-progress games first (0 < complete < 100)
+    in_progress_rounds = set()
+    latest_complete_round = 0
     for g in games:
-        if g.get("hscore") is not None or g.get("ascore") is not None:
-            rounds_with_results.add(int(g.get("round", 0)))
-        else:
-            rounds_upcoming.add(int(g.get("round", 0)))
+        rnd = int(g.get("round", 0))
+        complete = g.get("complete", 0)
+        if complete is not None and 0 < complete < 100:
+            in_progress_rounds.add(rnd)
+        if complete == 100 and rnd > latest_complete_round:
+            latest_complete_round = rnd
 
-    if rounds_with_results:
-        current = max(rounds_with_results)
-    elif rounds_upcoming:
-        current = min(rounds_upcoming)
+    if in_progress_rounds:
+        current = min(in_progress_rounds)  # earliest in-progress round
+    elif latest_complete_round:
+        current = latest_complete_round
     else:
         current = 1
 
@@ -260,7 +264,7 @@ async def _get_afl_current_round(client: httpx.AsyncClient) -> int:
 
 def _normalize_team(name: str) -> str:
     """Normalise team name for fuzzy matching."""
-    return re.sub(r'[^a-z]', '', name.lower())
+    return re.sub(r'[^a-z]', '', (name or "").lower())
 
 
 # Short code → full name fragments (for matching Squiggle team names)
@@ -329,7 +333,7 @@ async def _find_afl_game(client: httpx.AsyncClient, teams_str: str, round_num: i
         return None
     code_a, code_b = parts[0].strip(), parts[1].strip()
 
-    for rnd in [round_num, round_num - 1, round_num + 1]:
+    for rnd in [round_num, round_num - 1, round_num + 1, round_num - 2, round_num + 2, round_num - 3, round_num + 3]:
         if rnd < 1:
             continue
         data = await _squiggle_get(client, {"q": f"games;year=2026;round={rnd}"})
@@ -461,9 +465,23 @@ async def check_afl_leg(client: httpx.AsyncClient, parsed: dict) -> dict:
             result["note"] = "Game hasn't started"
             return result
 
-        # Fetch player stats
-        actual_round = game.get("round", round_num)
-        players = await _get_afl_player_stats(client, game_id, actual_round)
+        # Fetch player stats — use Footywire (Squiggle players endpoint is blocked)
+        try:
+            from live_stats import get_live_stats, find_match_id_by_teams
+            fw_match_id = find_match_id_by_teams(hteam, ateam)
+            if fw_match_id:
+                fw_data = get_live_stats(fw_match_id)
+                players = fw_data.get("players", [])
+                # Adapt Footywire format to match Squiggle format for _find_player
+                for p in players:
+                    if "player" not in p and "name" in p:
+                        p["player"] = p["name"]
+            else:
+                players = []
+        except Exception as e:
+            logger.warning(f"Footywire stats failed, falling back to Squiggle: {e}")
+            actual_round = game.get("round", round_num)
+            players = await _get_afl_player_stats(client, game_id, actual_round)
 
         if not players:
             if is_complete:
