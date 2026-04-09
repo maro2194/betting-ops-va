@@ -856,7 +856,7 @@ async def api_sync_manual_bets(_user: dict = Depends(_verify_app_token)):
             result = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda _s=s, _a=acct_num: get_my_bets(
-                    _s["legacy_token"], _a, _s.get("proxy_url"), count=50, status="ALL"
+                    _s["legacy_token"], _a, _s.get("proxy_url"), count=200, status="ALL"
                 )
             )
             accounts_checked.append(acct_num)
@@ -884,7 +884,7 @@ async def api_sync_manual_bets(_user: dict = Depends(_verify_app_token)):
             if not legs:
                 continue
             legs_text = " ".join(l.get("name", "") for l in legs).lower()
-            is_player_prop = any(kw in legs_text for kw in ["pts", "disp", "reb", "ast", "goal", "tackle", "mark", "hit", "point"])
+            is_player_prop = any(kw in legs_text for kw in ["pts", "disp", "reb", "ast", "goal", "tackle", "mark", "hit", "point", "over", "under", "multi", "sgm", "+"])
             if not is_player_prop:
                 continue
 

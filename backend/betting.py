@@ -493,7 +493,18 @@ def get_my_bets(legacy_token: str, account_number: str, proxy_url: Optional[str]
                 for tx in transactions:
                     legs = []
                     for leg in tx.get("legs", []):
-                        legs.append(leg.get("eventName", ""))
+                        # Build descriptive leg name: include selection + market + event
+                        parts = []
+                        sel = leg.get("selectionName", leg.get("selection", ""))
+                        mkt = leg.get("marketName", leg.get("betOption", ""))
+                        evt = leg.get("eventName", "")
+                        if sel:
+                            parts.append(sel)
+                        if mkt:
+                            parts.append(mkt)
+                        if evt and evt not in " ".join(parts):
+                            parts.append(evt)
+                        legs.append(" ".join(parts) if parts else evt)
 
                     all_bets.append({
                         "type": tx.get("betTypeDetails", "Unknown"),
