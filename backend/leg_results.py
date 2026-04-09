@@ -135,6 +135,33 @@ def parse_leg_name(name: str) -> Optional[dict]:
         )
         m = pattern2.match(name)
         if not m:
+            # Fallback: try "SPORT TEAMS ... Over/Under LINE STAT" format
+            # e.g. "NBA Den-Mem Ced Coward PtOU Ced Coward Over 14.5 Pts"
+            pattern3 = re.compile(
+                r'^(?P<sport>AFL|NBA|NRL)\s+'
+                r'(?P<teams>[A-Za-z0-9]+-[A-Za-z0-9]+)\s+'
+                r'.*?(?:Over|Under)\s+(?P<line>\d+(?:\.\d+)?)\s*'
+                r'(?P<stat_raw>[A-Za-z]+)',
+                re.IGNORECASE,
+            )
+            m3 = pattern3.match(name)
+            if m3:
+                # Extract player name from between teams and Over/Under
+                after_teams = name[m3.start("teams") + len(m3.group("teams")):].strip()
+                player_match = re.match(r'(.+?)(?:PtOU|DbDb|Over|Under)', after_teams, re.IGNORECASE)
+                player = player_match.group(1).strip() if player_match else "Unknown"
+                sport = m3.group("sport").upper()
+                stat_raw = m3.group("stat_raw").lower()
+                stat = NBA_STAT_MAP.get(stat_raw, stat_raw) if sport == "NBA" else AFL_STAT_MAP.get(stat_raw, stat_raw)
+                return {
+                    "sport": sport,
+                    "teams": m3.group("teams"),
+                    "line": float(m3.group("line")),
+                    "stat": stat,
+                    "player": player,
+                    "team": "",
+                    "raw": name,
+                }
             logger.warning(f"parse_leg_name: could not parse '{name}'")
             return None
 
@@ -233,16 +260,20 @@ def _normalize_team(name: str) -> str:
 AFL_TEAM_CODES = {
     "ade": "adelaide",
     "adel": "adelaide",
+    "adl": "adelaide",
     "bris": "brisbane",
     "brl": "brisbane",
     "brs": "brisbane",
     "carl": "carlton",
     "car": "carlton",
+    "crl": "carlton",
     "col": "collingwood",
     "ess": "essendon",
     "fre": "fremantle",
+    "frm": "fremantle",
     "gc": "gold coast",
     "gcs": "gold coast",
+    "gld": "gold coast",
     "gws": "greater western sydney",
     "haw": "hawthorn",
     "melb": "melbourne",
@@ -250,15 +281,20 @@ AFL_TEAM_CODES = {
     "nth": "north melbourne",
     "nmc": "north melbourne",
     "nmfc": "north melbourne",
+    "nm": "north melbourne",
     "pa": "port adelaide",
     "por": "port adelaide",
+    "prt": "port adelaide",
     "rich": "richmond",
     "ric": "richmond",
     "stk": "st kilda",
+    "sk": "st kilda",
     "syd": "sydney",
     "wb": "western bulldogs",
     "wbd": "western bulldogs",
+    "wbg": "western bulldogs",
     "wce": "west coast",
+    "wc": "west coast",
 }
 
 
