@@ -13,7 +13,6 @@ import {
 } from 'lucide-react';
 
 const METHOD_OPTIONS = [
-  { label: 'All', value: '' },
   { label: 'Allocation', value: 'allocation' },
   { label: 'Expload', value: 'expload' },
   { label: 'CSB', value: 'csb' },
@@ -58,9 +57,10 @@ function MethodBadge({ method }) {
 export default function BetLedger() {
   const [bets, setBets] = useState([]);
   const [stats, setStats] = useState(null);
-  const [methodFilter, setMethodFilter] = useState('');
+  const [methodFilters, setMethodFilters] = useState(new Set()); // empty = all
   const [brandFilter, setBrandFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [methodDropdownOpen, setMethodDropdownOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -92,7 +92,7 @@ export default function BetLedger() {
   const filteredBets = bets.filter((b) => {
     if (statusFilter && b.status !== statusFilter) return false;
     if (brandFilter && b.brand !== brandFilter) return false;
-    if (methodFilter && b.method !== methodFilter) return false;
+    if (methodFilters.size > 0 && !methodFilters.has(b.method)) return false;
     return true;
   });
 
@@ -149,17 +149,56 @@ export default function BetLedger() {
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 20 }}>
         <Filter size={14} style={{ color: 'var(--text-muted)' }} />
 
-        {/* Method filter */}
-        {METHOD_OPTIONS.map((f) => (
+        {/* Method filter — dropdown with checkboxes */}
+        <div style={{ position: 'relative' }}>
           <button
-            key={f.value}
-            onClick={() => setMethodFilter(f.value)}
-            className={methodFilter === f.value ? 'btn btn-primary' : 'btn btn-secondary'}
-            style={{ padding: '6px 14px', fontSize: 12 }}
+            onClick={() => setMethodDropdownOpen(o => !o)}
+            className="btn btn-secondary"
+            style={{ padding: '6px 14px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}
           >
-            {f.label}
+            Source {methodFilters.size > 0 ? `(${methodFilters.size})` : '(All)'}
+            <span style={{ fontSize: 10 }}>▼</span>
           </button>
-        ))}
+          {methodDropdownOpen && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 50,
+              background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6,
+              padding: '6px 0', minWidth: 160, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+            }}>
+              <button
+                onClick={() => { setMethodFilters(new Set()); setMethodDropdownOpen(false); }}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 12,
+                  background: 'none', border: 'none', color: methodFilters.size === 0 ? 'var(--primary)' : 'var(--text-dim)',
+                  cursor: 'pointer', fontWeight: methodFilters.size === 0 ? 700 : 400,
+                }}
+              >
+                All Sources
+              </button>
+              {METHOD_OPTIONS.map(f => (
+                <label key={f.value} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', fontSize: 12,
+                  cursor: 'pointer', color: 'var(--text-primary)',
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={methodFilters.has(f.value)}
+                    onChange={() => {
+                      setMethodFilters(prev => {
+                        const next = new Set(prev);
+                        if (next.has(f.value)) next.delete(f.value);
+                        else next.add(f.value);
+                        return next;
+                      });
+                    }}
+                    style={{ accentColor: 'var(--primary)' }}
+                  />
+                  {f.label}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
 
