@@ -195,16 +195,23 @@ def parse_leg_name(name: str) -> Optional[dict]:
 # ─── AFL via Squiggle ─────────────────────────────────────────────────────────
 
 async def _squiggle_get(client: httpx.AsyncClient, params: dict) -> dict:
-    """Make a request to Squiggle API with caching."""
+    """Make a request to Squiggle API with caching.
+
+    IMPORTANT: Squiggle uses semicolons in query params (e.g. q=games;year=2026;round=4).
+    httpx's params dict URL-encodes semicolons to %3B which breaks the API.
+    We must build the URL manually with raw query string.
+    """
     cache_key = "squiggle:" + str(sorted(params.items()))
     cached = _cached_get(cache_key)
     if cached is not None:
         return cached
 
     try:
+        # Build URL with raw semicolons (not URL-encoded)
+        q = params.get("q", "")
+        url = f"{SQUIGGLE_BASE}?q={q}"
         resp = await client.get(
-            SQUIGGLE_BASE,
-            params=params,
+            url,
             headers={"User-Agent": SQUIGGLE_UA},
             timeout=15,
         )
