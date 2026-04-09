@@ -37,6 +37,18 @@ def _bearer_headers(token: str) -> dict:
     }
 
 
+def _tabcorp_headers(legacy_token: str) -> dict:
+    """TabcorpAuth header — required for promotions-service (Bearer/ROPC tokens rejected)."""
+    return {
+        "TabcorpAuth": legacy_token,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": UA,
+        "Origin": "https://www.tab.com.au",
+        "Referer": "https://www.tab.com.au/",
+    }
+
+
 def _betslip_headers(legacy_token: str) -> dict:
     return {
         "TabcorpAuth": legacy_token,
@@ -57,12 +69,13 @@ def _make_session(proxy_url: str | None = None) -> Session:
 
 # ── Saver Token Fetching ──────────────────────────────────────────
 
-def get_sgm_savers(token: str, account_number: str, proxy_url: str | None = None) -> list[dict]:
-    """Fetch SGM saver tokens for an account."""
+def get_sgm_savers(token: str, account_number: str, proxy_url: str | None = None, legacy_token: str | None = None) -> list[dict]:
+    """Fetch SGM saver tokens for an account. Uses legacy TabcorpAuth if available."""
     url = f"{PROMO_BASE}/accounts/{account_number}/bet-tokens"
     s = _make_session(proxy_url)
     try:
-        resp = s.get(url, headers=_bearer_headers(token), timeout=15)
+        headers = _tabcorp_headers(legacy_token) if legacy_token else _bearer_headers(token)
+        resp = s.get(url, headers=headers, timeout=15)
         if resp.status_code != 200:
             logger.warning("Bet tokens failed for %s: %d", account_number, resp.status_code)
             return []
@@ -123,23 +136,27 @@ def find_match(matches: list[dict], match_name: str) -> dict | None:
 
 
 def get_sgm_markets(token: str, match: dict, sport: str, competition: str, proxy_url: str | None = None) -> list[dict]:
-    """Get SGM-eligible markets for a match."""
-    match_id = match.get("id") or match.get("name", "").replace(" ", "")
-    # Try the bff-sports SGM endpoint first
-    url = SGM_MARKETS_URL.format(sport=sport, competition=competition, match_id=match_id)
+    """Get all markets for a match. Uses public _links.markets endpoint (no auth needed)."""
     s = _make_session(proxy_url)
     try:
+        # Primary: use match _links.markets (public, reliable)
+        markets_url = match.get("_links", {}).get("markets", "")
+        if markets_url:
+            resp = s.get(markets_url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=15, params={"jurisdiction": "QLD"})
+            if resp.status_code == 200:
+                markets = resp.json().get("markets", [])
+                logger.info("Got %d markets for %s", len(markets), match.get("name", "?"))
+                return markets
+
+        # Fallback: bff-sports SGM endpoint
+        match_id = match.get("id") or match.get("name", "").replace(" ", "")
+        url = SGM_MARKETS_URL.format(sport=sport, competition=competition, match_id=match_id)
         resp = s.get(url, headers=_bearer_headers(token), timeout=15)
         if resp.status_code == 200:
             data = resp.json()
             return data.get("markets", data.get("categories", []))
 
-        # Fallback: get markets from match _links
-        markets_url = match.get("_links", {}).get("markets", "")
-        if markets_url:
-            resp = s.get(markets_url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=15, params={"jurisdiction": "QLD"})
-            if resp.status_code == 200:
-                return resp.json().get("markets", [])
+        logger.warning("get_sgm_markets failed for %s: %d", match.get("name"), resp.status_code)
         return []
     except Exception as e:
         logger.error("get_sgm_markets error: %s", e)
@@ -148,9 +165,112 @@ def get_sgm_markets(token: str, match: dict, sport: str, competition: str, proxy
         s.close()
 
 
-def resolve_proposition(leg_desc: str, markets: list, match: dict) -> dict:
-    """Resolve a leg description to a proposition ID + odds."""
+SHORT_LEG_TYPES = {
+    "pyot": {"keywords": ["pick your own total"], "direction": "under"},
+    "pyol": {"keywords": ["pick your own line"], "direction": "opposition"},
+    "pyot 1st half": {"keywords": ["pick your own total", "1st half"], "direction": "under"},
+    "pyol 1st half": {"keywords": ["pick your own line", "1st half"], "direction": "opposition"},
+    "under points": {"keywords": ["pick your own total"], "direction": "under"},
+    "opposition line": {"keywords": ["pick your own line"], "direction": "opposition"},
+    "under points 1st half": {"keywords": ["pick your own total", "1st half"], "direction": "under"},
+    "opposition line 1st half": {"keywords": ["pick your own line", "1st half"], "direction": "opposition"},
+}
+
+
+def auto_pick_short_leg(short_type: str, markets: list, match: dict, tryscorer_team: str | None = None) -> dict:
+    """
+    Auto-pick the safest (lowest odds >= $1.10) proposition for a short leg type.
+
+    short_type: "PYOT", "PYOL", "PYOT 1st Half", "PYOL 1st Half", etc.
+    tryscorer_team: If provided, PYOL picks the OPPOSITE team's + line.
+                    e.g. if tryscorer is from "Penrith", pick "Bulldogs +X.X"
+    """
+    st = short_type.strip().lower()
+    config = SHORT_LEG_TYPES.get(st)
+    if not config:
+        return {"error": f"Unknown short leg type: {short_type}", "leg_description": short_type}
+
+    keywords = config["keywords"]
+    direction = config["direction"]
+
+    # Figure out opposition team for PYOL
+    contestants = match.get("contestants", [])
+    contestant_names = [c.get("name", "").lower() for c in contestants]
+    opposition_team = None
+    if tryscorer_team and direction == "opposition":
+        ts = tryscorer_team.lower()
+        # Pick the team that ISN'T the tryscorer's team
+        # Handle abbreviated names: "Pen" matches "Penrith", "Bdg" matches "Bulldogs"
+        for c in contestant_names:
+            if ts not in c and not c.startswith(ts):
+                opposition_team = c
+                break
+        logger.info("PYOL opposition: tryscorer=%s -> opposition=%s (contestants=%s)", tryscorer_team, opposition_team, contestant_names)
+
+    best = None
+    best_odds = 999
+    best_market = ""
+
+    for market in markets:
+        bet_option = market.get("betOption", "").lower()
+
+        # Check all keywords match the market name
+        if not all(kw in bet_option for kw in keywords):
+            continue
+
+        # For non-1st-half types, skip 1st half markets
+        if "1st half" not in st and "1st half" in bet_option:
+            continue
+
+        for prop in market.get("propositions", []):
+            if prop.get("bettingStatus", "") != "Open":
+                continue
+
+            odds = float(prop.get("returnWin", 0))
+            if odds < 1.10:
+                continue
+
+            name = prop.get("name", "").lower()
+
+            # For "under" direction: only pick Under propositions
+            if direction == "under" and "under" not in name:
+                continue
+
+            # For "opposition" direction: pick the + line for the opposite team from tryscorer
+            if direction == "opposition":
+                if "+" not in name:
+                    continue
+                # If we know the opposition team, only pick their line
+                if opposition_team and opposition_team not in name:
+                    continue
+
+            if odds < best_odds:
+                best_odds = odds
+                best = prop
+                best_market = market.get("betOption", "")
+
+    if not best:
+        return {"error": f"No valid prop found for {short_type} (>= $1.10)", "leg_description": short_type}
+
+    return {
+        "proposition_id": int(best.get("id", best.get("numberId"))),
+        "name": best.get("name", ""),
+        "odds": float(best.get("returnWin", 0)),
+        "market": best_market,
+        "status": best.get("bettingStatus", "Unknown"),
+        "leg_description": f"[AUTO] {short_type}: {best.get('name', '')} @ ${float(best.get('returnWin', 0)):.2f}",
+    }
+
+
+def resolve_proposition(leg_desc: str, markets: list, match: dict, tryscorer_team: str | None = None) -> dict:
+    """Resolve a leg description to a proposition ID + odds.
+    tryscorer_team: team name of the tryscorer (used for PYOL opposition logic).
+    """
     leg_desc = leg_desc.strip()
+
+    # Auto-pick short leg types (PYOT, PYOL, etc.)
+    if leg_desc.strip().lower() in SHORT_LEG_TYPES:
+        return auto_pick_short_leg(leg_desc, markets, match, tryscorer_team=tryscorer_team)
 
     # Direct prop ID
     if leg_desc.isdigit():
@@ -173,16 +293,36 @@ def resolve_proposition(leg_desc: str, markets: list, match: dict) -> dict:
                     if team in prop.get("name", "").lower():
                         return {"proposition_id": int(prop.get("id", prop.get("numberId"))), "name": prop.get("name", ""), "odds": float(prop.get("returnWin", 0)), "market": market.get("betOption", ""), "status": prop.get("bettingStatus", "Unknown"), "leg_description": leg_desc}
 
-    # Try scorer
+    # Try scorer — solo player only (skip "Either Player" / combo markets)
     if "try" in desc_lower or "score" in desc_lower:
         player = desc_lower.replace("to score a try", "").replace("anytime try", "").replace("to score 2+ tries", "").strip()
-        market_name = "To Score 2+ Tries" if "2+" in desc_lower else "To Score a Try"
+        is_2plus = "2+" in desc_lower
+        # Only match solo player markets — NOT "Either Player" combos
+        if is_2plus:
+            allowed_markets = ["to score 2+ tries"]
+            blocked_markets = ["either", "combo", "first", "last"]
+        else:
+            allowed_markets = ["to score a try", "anytime try scorer"]
+            blocked_markets = ["either", "combo", "2+", "first try", "last try"]
+
+        player_parts = player.split()
+        last_name = player_parts[-1].lower() if player_parts else player.lower()
+
         for market in markets:
-            if market_name.lower() in market.get("betOption", "").lower():
-                for prop in market.get("propositions", []):
-                    prop_clean = prop.get("name", "").lower().split("(")[0].strip()
-                    if player in prop_clean or prop_clean in player:
-                        return {"proposition_id": int(prop.get("id", prop.get("numberId"))), "name": prop.get("name", ""), "odds": float(prop.get("returnWin", 0)), "market": market.get("betOption", ""), "status": prop.get("bettingStatus", "Unknown"), "leg_description": leg_desc}
+            bo = market.get("betOption", "").lower()
+            if not any(am in bo for am in allowed_markets):
+                continue
+            # Skip combo/either markets
+            if any(bm in bo for bm in blocked_markets):
+                continue
+            for prop in market.get("propositions", []):
+                prop_name = prop.get("name", "").lower()
+                # Must be a single player prop (no "/" which indicates combo)
+                if "/" in prop_name:
+                    continue
+                prop_clean = prop_name.split("(")[0].strip()
+                if last_name in prop_clean:
+                    return {"proposition_id": int(prop.get("id", prop.get("numberId"))), "name": prop.get("name", ""), "odds": float(prop.get("returnWin", 0)), "market": market.get("betOption", ""), "status": prop.get("bettingStatus", "Unknown"), "leg_description": leg_desc}
 
     # Line: "Bulldogs +16.5"
     line_match = re.match(r'^(.+?)\s*([+-]\d+\.?\d*)$', leg_desc.strip())
@@ -217,8 +357,9 @@ def resolve_proposition(leg_desc: str, markets: list, match: dict) -> dict:
 
 # ── SGM Pricing with decoTokens ───────────────────────────────────
 
-def get_sgm_price(token: str, account_number: str, legs: list[dict], proxy_url: str | None = None) -> dict:
-    """Get SGM price from authenticated pricing endpoint (returns decoTokens for savers)."""
+def get_sgm_price(token: str, account_number: str, legs: list[dict], proxy_url: str | None = None, legacy_token: str | None = None) -> dict:
+    """Get SGM price from authenticated pricing endpoint (returns decoTokens for savers).
+    Uses Bearer for pricing (it works), TabcorpAuth for promotions."""
     url = PRICING_AUTH_URL.format(account=account_number)
     payload = {
         "clientDetails": {"jurisdiction": "QLD", "channel": "web"},
@@ -236,7 +377,9 @@ def get_sgm_price(token: str, account_number: str, legs: list[dict], proxy_url: 
     }
     s = _make_session(proxy_url)
     try:
-        resp = s.post(url, headers=_bearer_headers(token), json=payload, timeout=15)
+        # Authenticated pricing requires TabcorpAuth (legacy token), NOT Bearer
+        headers = _tabcorp_headers(legacy_token) if legacy_token else _bearer_headers(token)
+        resp = s.post(url, headers=headers, json=payload, timeout=15)
         if resp.status_code != 200:
             return {"error": f"Pricing failed: {resp.status_code}", "combined_odds": None, "deco_tokens": []}
 
@@ -322,22 +465,74 @@ def place_sgm_with_saver(
 # ── CSV Parsing ───────────────────────────────────────────────────
 
 def parse_bets_csv(csv_content: str) -> list[dict]:
-    """Parse SGM bets from CSV. Returns list of {group, match, legs, sport, competition}."""
-    reader = csv.DictReader(io.StringIO(csv_content.strip()))
+    """
+    Parse SGM bets from CSV. Supports two formats:
+
+    Format 1 (explicit legs):
+        group,match,leg1,leg2,leg3[,sport,competition]
+
+    Format 2 (tryscorer + auto-pick short legs):
+        account,match,tryscorer,short1,short2[,sport,competition]
+
+    Returns list of {group, match, legs, sport, competition}.
+    """
+    lines = csv_content.strip().split("\n")
+    # Auto-add header if first line looks like data (starts with a group letter, not a column name)
+    if lines and not any(h in lines[0].lower() for h in ["account", "group", "match", "tryscorer", "leg1"]):
+        # Detect format: if 8 columns assume tryscorer format, else explicit legs
+        cols = lines[0].split(",")
+        if len(cols) >= 8:
+            lines.insert(0, "account,match,tryscorer,market,short1,short2,sport,competition")
+        elif len(cols) >= 6:
+            lines.insert(0, "group,match,leg1,leg2,leg3,sport,competition")
+        else:
+            lines.insert(0, "group,match,leg1,leg2,leg3")
+
+    reader = csv.DictReader(io.StringIO("\n".join(lines)))
     bets = []
     for row in reader:
-        group = row.get("group", "A").strip()
-        match = row.get("match", "").strip()
+        # Detect format by column names
+        has_tryscorer = "tryscorer" in row
+        group = (row.get("account") or row.get("group", "A")).strip()
+        match = (row.get("match") or row.get("game", "")).strip()
         sport = row.get("sport", "Rugby League").strip()
         competition = row.get("competition", "NRL").strip()
+
         if not match:
             continue
-        legs = []
-        for key in sorted(row.keys()):
-            if key.startswith("leg") and key[3:].isdigit():
-                val = row[key].strip()
-                if val:
-                    legs.append(val)
+
+        if has_tryscorer:
+            # Format 2: tryscorer + short legs
+            tryscorer = row.get("tryscorer", "").strip()
+            market = row.get("market", "").strip()
+            if not tryscorer:
+                continue
+
+            # Build tryscorer leg description
+            if market and "2+" in market:
+                try_leg = f"{tryscorer} To Score 2+ Tries"
+            elif market and "try" in market.lower():
+                try_leg = f"{tryscorer} To Score a Try"
+            else:
+                try_leg = f"{tryscorer} To Score a Try"
+
+            # Collect short legs
+            short1 = row.get("short1", row.get("short_leg_1", "")).strip()
+            short2 = row.get("short2", row.get("short_leg_2", "")).strip()
+            legs = [try_leg]
+            if short1:
+                legs.append(short1)
+            if short2:
+                legs.append(short2)
+        else:
+            # Format 1: explicit legs
+            legs = []
+            for key in sorted(row.keys()):
+                if key.startswith("leg") and key[3:].isdigit():
+                    val = row[key].strip()
+                    if val:
+                        legs.append(val)
+
         if len(legs) < 3:
             continue
         bets.append({"group": group, "match": match, "legs": legs, "sport": sport, "competition": competition})

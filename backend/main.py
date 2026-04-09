@@ -2052,18 +2052,36 @@ _tab_token_groups: dict[str, str] = {}
 
 @app.get("/api/tab-tokens/accounts")
 async def tab_tokens_accounts(_user: dict = Depends(_verify_app_token)):
-    """List all TAB sessions with saver token status."""
+    """List TAB sessions belonging to this user, with saver token status."""
+    # Build label + ownership map from DB accounts
+    db_accounts = []
+    label_map = {}
+    user_acct_numbers = set()
+    try:
+        db_accounts = await get_accounts(_user["username"])
+        for a in db_accounts:
+            acct_num = str(a.get("account_number", ""))
+            if acct_num:
+                label_map[acct_num] = a.get("label", "")
+                user_acct_numbers.add(acct_num)
+    except Exception:
+        pass
+
     results = []
     for sid, s in sessions.items():
+        acct_num = str(s.get("account_number", ""))
+        # Only show sessions belonging to this user
+        if user_acct_numbers and acct_num not in user_acct_numbers:
+            continue
         claims = decode_token_claims(s.get("token", ""))
         exp = claims.get("exp", 0)
         is_valid = bool(exp and time.time() < exp - 300)
-        acct_num = s.get("account_number", "")
+        label = label_map.get(acct_num, s.get("label", s.get("email", sid[:6])))
         results.append({
             "session_id": sid,
             "email": s.get("email", ""),
             "account_number": acct_num,
-            "label": s.get("label", sid[:6]),
+            "label": label,
             "authenticated": is_valid,
             "group": _tab_token_groups.get(acct_num, "A"),
             "saver_count": 0,
@@ -2074,17 +2092,27 @@ async def tab_tokens_accounts(_user: dict = Depends(_verify_app_token)):
 
 @app.post("/api/tab-tokens/fetch-savers")
 async def tab_tokens_fetch_savers(_user: dict = Depends(_verify_app_token)):
-    """Fetch SGM saver tokens for all authenticated sessions."""
+    """Fetch SGM saver tokens for this user's authenticated sessions."""
+    user_accts = set()
+    try:
+        for a in await get_accounts(_user["username"]):
+            if a.get("account_number"):
+                user_accts.add(str(a["account_number"]))
+    except Exception:
+        pass
+
     total = 0
     account_savers = []
     for sid, s in sessions.items():
+        acct = str(s.get("account_number", ""))
+        if user_accts and acct not in user_accts:
+            continue
         claims = decode_token_claims(s.get("token", ""))
         exp = claims.get("exp", 0)
         if not (exp and time.time() < exp - 300):
             continue
-        savers = _tt.get_sgm_savers(s.get("token", ""), s.get("account_number", ""), s.get("proxy_url", ""))
+        savers = _tt.get_sgm_savers(s.get("token", ""), acct, s.get("proxy_url", ""), legacy_token=s.get("legacy_token", ""))
         total += len(savers)
-        acct = s.get("account_number", "")
         account_savers.append({
             "session_id": sid, "account_number": acct,
             "email": s.get("email", ""), "label": s.get("label", ""),
@@ -2115,13 +2143,24 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
     if not bets:
         return {"error": "No valid bets", "total": 0, "results": []}
 
+    # Filter to this user's accounts
+    user_accts = set()
+    try:
+        for a in await get_accounts(_user["username"]):
+            if a.get("account_number"):
+                user_accts.add(str(a["account_number"]))
+    except Exception:
+        pass
+
     # Group sessions
     group_sessions: dict[str, list[dict]] = {}
     for sid, s in sessions.items():
+        acct = str(s.get("account_number", ""))
+        if user_accts and acct not in user_accts:
+            continue
         claims = decode_token_claims(s.get("token", ""))
         if not (claims.get("exp", 0) and time.time() < claims["exp"] - 300):
             continue
-        acct = s.get("account_number", "")
         grp = _tab_token_groups.get(acct, "A")
         group_sessions.setdefault(grp, []).append(s)
 
@@ -2154,7 +2193,17 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
             token, legacy, acct, proxy = s.get("token", ""), s.get("legacy_token", ""), s.get("account_number", ""), s.get("proxy_url", "")
 
             markets = _tt.get_sgm_markets(token, match, bet["sport"], bet["competition"], proxy)
-            props = [_tt.resolve_proposition(leg, markets, match) for leg in bet["legs"]]
+            # Resolve legs — first resolve tryscorer to detect their team, then pass to short legs
+            props = []
+            tryscorer_team = None
+            for leg in bet["legs"]:
+                prop = _tt.resolve_proposition(leg, markets, match, tryscorer_team=tryscorer_team)
+                props.append(prop)
+                # After resolving tryscorer, extract team from prop name e.g. "Casey McLean (Pen)" -> "Pen"
+                if not tryscorer_team and "error" not in prop:
+                    name = prop.get("name", "")
+                    if "(" in name and ")" in name:
+                        tryscorer_team = name.split("(")[-1].split(")")[0].strip()
             errors = [p for p in props if "error" in p]
             if errors:
                 results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
@@ -2170,7 +2219,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                                 "error": "Leg(s) below $1.10 min", "dry_run": dry_run})
                 continue
 
-            pricing = _tt.get_sgm_price(token, acct, props, proxy)
+            pricing = _tt.get_sgm_price(token, acct, props, proxy, legacy_token=legacy)
             if pricing.get("error") or not pricing.get("combined_odds"):
                 results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
                                 "match": bet["match"], "legs": bet["legs"], "stake": 0, "odds": None,
@@ -2192,7 +2241,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                 continue
 
             # Stake = saver max reward
-            svs = _tt.get_sgm_savers(token, acct, proxy)
+            svs = _tt.get_sgm_savers(token, acct, proxy, legacy_token=legacy)
             matching = [sv for sv in svs if bet["match"].lower() in sv.get("match", "").lower()]
             stake = float(matching[0]["max_reward"]) if matching else 10.0
 
