@@ -134,6 +134,169 @@ class Bet365Service:
         async with self._lock:
             await self._cleanup()
 
+    async def place_megaboost(self, sport: str, match_team: str, stake: int = 20, boost_index: int = 0) -> dict:
+        """
+        Place a Mega Boost / Bet Boost on a match.
+
+        Args:
+            sport: "AFL", "NRL", etc.
+            match_team: Team name to find the match (e.g. "Adelaide" or "Carlton")
+            stake: Bet amount (default $20)
+            boost_index: Which boost card to click (0 = first/Mega Boost)
+
+        Returns dict with success, odds, error, screenshot.
+        """
+        async with self._lock:
+            if not self.is_alive:
+                logger.info("Browser not alive, attempting restart...")
+                if not await self._launch_and_login():
+                    return {"success": False, "error": "Browser not running and restart failed"}
+
+            self._last_activity = time.time()
+
+            try:
+                result = await self._place_megaboost_internal(sport, match_team, stake, boost_index)
+                self._balance = await self._read_balance()
+                return result
+            except Exception as e:
+                logger.error(f"Megaboost placement error: {e}")
+                return {"success": False, "error": str(e)}
+
+    async def _place_megaboost_internal(self, sport: str, match_team: str, stake: int, boost_index: int) -> dict:
+        """Full Mega Boost placement flow."""
+        page = self._page
+        logger.info(f"Placing Mega Boost: {sport} {match_team} ${stake} (boost #{boost_index})")
+
+        # Step 1: Clear betslip
+        await self._clear_betslip()
+
+        # Step 2: Navigate to sport
+        if not await self._navigate_to_sport(sport.upper()):
+            return {"success": False, "error": f"Could not navigate to {sport}"}
+
+        # Step 3: Click match
+        if not await self._click_match(match_team):
+            return {"success": False, "error": f"Match with '{match_team}' not found"}
+
+        await asyncio.sleep(3)
+
+        # Step 4: Make sure we're on Popular tab (where boosts appear)
+        try:
+            popular = page.locator('text="Popular"').first
+            if await popular.is_visible(timeout=3000):
+                await popular.click()
+                await asyncio.sleep(2)
+        except Exception:
+            pass  # Might already be on Popular
+
+        # Step 5: Find Mega Boost / Bet Boost cards
+        boost_info = await page.evaluate("""
+            (targetIndex) => {
+                const results = [];
+                const allEls = document.querySelectorAll('*');
+
+                // Find elements containing "MEGA BOOST" or "BET BOOST"
+                for (const el of allEls) {
+                    const text = (el.innerText || '').trim();
+                    if ((text.includes('MEGA BOOST') || text.includes('BET BOOST')) && el.offsetParent) {
+                        // Walk up to find the card container
+                        let card = el;
+                        for (let i = 0; i < 10; i++) {
+                            if (card.parentElement) card = card.parentElement;
+                            // Look for a card-like container (has multiple children, reasonable size)
+                            const r = card.getBoundingClientRect();
+                            if (r.width > 200 && r.height > 100) break;
+                        }
+
+                        // Find the clickable odds element in this card
+                        // Boost cards show odds like "2.75" — find the last number that looks like odds
+                        const cardText = card.innerText || '';
+                        const isMega = cardText.includes('MEGA BOOST');
+
+                        // Find clickable elements with odds in the card
+                        const clickables = card.querySelectorAll('[class*="odd"], [class*="price"], [class*="bet"], span, div');
+                        for (const c of clickables) {
+                            const ct = (c.innerText || '').trim();
+                            // Match boosted odds (the larger number after >>)
+                            const oddsMatch = ct.match(/^\\d+\\.\\d{2}$/);
+                            if (oddsMatch && c.offsetParent) {
+                                const r = c.getBoundingClientRect();
+                                if (r.width > 20 && r.height > 10 && r.width < 200) {
+                                    results.push({
+                                        type: isMega ? 'MEGA_BOOST' : 'BET_BOOST',
+                                        odds: ct,
+                                        x: Math.round(r.x + r.width / 2),
+                                        y: Math.round(r.y + r.height / 2),
+                                        cardText: cardText.substring(0, 200),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Deduplicate by position (within 50px)
+                const unique = [];
+                for (const r of results) {
+                    const dup = unique.find(u => Math.abs(u.x - r.x) < 50 && Math.abs(u.y - r.y) < 50);
+                    if (!dup) unique.push(r);
+                }
+
+                // Sort: MEGA first, then by x position
+                unique.sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'MEGA_BOOST' ? -1 : 1;
+                    return a.x - b.x;
+                });
+
+                if (targetIndex < unique.length) {
+                    return { found: true, boost: unique[targetIndex], all: unique.map(u => ({type: u.type, odds: u.odds})) };
+                }
+                return { found: false, all: unique.map(u => ({type: u.type, odds: u.odds})), count: unique.length };
+            }
+        """, boost_index)
+
+        if not boost_info.get("found"):
+            all_boosts = boost_info.get("all", [])
+            ts = int(time.time())
+            ss = f"/tmp/b365_megaboost_{ts}.png"
+            try:
+                await page.screenshot(path=ss)
+            except Exception:
+                ss = ""
+            logger.warning(f"Boost #{boost_index} not found. Available: {all_boosts}")
+            return {
+                "success": False,
+                "error": f"Boost #{boost_index} not found. {len(all_boosts)} boosts available: {all_boosts}",
+                "screenshot": ss,
+            }
+
+        boost = boost_info["boost"]
+        logger.info(f"Found {boost['type']}: odds={boost['odds']} at ({boost['x']}, {boost['y']})")
+        logger.info(f"Card: {boost.get('cardText', '')[:100]}")
+
+        # Step 6: Click the boost odds
+        if not await self._click_odds(boost["x"], boost["y"]):
+            await asyncio.sleep(1)
+            if not await self._click_odds(boost["x"], boost["y"]):
+                return {"success": False, "error": "Betslip did not open after clicking boost"}
+
+        # Step 7: Enter stake
+        if not await self._enter_stake(stake):
+            return {"success": False, "error": "Could not enter stake"}
+
+        # Step 8: Place bet
+        result = await self._place_bet()
+
+        return {
+            "success": result.success,
+            "boost_type": boost["type"],
+            "odds": boost["odds"],
+            "stake": stake,
+            "potential_return": result.potential_return,
+            "error": result.error,
+            "screenshot": result.screenshot,
+        }
+
     async def place_pick(self, pick: dict) -> dict:
         """
         Place a single pick on bet365.

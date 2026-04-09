@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from sportsbet_auth import sportsbet_browser_login, sportsbet_token_refresh, sportsbet_get_promos
 from pointsbet_auth import pointsbet_browser_login
-from bet365_auth import bet365_browser_login, bet365_place_browser_bet, bet365_status
+from bet365_auth import bet365_browser_login, bet365_place_browser_bet, bet365_place_megaboost, bet365_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 logger = logging.getLogger("token-farm")
@@ -166,6 +166,40 @@ async def b365_get_status(_=Depends(verify_key)):
 async def b365_place(req: B365BetRequest, _=Depends(verify_key)):
     """Place a bet on bet365 via browser automation."""
     return await bet365_place_browser_bet(req.session_id, req.bet)
+
+
+class B365MegaboostRequest(BaseModel):
+    session_id: str
+    sport: str = "AFL"
+    match_team: str
+    stake: float = 20
+    boost_index: int = 0
+
+
+@app.post("/bet365/megaboost")
+async def b365_megaboost(req: B365MegaboostRequest, _=Depends(verify_key)):
+    """Place a Mega Boost / Bet Boost via browser automation."""
+    return await bet365_place_megaboost(
+        session_id=req.session_id,
+        sport=req.sport,
+        match_team=req.match_team,
+        stake=req.stake,
+        boost_index=req.boost_index,
+    )
+
+
+@app.get("/bet365/debug/{session_id}")
+async def b365_debug(session_id: str, _=Depends(verify_key)):
+    """Debug: screenshot + page text for a bet365 session."""
+    from bet365_auth import _browser_sessions
+    s = _browser_sessions.get(session_id)
+    if not s:
+        return {"error": f"No session {session_id}", "active": list(_browser_sessions.keys())}
+    page = s["page"]
+    await page.screenshot(path="/tmp/b365_debug.png")
+    body = await page.evaluate("document.body.innerText")
+    url = page.url
+    return {"url": url, "text": body[:3000]}
 
 
 # ─── Health ──────────────────────────────────────────────────────────────────

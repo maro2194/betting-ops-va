@@ -662,6 +662,278 @@ async def bet365_place_browser_bet(session_id: str, bet_payload: dict) -> dict:
         }
 
 
+async def bet365_place_megaboost(session_id: str, sport: str, match_team: str, stake: float = 20, boost_index: int = 0) -> dict:
+    """Place a Mega Boost / Bet Boost on a match using persistent browser session.
+
+    Args:
+        session_id: From bet365_browser_login
+        sport: "AFL", "NRL", etc.
+        match_team: Team name to find the match
+        stake: Bet amount
+        boost_index: 0 = first boost (usually Mega Boost)
+    """
+    session = _browser_sessions.get(session_id)
+    if not session:
+        return {"success": False, "error": f"No active session: {session_id}"}
+
+    page = session["page"]
+    logger.info(f"bet365 megaboost: session={session_id} sport={sport} team={match_team} stake=${stake}")
+
+    try:
+        # Step 1: Navigate to All Sports > AFL/NRL
+        sport_map = {"AFL": "Australian Rules", "NRL": "Rugby League", "NBA": "Basketball"}
+        sport_name = sport_map.get(sport.upper(), sport)
+        logger.info(f"bet365 megaboost: navigating to {sport_name}")
+
+        await page.goto("https://www.bet365.com.au/#/HO/", timeout=30000)
+        await page.wait_for_timeout(3000)
+
+        # Click sport in sidebar
+        try:
+            sport_link = page.get_by_text(sport_name, exact=True)
+            if await sport_link.count() > 0:
+                await sport_link.first.click()
+                await page.wait_for_timeout(3000)
+            else:
+                # Try short name
+                sport_link = page.get_by_text(sport.upper(), exact=True)
+                if await sport_link.count() > 0:
+                    await sport_link.first.click()
+                    await page.wait_for_timeout(3000)
+        except Exception as e:
+            logger.warning(f"bet365 megaboost: sport nav error: {e}")
+
+        # Step 2: Find and click the match
+        logger.info(f"bet365 megaboost: looking for match with '{match_team}'")
+        match_team_lower = match_team.lower()
+        match_clicked = False
+
+        for scroll in range(5):
+            if scroll > 0:
+                await page.evaluate("window.scrollBy(0, 500)")
+                await page.wait_for_timeout(1000)
+
+            body = await page.evaluate("document.body.innerText")
+            if match_team_lower in body.lower():
+                el = page.get_by_text(re.compile(re.escape(match_team), re.IGNORECASE)).first
+                try:
+                    if await el.is_visible(timeout=3000):
+                        await el.click()
+                        match_clicked = True
+                        logger.info(f"bet365 megaboost: clicked match '{match_team}'")
+                        break
+                except Exception:
+                    pass
+
+        if not match_clicked:
+            return {"success": False, "error": f"Match with '{match_team}' not found"}
+
+        await page.wait_for_timeout(4000)
+
+        # Step 3: Make sure Popular tab is selected (boosts are there)
+        try:
+            popular = page.get_by_text("Popular", exact=True)
+            if await popular.count() > 0 and await popular.first.is_visible():
+                await popular.first.click()
+                await page.wait_for_timeout(2000)
+        except Exception:
+            pass
+
+        # Step 4: Find Mega Boost / Bet Boost cards and click
+        logger.info(f"bet365 megaboost: searching for boost cards...")
+
+        boost_result = await page.evaluate("""
+            (targetIndex) => {
+                const boosts = [];
+                const allEls = document.querySelectorAll('*');
+
+                for (const el of allEls) {
+                    const text = (el.innerText || '').trim();
+                    if (!text.includes('MEGA BOOST') && !text.includes('BET BOOST')) continue;
+                    if (!el.offsetParent) continue;
+
+                    // Walk up to card container
+                    let card = el;
+                    for (let i = 0; i < 10; i++) {
+                        if (!card.parentElement) break;
+                        card = card.parentElement;
+                        const r = card.getBoundingClientRect();
+                        if (r.width > 200 && r.height > 100) break;
+                    }
+
+                    const cardText = card.innerText || '';
+                    const isMega = cardText.includes('MEGA BOOST');
+
+                    // Find the boosted odds (the larger number, typically after >>)
+                    // Look for elements that look like clickable odds
+                    const candidates = card.querySelectorAll('span, div, button, a');
+                    let bestOdds = null;
+                    let bestOddsVal = 0;
+
+                    for (const c of candidates) {
+                        const ct = (c.textContent || '').trim();
+                        if (/^\\d+\\.\\d{2}$/.test(ct) && c.offsetParent) {
+                            const val = parseFloat(ct);
+                            const r = c.getBoundingClientRect();
+                            if (r.width > 15 && r.height > 10 && val > bestOddsVal) {
+                                bestOddsVal = val;
+                                bestOdds = { text: ct, x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
+                            }
+                        }
+                    }
+
+                    if (bestOdds) {
+                        boosts.push({
+                            type: isMega ? 'MEGA_BOOST' : 'BET_BOOST',
+                            odds: bestOdds.text,
+                            x: bestOdds.x,
+                            y: bestOdds.y,
+                            title: cardText.split('\\n')[0].substring(0, 50),
+                        });
+                    }
+                }
+
+                // Dedupe by position
+                const unique = [];
+                for (const b of boosts) {
+                    if (!unique.find(u => Math.abs(u.x - b.x) < 50 && Math.abs(u.y - b.y) < 50))
+                        unique.push(b);
+                }
+                // Mega first
+                unique.sort((a, b) => a.type === 'MEGA_BOOST' ? -1 : 1);
+
+                if (targetIndex < unique.length)
+                    return { found: true, boost: unique[targetIndex], all: unique.map(u => ({type: u.type, odds: u.odds, title: u.title})) };
+                return { found: false, all: unique.map(u => ({type: u.type, odds: u.odds, title: u.title})), count: unique.length };
+            }
+        """, boost_index)
+
+        if not boost_result.get("found"):
+            all_boosts = boost_result.get("all", [])
+            logger.warning(f"bet365 megaboost: boost #{boost_index} not found. Available: {all_boosts}")
+            return {
+                "success": False,
+                "error": f"Boost #{boost_index} not found. {len(all_boosts)} boosts detected: {all_boosts}",
+            }
+
+        boost = boost_result["boost"]
+        logger.info(f"bet365 megaboost: found {boost['type']} '{boost.get('title','')}' odds={boost['odds']} at ({boost['x']},{boost['y']})")
+
+        # Step 5: Click the boost odds
+        await page.mouse.click(boost["x"], boost["y"])
+        await page.wait_for_timeout(3000)
+
+        # Verify betslip opened
+        body = await page.evaluate("document.body.innerText")
+        if "stake" not in body.lower() and "bet slip" not in body.lower():
+            # Retry click
+            await page.mouse.click(boost["x"], boost["y"])
+            await page.wait_for_timeout(3000)
+            body = await page.evaluate("document.body.innerText")
+            if "stake" not in body.lower() and "bet slip" not in body.lower():
+                return {"success": False, "error": "Betslip did not open after clicking boost"}
+
+        # Step 6: Enter stake
+        logger.info(f"bet365 megaboost: entering stake ${stake}")
+        stake_entered = False
+        for sel in [
+            "input[placeholder*='Stake']", "input[placeholder*='stake']",
+            "input[placeholder*='Amount']", "input[class*='stake']",
+            "input[class*='Stake']", "[class*='BetSlip'] input[type='text']",
+            "[class*='betslip'] input", "[class*='slip'] input",
+        ]:
+            try:
+                el = page.locator(sel)
+                if await el.count() > 0 and await el.first.is_visible():
+                    await el.first.triple_click()
+                    await el.first.fill(str(int(stake)))
+                    stake_entered = True
+                    logger.info(f"bet365 megaboost: stake entered via '{sel}'")
+                    break
+            except Exception:
+                continue
+
+        if not stake_entered:
+            # Fallback: find visible inputs in betslip area
+            inputs = await page.query_selector_all("input[type='text'], input[type='number'], input:not([type])")
+            for inp in inputs:
+                try:
+                    if await inp.is_visible():
+                        await inp.triple_click()
+                        await inp.fill(str(int(stake)))
+                        stake_entered = True
+                        break
+                except Exception:
+                    continue
+
+        if not stake_entered:
+            return {"success": False, "error": "Could not enter stake"}
+
+        await page.wait_for_timeout(2000)
+
+        # Step 7: Click Place Bet
+        logger.info("bet365 megaboost: clicking Place Bet")
+        place_clicked = False
+        for btn_text in ["Place Bet", "Place Bets", "Place bet", "PLACE BET"]:
+            try:
+                btn = page.get_by_text(btn_text, exact=True)
+                if await btn.count() > 0 and await btn.first.is_visible():
+                    await btn.first.click()
+                    place_clicked = True
+                    logger.info(f"bet365 megaboost: clicked '{btn_text}'")
+                    break
+            except Exception:
+                continue
+
+        if not place_clicked:
+            return {"success": False, "error": "Place Bet button not found"}
+
+        await page.wait_for_timeout(4000)
+
+        # Step 8: Check confirmation
+        body = await page.evaluate("document.body.innerText")
+        body_lower = body.lower()
+
+        # Check for errors
+        for err in ["odds have changed", "price changed", "suspended", "maximum stake", "not available"]:
+            if err in body_lower:
+                # Try to accept odds change
+                if "accept" in body_lower:
+                    try:
+                        accept = page.get_by_text("Accept", exact=False)
+                        if await accept.count() > 0:
+                            await accept.first.click()
+                            await page.wait_for_timeout(3000)
+                            body = await page.evaluate("document.body.innerText")
+                            body_lower = body.lower()
+                            break
+                    except Exception:
+                        pass
+                return {"success": False, "error": f"Bet placement error: '{err}'"}
+
+        confirmed = any(p in body_lower for p in ["bet placed", "bet confirmed", "receipt", "thank you", "your bet"])
+
+        receipt = ""
+        m = re.search(r'(?:receipt|reference|bet\s+id)[:\s#]*([A-Z0-9\-]+)', body, re.IGNORECASE)
+        if m:
+            receipt = m.group(1)
+
+        logger.info(f"bet365 megaboost: result confirmed={confirmed} receipt={receipt}")
+
+        return {
+            "success": True if confirmed or receipt else False,
+            "boost_type": boost["type"],
+            "odds": boost["odds"],
+            "stake": stake,
+            "receipt": receipt or ("confirmed" if confirmed else ""),
+            "error": "" if (confirmed or receipt) else "No clear confirmation",
+        }
+
+    except Exception as e:
+        logger.error(f"bet365 megaboost error: {e}")
+        return {"success": False, "error": str(e)}
+
+
 async def bet365_status() -> dict:
     """Return status of all active bet365 browser sessions."""
     sessions = {}

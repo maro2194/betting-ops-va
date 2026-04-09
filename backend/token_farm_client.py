@@ -210,6 +210,32 @@ async def bet365_place_bet(session_id: str, bet_payload: dict) -> dict:
         return {"success": False, "error": f"bet365 placement error: {e}"}
 
 
+async def bet365_megaboost(session_id: str, sport: str, match_team: str, stake: float = 20, boost_index: int = 0) -> dict:
+    """Place a Mega Boost on bet365 via Token Farm browser."""
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{FARM_URL}/bet365/megaboost",
+                headers=_headers(),
+                json={
+                    "session_id": session_id,
+                    "sport": sport,
+                    "match_team": match_team,
+                    "stake": stake,
+                    "boost_index": boost_index,
+                },
+            )
+        if resp.status_code != 200:
+            return {"success": False, "error": f"Farm megaboost failed: HTTP {resp.status_code}: {resp.text[:200]}"}
+        return resp.json()
+    except httpx.TimeoutException:
+        return {"success": False, "error": "Token farm timeout — megaboost placement took too long"}
+    except httpx.ConnectError:
+        return {"success": False, "error": "Token farm unreachable — check WireGuard tunnel"}
+    except Exception as e:
+        return {"success": False, "error": f"Megaboost error: {e}"}
+
+
 # ─── Health ──────────────────────────────────────────────────────────────────
 
 async def health() -> dict:

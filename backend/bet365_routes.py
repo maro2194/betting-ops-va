@@ -5,6 +5,7 @@ Mounted into the main FastAPI app.
 import asyncio
 import logging
 import json
+import os
 import time
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -240,6 +241,49 @@ async def manual_pick(req: ManualPickRequest):
         raise HTTPException(503, "bet365 browser not running. Start it first.")
 
     result = await bet365_service.place_pick(pick)
+    return result
+
+
+class MegaBoostRequest(BaseModel):
+    sport: str = "AFL"
+    match_team: str  # e.g. "Adelaide" or "Carlton"
+    stake: int = 20
+    boost_index: int = 0  # 0 = first/Mega Boost
+    username: str = ""  # optional, defaults to env var
+    password: str = ""  # optional, defaults to env var
+
+
+@router.post("/megaboost")
+async def place_megaboost(req: MegaBoostRequest):
+    """Place a Mega Boost / Bet Boost via Token Farm browser."""
+    from token_farm_client import bet365_login, bet365_megaboost as farm_megaboost
+
+    # Login first if no session
+    proxy_url = f"http://{os.environ.get('BET365_PROXY_USER', 'user001')}:{os.environ.get('BET365_PROXY_PASS', 'pizza33')}@{os.environ.get('BET365_PROXY_HOST', '')}:{os.environ.get('BET365_PROXY_PORT', '12323')}"
+    username = req.username or os.environ.get("BET365_USERNAME", "")
+    password = req.password or os.environ.get("BET365_PASSWORD", "")
+
+    if not username:
+        raise HTTPException(400, "No bet365 username provided")
+
+    # Login via Token Farm
+    login_result = await bet365_login(username, password, proxy_url=proxy_url)
+    if not login_result.get("success"):
+        raise HTTPException(502, f"bet365 login failed: {login_result.get('error')}")
+
+    session_id = login_result["session_id"]
+    logger.info(f"bet365 megaboost: logged in as {username}, session={session_id}, balance=${login_result.get('balance')}")
+
+    # Place megaboost
+    result = await farm_megaboost(
+        session_id=session_id,
+        sport=req.sport,
+        match_team=req.match_team,
+        stake=req.stake,
+        boost_index=req.boost_index,
+    )
+    result["username"] = username
+    result["balance"] = login_result.get("balance")
     return result
 
 
