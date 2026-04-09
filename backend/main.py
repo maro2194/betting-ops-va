@@ -2053,30 +2053,37 @@ _tab_token_groups: dict[str, str] = {}
 @app.get("/api/tab-tokens/accounts")
 async def tab_tokens_accounts(_user: dict = Depends(_verify_app_token)):
     """List TAB sessions belonging to this user, with saver token status."""
-    # Build label + ownership map from DB accounts
+    # Build label + ownership map from DB accounts (match by account_number OR email)
     db_accounts = []
     label_map = {}
     user_acct_numbers = set()
+    user_emails = set()
     try:
         db_accounts = await get_accounts(_user["username"])
         for a in db_accounts:
-            acct_num = str(a.get("account_number", ""))
-            if acct_num:
+            acct_num = str(a.get("account_number") or "")
+            email = (a.get("email") or "").lower()
+            if acct_num and acct_num != "None":
                 label_map[acct_num] = a.get("label", "")
                 user_acct_numbers.add(acct_num)
+            if email:
+                user_emails.add(email)
+                label_map[email] = a.get("label", "")
     except Exception:
         pass
 
     results = []
     for sid, s in sessions.items():
         acct_num = str(s.get("account_number", ""))
-        # Only show sessions belonging to this user
-        if user_acct_numbers and acct_num not in user_acct_numbers:
+        session_email = (s.get("email") or "").lower()
+        # Only show sessions belonging to this user (match by acct number or email)
+        is_users = acct_num in user_acct_numbers or session_email in user_emails
+        if (user_acct_numbers or user_emails) and not is_users:
             continue
         claims = decode_token_claims(s.get("token", ""))
         exp = claims.get("exp", 0)
         is_valid = bool(exp and time.time() < exp - 300)
-        label = label_map.get(acct_num, s.get("label", s.get("email", sid[:6])))
+        label = label_map.get(acct_num) or label_map.get(session_email) or s.get("label") or s.get("email", sid[:6])
         results.append({
             "session_id": sid,
             "email": s.get("email", ""),
@@ -2094,10 +2101,15 @@ async def tab_tokens_accounts(_user: dict = Depends(_verify_app_token)):
 async def tab_tokens_fetch_savers(_user: dict = Depends(_verify_app_token)):
     """Fetch SGM saver tokens for this user's authenticated sessions."""
     user_accts = set()
+    user_emails = set()
     try:
         for a in await get_accounts(_user["username"]):
-            if a.get("account_number"):
-                user_accts.add(str(a["account_number"]))
+            acct_num = str(a.get("account_number") or "")
+            if acct_num and acct_num != "None":
+                user_accts.add(acct_num)
+            email = (a.get("email") or "").lower()
+            if email:
+                user_emails.add(email)
     except Exception:
         pass
 
@@ -2105,7 +2117,8 @@ async def tab_tokens_fetch_savers(_user: dict = Depends(_verify_app_token)):
     account_savers = []
     for sid, s in sessions.items():
         acct = str(s.get("account_number", ""))
-        if user_accts and acct not in user_accts:
+        session_email = (s.get("email") or "").lower()
+        if (user_accts or user_emails) and acct not in user_accts and session_email not in user_emails:
             continue
         claims = decode_token_claims(s.get("token", ""))
         exp = claims.get("exp", 0)
@@ -2145,10 +2158,15 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
 
     # Filter to this user's accounts
     user_accts = set()
+    user_emails = set()
     try:
         for a in await get_accounts(_user["username"]):
-            if a.get("account_number"):
-                user_accts.add(str(a["account_number"]))
+            acct_num = str(a.get("account_number") or "")
+            if acct_num and acct_num != "None":
+                user_accts.add(acct_num)
+            email = (a.get("email") or "").lower()
+            if email:
+                user_emails.add(email)
     except Exception:
         pass
 
@@ -2156,7 +2174,8 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
     group_sessions: dict[str, list[dict]] = {}
     for sid, s in sessions.items():
         acct = str(s.get("account_number", ""))
-        if user_accts and acct not in user_accts:
+        session_email = (s.get("email") or "").lower()
+        if (user_accts or user_emails) and acct not in user_accts and session_email not in user_emails:
             continue
         claims = decode_token_claims(s.get("token", ""))
         if not (claims.get("exp", 0) and time.time() < claims["exp"] - 300):
@@ -2258,10 +2277,41 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                                     "error": "No legacy token", "dry_run": False})
                     continue
                 pr = _tt.place_sgm_with_saver(legacy, acct, props, stake, co, deco, leg_deco, proxy)
-                results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
-                                "match": bet["match"], "legs": [p["name"] for p in props], "stake": stake,
+                leg_names = [p["name"] for p in props]
+                result_entry = {"account": acct, "email": s.get("email"), "group": bet["group"],
+                                "match": bet["match"], "legs": leg_names, "stake": stake,
                                 "odds": co_f, "has_saver": has_saver, "success": pr.get("success", False),
-                                "bet_id": pr.get("bet_id"), "error": pr.get("error"), "dry_run": False})
+                                "bet_id": pr.get("bet_id"), "tsn": pr.get("tsn"),
+                                "error": pr.get("error"), "dry_run": False}
+                results.append(result_entry)
+
+                # Save to bet ledger if successful
+                if pr.get("success"):
+                    # Look up account label
+                    acct_label = acct
+                    try:
+                        db_accts = await get_accounts(_user["username"])
+                        for a in db_accts:
+                            if str(a.get("account_number")) == acct or (a.get("email") or "").lower() == (s.get("email") or "").lower():
+                                acct_label = a.get("label", acct)
+                                break
+                    except Exception:
+                        pass
+                    try:
+                        await save_bet(_user["username"], {
+                            "account_number": acct,
+                            "account_label": acct_label,
+                            "tsn": pr.get("tsn") or pr.get("bet_id"),
+                            "bet_type": "SGM",
+                            "legs": [{"name": n} for n in leg_names],
+                            "combined_odds": co,
+                            "stake": str(stake),
+                            "status": "Pending",
+                            "raw_response": pr.get("details"),
+                            "source": "tab_tokens",
+                        })
+                    except Exception as e:
+                        logger.warning("Failed to save tab_tokens bet to DB: %s", e)
             time.sleep(2)
 
     ok = sum(1 for r in results if r.get("success"))

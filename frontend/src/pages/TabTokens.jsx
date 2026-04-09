@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { api } from '../api';
-import { useSessions } from '../context/SessionContext';
 import {
   Gift,
   RefreshCw,
@@ -12,12 +11,12 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 
-const SAMPLE_CSV = `group,match,leg1,leg2,leg3,sport,competition
-A,Bulldogs v Penrith,Penrith Head To Head,Brian Too To Score a Try,Thomas Jenkins To Score a Try,Rugby League,NRL
-B,St George Ill v Manly,Manly Head To Head,Tolutau Koula To Score a Try,Under 40.5,Rugby League,NRL`;
+const SAMPLE_CSV = `account,match,tryscorer,market,short1,short2,sport,competition
+CJG,Panthers v Bulldogs,Casey McLean,2+,PYOT,PYOL 1st Half,Rugby League,NRL
+CDAR,Panthers v Bulldogs,Marcelo Montoya,2+,PYOL,PYOL 1st Half,Rugby League,NRL
+NME,Panthers v Bulldogs,Jacob Preston,2+,PYOT,PYOL,Rugby League,NRL`;
 
 export default function TabTokens() {
-  const { sessions } = useSessions();
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [fetchingSavers, setFetchingSavers] = useState(false);
@@ -186,7 +185,7 @@ export default function TabTokens() {
                         value={a.group}
                         onChange={(e) => updateGroup(a.account_number, e.target.value)}
                         className="form-input"
-                        style={{ width: 60, padding: '2px 4px', fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)' }}
+                        style={{ width: 60, padding: '2px 4px', fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', textAlign: 'center' }}
                       >
                         {['A', 'B', 'C', 'D', 'E', 'F'].map((g) => (
                           <option key={g} value={g}>{g}</option>
@@ -203,9 +202,15 @@ export default function TabTokens() {
                     <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700, color: (a.saver_count || 0) > 0 ? 'var(--success)' : 'var(--text-dim)' }}>
                       {a.saver_count || 0}
                     </td>
-                    <td style={{ fontSize: 11, color: 'var(--text-dim)', maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {(a.savers || []).slice(0, 3).map((s) => s.match).join(', ')}
-                      {(a.savers || []).length > 3 ? ` +${a.savers.length - 3}` : ''}
+                    <td style={{ fontSize: 11, color: 'var(--text-dim)', maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {(a.savers || []).length > 0 && (
+                        <>
+                          <span style={{ color: 'var(--success)', fontWeight: 700 }}>(${(a.savers[0] || {}).max_reward || '?'})</span>
+                          {' '}
+                          {(a.savers || []).slice(0, 3).map((s) => s.match).join(', ')}
+                          {(a.savers || []).length > 3 ? ` +${a.savers.length - 3}` : ''}
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -230,7 +235,7 @@ export default function TabTokens() {
           </div>
         </div>
         <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
-          Format: <code>group,match,leg1,leg2,leg3,sport,competition</code> — sport/competition default to NRL
+          Format: <code>account,match,tryscorer,market,short1,short2</code> — short legs auto-pick lowest odds {'>'}= $1.10 (PYOT, PYOL, PYOT 1st Half, PYOL 1st Half)
         </p>
         <textarea
           value={csvContent}

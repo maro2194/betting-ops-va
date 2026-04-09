@@ -199,13 +199,31 @@ def auto_pick_short_leg(short_type: str, markets: list, match: dict, tryscorer_t
     opposition_team = None
     if tryscorer_team and direction == "opposition":
         ts = tryscorer_team.lower()
-        # Pick the team that ISN'T the tryscorer's team
-        # Handle abbreviated names: "Pen" matches "Penrith", "Bdg" matches "Bulldogs"
+        # Find which contestant the tryscorer belongs to, then pick the OTHER one
+        # Handle TAB abbreviations: "Pen"=Penrith, "Bdg"=Bulldogs, "Man"=Manly, etc.
+        tryscorer_contestant = None
         for c in contestant_names:
-            if ts not in c and not c.startswith(ts):
+            # Match: abbreviation is prefix, substring, or first letter matches + >50% chars match
+            if c.startswith(ts) or ts in c:
+                tryscorer_contestant = c
+                break
+            # Fuzzy: check if abbreviation chars appear in order in the team name
+            ci = 0
+            for ch in ts:
+                idx = c.find(ch, ci)
+                if idx >= 0:
+                    ci = idx + 1
+                else:
+                    break
+            else:
+                tryscorer_contestant = c
+                break
+        # Opposition = the OTHER team
+        for c in contestant_names:
+            if c != tryscorer_contestant:
                 opposition_team = c
                 break
-        logger.info("PYOL opposition: tryscorer=%s -> opposition=%s (contestants=%s)", tryscorer_team, opposition_team, contestant_names)
+        logger.info("PYOL opposition: tryscorer=%s -> team=%s -> opposition=%s", tryscorer_team, tryscorer_contestant, opposition_team)
 
     best = None
     best_odds = 999
@@ -449,14 +467,29 @@ def place_sgm_with_saver(
     url = BETSLIP_URL.format(account=account_number)
     s = _make_session(proxy_url)
     try:
+        logger.info("Placing SGM bet: acct=%s stake=$%.2f odds=%s deco=%d legs=%d",
+                     account_number, stake, combined_odds, len(deco_tokens), len(legs))
         resp = s.post(url, headers=_betslip_headers(legacy_token), json=payload, timeout=15)
+        logger.info("Betslip response: %d %s", resp.status_code, resp.text[:500])
+
         if resp.status_code == 201:
             data = resp.json()
-            bet_id = data.get("bets", [{}])[0].get("betId")
-            return {"success": True, "bet_id": bet_id, "status_code": 201}
+            bet_data = data.get("bets", [{}])[0]
+            bet_id = bet_data.get("betId")
+            tsn = bet_data.get("ticketSerialNumber", bet_data.get("tsn"))
+            # Check for errors in 201 response (TAB returns 201 even for some rejections)
+            errors = data.get("errors", []) + bet_data.get("errors", [])
+            if errors:
+                error_msg = "; ".join(e.get("message", e.get("code", str(e))) for e in errors)
+                logger.warning("SGM bet rejected despite 201: %s", error_msg)
+                return {"success": False, "error": error_msg, "status_code": 201}
+            logger.info("SGM bet placed! acct=%s bet_id=%s tsn=%s", account_number, bet_id, tsn)
+            return {"success": True, "bet_id": bet_id, "tsn": tsn, "status_code": 201, "details": data}
         else:
+            logger.warning("SGM bet failed: acct=%s status=%d %s", account_number, resp.status_code, resp.text[:300])
             return {"success": False, "error": resp.text[:300], "status_code": resp.status_code}
     except Exception as e:
+        logger.error("SGM bet exception: acct=%s %s", account_number, e)
         return {"success": False, "error": str(e)}
     finally:
         s.close()
