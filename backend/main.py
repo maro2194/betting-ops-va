@@ -2264,11 +2264,38 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
             matching = [sv for sv in svs if bet["match"].lower() in sv.get("match", "").lower()]
             stake = float(matching[0]["max_reward"]) if matching else 10.0
 
+            # Build enriched leg details
+            resolved_legs = []
+            for p in props:
+                is_auto = p.get("leg_description", "").startswith("[AUTO]")
+                resolved_legs.append({
+                    "name": p["name"],
+                    "odds": p["odds"],
+                    "market": p.get("market", ""),
+                    "auto_picked": is_auto,
+                    "proposition_id": p.get("proposition_id"),
+                })
+
+            # Look up account label
+            acct_label = acct
+            try:
+                for a in (await get_accounts(_user["username"])):
+                    if str(a.get("account_number")) == acct or (a.get("email") or "").lower() == (s.get("email") or "").lower():
+                        acct_label = a.get("label", acct)
+                        break
+            except Exception:
+                pass
+
+            saver_amount = stake
+
             if dry_run:
-                results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
-                                "match": bet["match"], "legs": [p["name"] for p in props], "stake": stake,
+                results.append({"account": acct, "account_label": acct_label, "email": s.get("email"), "group": bet["group"],
+                                "match": bet["match"], "legs": [p["name"] for p in props],
+                                "resolved_legs": resolved_legs,
+                                "stake": stake, "saver_amount": saver_amount,
                                 "odds": co_f, "has_saver": has_saver, "success": True,
-                                "bet_id": None, "error": None, "dry_run": True})
+                                "bet_id": None, "error": None, "dry_run": True,
+                                "potential_return": round(stake * co_f, 2)})
             else:
                 if not legacy:
                     results.append({"account": acct, "email": s.get("email"), "group": bet["group"],
@@ -2278,11 +2305,14 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                     continue
                 pr = _tt.place_sgm_with_saver(legacy, acct, props, stake, co, deco, leg_deco, proxy)
                 leg_names = [p["name"] for p in props]
-                result_entry = {"account": acct, "email": s.get("email"), "group": bet["group"],
-                                "match": bet["match"], "legs": leg_names, "stake": stake,
+                result_entry = {"account": acct, "account_label": acct_label, "email": s.get("email"), "group": bet["group"],
+                                "match": bet["match"], "legs": leg_names,
+                                "resolved_legs": resolved_legs,
+                                "stake": stake, "saver_amount": saver_amount,
                                 "odds": co_f, "has_saver": has_saver, "success": pr.get("success", False),
                                 "bet_id": pr.get("bet_id"), "tsn": pr.get("tsn"),
-                                "error": pr.get("error"), "dry_run": False}
+                                "error": pr.get("error"), "dry_run": False,
+                                "potential_return": round(stake * co_f, 2)}
                 results.append(result_entry)
 
                 # Save to bet ledger if successful

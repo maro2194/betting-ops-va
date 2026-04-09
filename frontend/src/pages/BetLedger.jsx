@@ -17,6 +17,7 @@ const METHOD_OPTIONS = [
   { label: 'Allocation', value: 'allocation' },
   { label: 'Expload', value: 'expload' },
   { label: 'CSB', value: 'csb' },
+  { label: 'Tab Tokens', value: 'tab_tokens' },
   { label: 'Manual', value: 'manual' },
 ];
 

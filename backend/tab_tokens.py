@@ -228,6 +228,9 @@ def auto_pick_short_leg(short_type: str, markets: list, match: dict, tryscorer_t
     best = None
     best_odds = 999
     best_market = ""
+    fallback = None
+    fallback_odds = 999
+    fallback_market = ""
 
     for market in markets:
         bet_option = market.get("betOption", "").lower()
@@ -258,14 +261,26 @@ def auto_pick_short_leg(short_type: str, markets: list, match: dict, tryscorer_t
             if direction == "opposition":
                 if "+" not in name:
                     continue
-                # If we know the opposition team, only pick their line
+                # If we know opposition team, prefer their line
                 if opposition_team and opposition_team not in name:
+                    # Track as fallback (any + line)
+                    if odds < fallback_odds:
+                        fallback = prop
+                        fallback_odds = odds
+                        fallback_market = market.get("betOption", "")
                     continue
 
             if odds < best_odds:
                 best_odds = odds
                 best = prop
                 best_market = market.get("betOption", "")
+
+    # Fallback: if no opposition-specific line found, use any + line
+    if not best and fallback:
+        logger.info("PYOL fallback: no opposition line found, using any + line: %s", fallback.get("name"))
+        best = fallback
+        best_odds = fallback_odds
+        best_market = fallback_market
 
     if not best:
         return {"error": f"No valid prop found for {short_type} (>= $1.10)", "leg_description": short_type}
