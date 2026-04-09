@@ -453,8 +453,9 @@ def place_sgm_with_saver(
     legs: list[dict], stake: float, combined_odds: str,
     deco_tokens: list[str], leg_deco_token: str | None,
     proxy_url: str | None = None,
+    token_group_id: str | None = None,
 ) -> dict:
-    """Place an SGM bet with saver decoTokens."""
+    """Place an SGM bet with saver decoTokens + tokenGroupId."""
     sgm_leg = {
         "type": "SAME_GAME_MULTI",
         "odds": combined_odds,
@@ -466,15 +467,21 @@ def place_sgm_with_saver(
     if leg_deco_token:
         sgm_leg["decoToken"] = leg_deco_token
 
+    bet = {
+        "type": "FIXED_ODDS",
+        "stake": f"${stake:.2f}",
+        "legs": [sgm_leg],
+        "enableToteGuarantee": False,
+        "enableMultiplier": False,
+        "source": "sports.betting.match",
+    }
+    # tokenGroupId activates the saver — this is the critical field
+    if token_group_id:
+        bet["tokenGroupId"] = token_group_id
+
     payload = {
-        "bets": [{
-            "type": "FIXED_ODDS",
-            "betType": "WIN",
-            "subType": "SAME_GAME_MULTI",
-            "stake": f"{stake:.2f}",
-            "legs": [sgm_leg],
-        }],
         "transactionId": str(uuid.uuid4()),
+        "bets": [bet],
     }
     if deco_tokens:
         payload["decoTokens"] = deco_tokens

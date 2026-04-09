@@ -2303,7 +2303,11 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                                     "odds": co_f, "has_saver": has_saver, "success": False,
                                     "error": "No legacy token", "dry_run": False})
                     continue
-                pr = _tt.place_sgm_with_saver(legacy, acct, props, stake, co, deco, leg_deco, proxy)
+                # Get tokenGroupId from matching saver for this match
+                saver_token_group_id = None
+                if matching:
+                    saver_token_group_id = matching[0].get("token_group_id")
+                pr = _tt.place_sgm_with_saver(legacy, acct, props, stake, co, deco, leg_deco, proxy, token_group_id=saver_token_group_id)
                 leg_names = [p["name"] for p in props]
                 result_entry = {"account": acct, "account_label": acct_label, "email": s.get("email"), "group": bet["group"],
                                 "match": bet["match"], "legs": leg_names,
