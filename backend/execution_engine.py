@@ -241,6 +241,43 @@ async def process_chunk(
 
 # ─── Pipeline 1: Regular Multis ──────────────────────────────────────────────
 
+async def _run_account_multi_queue(
+    account: Account,
+    queue: list[Bet],
+    state: RunState,
+    fetch_live_odds: FetchLiveOdds,
+    get_kelly_stake: GetKellyStake,
+    place_bet: PlaceBet,
+    on_result: Callable | None = None,
+    min_delay: float = 2.0,
+    max_delay: float = 6.0,
+) -> list[dict]:
+    """Process one account's bet queue. Per-account delays between bets."""
+    results = []
+    for i, bet in enumerate(queue):
+        if i > 0:
+            delay = random.uniform(min_delay, max_delay)
+            await asyncio.sleep(delay)
+
+        result = await process_chunk(
+            bet, account, state,
+            fetch_live_odds, get_kelly_stake, place_bet,
+        )
+        entry = {
+            "account": account.id,
+            "account_label": account.label,
+            "runner_id": bet.runner_id,
+            "bet_description": bet.bet_description,
+            "game_id": bet.game_id,
+            "result": result,
+        }
+        results.append(entry)
+        if on_result:
+            on_result(entry)
+
+    return results
+
+
 async def run_multis(
     bets: list[Bet],
     accounts: list[Account],
@@ -249,12 +286,14 @@ async def run_multis(
     get_kelly_stake: GetKellyStake,
     place_bet: PlaceBet,
     on_result: Callable | None = None,
+    min_delay: float = 2.0,
+    max_delay: float = 6.0,
 ) -> list[dict]:
-    """Execute regular multi bets with shuffled starting positions per account."""
+    """Execute regular multi bets with shuffled starting positions per account.
+    Accounts run CONCURRENTLY — delay is per-account between its own bets."""
     if not bets or not accounts:
         return []
 
-    results = []
     n = len(bets)
 
     # Generate one pseudo-random shuffle of bet indices
@@ -267,28 +306,21 @@ async def run_multis(
         start_pos = shuffled_indices[i % n]
         account_queues[account.id] = build_queue(bets, start_pos)
 
-    # Each account works through its full queue
-    for account in accounts:
-        for bet in account_queues[account.id]:
-            result = await process_chunk(
-                bet, account, state,
-                fetch_live_odds, get_kelly_stake, place_bet,
-            )
-            entry = {
-                "account": account.id,
-                "account_label": account.label,
-                "runner_id": bet.runner_id,
-                "bet_description": bet.bet_description,
-                "game_id": bet.game_id,
-                "result": result,
-            }
-            results.append(entry)
-            if on_result:
-                on_result(entry)
+    # Run all accounts concurrently — per-runner locks ensure safe shared state
+    tasks = [
+        _run_account_multi_queue(
+            account, account_queues[account.id], state,
+            fetch_live_odds, get_kelly_stake, place_bet, on_result,
+            min_delay, max_delay,
+        )
+        for account in accounts
+    ]
+    all_results = await asyncio.gather(*tasks)
 
-            # Anti-detection: random delay between bets
-            delay = random.uniform(1.5, 4.0)
-            await asyncio.sleep(delay)
+    # Flatten
+    results = []
+    for account_results in all_results:
+        results.extend(account_results)
 
     return results
 
@@ -303,8 +335,11 @@ async def run_sgms(
     get_kelly_stake: GetKellyStake,
     place_bet: PlaceBet,
     on_result: Callable | None = None,
+    min_delay: float = 2.0,
+    max_delay: float = 6.0,
 ) -> list[dict]:
-    """Execute SGM bets with two-step shuffle (games then bets within games)."""
+    """Execute SGM bets with two-step shuffle (games then bets within games).
+    Accounts run CONCURRENTLY — delay is per-account between its own bets."""
     if not bets or not accounts:
         return []
 
@@ -341,22 +376,21 @@ async def run_sgms(
         account_starting_bets[(account.id, first_game)] = cursor % len(inner)
         game_cursors[first_game] = cursor + 1
 
-    # Execute: each account processes its game queue
-    for account in accounts:
+    # Execute: each account processes its game queue CONCURRENTLY
+    async def _run_account_sgm_queue(account):
+        account_results = []
         for game_idx, game_id in enumerate(account_game_queues[account.id]):
             game_bets = game_inner_shuffles[game_id]
 
-            # Determine starting bet
             start_key = (account.id, game_id)
-            if start_key in account_starting_bets:
-                start_bet_idx = account_starting_bets[start_key]
-            else:
-                start_bet_idx = 0
-
+            start_bet_idx = account_starting_bets.get(start_key, 0)
             ordered_bets = build_queue(game_bets, start_bet_idx)
 
-            # Complete all bets in this game before moving to next
-            for bet in ordered_bets:
+            for i, bet in enumerate(ordered_bets):
+                if i > 0 or game_idx > 0:
+                    delay = random.uniform(min_delay, max_delay)
+                    await asyncio.sleep(delay)
+
                 result = await process_chunk(
                     bet, account, state,
                     fetch_live_odds, get_kelly_stake, place_bet,
@@ -369,13 +403,18 @@ async def run_sgms(
                     "game_id": bet.game_id,
                     "result": result,
                 }
-                results.append(entry)
+                account_results.append(entry)
                 if on_result:
                     on_result(entry)
 
-                # Anti-detection: random delay
-                delay = random.uniform(1.5, 4.0)
-                await asyncio.sleep(delay)
+        return account_results
+
+    tasks = [_run_account_sgm_queue(account) for account in accounts]
+    all_results = await asyncio.gather(*tasks)
+
+    results = []
+    for account_results in all_results:
+        results.extend(account_results)
 
     return results
 
@@ -489,6 +528,8 @@ async def run_execution(
     get_kelly_stake: GetKellyStake,
     place_bet: PlaceBet,
     on_result: Callable | None = None,
+    min_delay: float = 2.0,
+    max_delay: float = 6.0,
 ) -> dict:
     """
     Main entry point for the execution engine.
@@ -520,11 +561,13 @@ async def run_execution(
     regular_results = await run_multis(
         regular_bets, account_list, state,
         fetch_live_odds, get_kelly_stake, place_bet, on_result,
+        min_delay, max_delay,
     )
 
     sgm_results = await run_sgms(
         sgm_bets, account_list, state,
         fetch_live_odds, get_kelly_stake, place_bet, on_result,
+        min_delay, max_delay,
     )
 
     logger.info("Execution complete: placed_totals=%s", state.placed_totals)
