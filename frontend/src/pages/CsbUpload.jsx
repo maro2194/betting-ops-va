@@ -564,9 +564,16 @@ export default function CsbUpload() {
       }
       setBetStatuses((prev) => ({ ...prev, ...newStatuses }));
 
-      // Show summary
-      const msg = `Engine v2: ${result.placed} placed, ${result.failed} failed, ${result.skipped} skipped. $${result.total_staked?.toFixed(0)} staked.`;
-      setError(msg);
+      // Show summary with ALL errors
+      const errors = (result.results || [])
+        .filter((r) => !r.success && r.error && r.error !== 'Skipped')
+        .map((r) => `${r.account_label || r.account}: ${r.error}`);
+      const summary = `Engine v2: ${result.placed} placed, ${result.failed} failed, ${result.skipped} skipped. $${result.total_staked?.toFixed(0)} staked.`;
+      if (errors.length > 0) {
+        setError(`${summary}\n\nErrors:\n${errors.join('\n')}`);
+      } else {
+        setError(summary);
+      }
 
     } catch (err) {
       setError(`Engine error: ${err.message}`);
@@ -1058,7 +1065,7 @@ export default function CsbUpload() {
             />
           </div>
           {error && (
-            <div style={{ background: 'var(--danger-muted)', color: 'var(--danger)', padding: '10px 12px', borderRadius: 'var(--radius)', fontSize: 13 }}>
+            <div style={{ background: 'var(--danger-muted)', color: 'var(--danger)', padding: '10px 12px', borderRadius: 'var(--radius)', fontSize: 13, whiteSpace: 'pre-wrap' }}>
               {error}
             </div>
           )}
@@ -1322,7 +1329,7 @@ export default function CsbUpload() {
           </div>
 
           {error && (
-            <div style={{ background: 'var(--danger-muted)', color: 'var(--danger)', padding: '10px 12px', borderRadius: 'var(--radius)', fontSize: 13 }}>
+            <div style={{ background: 'var(--danger-muted)', color: 'var(--danger)', padding: '10px 12px', borderRadius: 'var(--radius)', fontSize: 13, whiteSpace: 'pre-wrap' }}>
               {error}
             </div>
           )}
