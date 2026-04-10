@@ -501,6 +501,80 @@ export default function CsbUpload() {
   };
 
   // ─── Place All ───
+  // ─── Engine v2: Shadow's anti-detection execution ───
+  const handlePlaceEngine = async () => {
+    if (enabledAccounts.length === 0) {
+      setError('Enable at least one account.');
+      return;
+    }
+    setPlacing(true);
+    setError('');
+
+    // Collect selected bets
+    const selectedList = parsedBets
+      .map((b, i) => selectedBets[i] ? b : null)
+      .filter(Boolean);
+
+    if (selectedList.length === 0) {
+      setError('No bets selected.');
+      setPlacing(false);
+      return;
+    }
+
+    // Get enabled account IDs
+    const accountIds = enabledAccounts
+      .map((a) => a.accountNumber || a.account_number || sessions[a.id]?.account_number)
+      .filter(Boolean);
+
+    try {
+      const result = await api.csbExecuteEngine(
+        selectedList,
+        accountIds,
+        sport.sport,
+        sport.competition,
+        parseFloat(unitSize) || 10,
+      );
+
+      // Update bet statuses from engine results
+      const newStatuses = {};
+      for (const r of result.results || []) {
+        // Find matching bet index
+        const betIdx = parsedBets.findIndex(
+          (b) => (b.game_id && b.game_id === r.game_id && b.bet === r.bet_description) ||
+                 (!b.game_id && b.bet === r.bet_description)
+        );
+        if (betIdx >= 0) {
+          if (r.success) {
+            newStatuses[betIdx] = {
+              status: 'placed',
+              combined_odds: r.actual_odds,
+              account: r.account_label,
+              confirmed_amount: r.confirmed_amount,
+            };
+          } else if (r.error === 'Skipped') {
+            // Don't overwrite existing status for skipped
+          } else {
+            newStatuses[betIdx] = {
+              status: 'failed',
+              error: r.error,
+              account: r.account_label,
+            };
+          }
+        }
+      }
+      setBetStatuses((prev) => ({ ...prev, ...newStatuses }));
+
+      // Show summary
+      const msg = `Engine v2: ${result.placed} placed, ${result.failed} failed, ${result.skipped} skipped. $${result.total_staked?.toFixed(0)} staked.`;
+      setError(msg);
+
+    } catch (err) {
+      setError(`Engine error: ${err.message}`);
+    } finally {
+      setPlacing(false);
+    }
+  };
+
   const handlePlaceAll = async () => {
     if (enabledAccounts.length === 0) {
       setError('Enable at least one account.');
@@ -1261,9 +1335,13 @@ export default function CsbUpload() {
                   {resolving ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
                   {resolving ? 'Resolving...' : 'Resolve All'}
                 </button>
-                <button onClick={handlePlaceAll} disabled={placing || enabledAccounts.length === 0 || selectedCount === 0} className="btn btn-success">
+                <button onClick={handlePlaceAll} disabled={placing || enabledAccounts.length === 0 || selectedCount === 0} className="btn btn-secondary">
                   <Play size={16} />
-                  {selectedCount < parsedBets.length ? `Place Selected (${selectedCount})` : 'Place All'}
+                  {selectedCount < parsedBets.length ? `Place v1 (${selectedCount})` : 'Place v1'}
+                </button>
+                <button onClick={handlePlaceEngine} disabled={placing || enabledAccounts.length === 0 || selectedCount === 0} className="btn btn-success">
+                  <Zap size={16} />
+                  {selectedCount < parsedBets.length ? `Place All (${selectedCount})` : 'Place All'}
                 </button>
                 {failedCount > 0 && (
                   <button onClick={handleRetryFailed} disabled={retrying || enabledAccounts.length === 0} className="btn btn-primary">

@@ -160,6 +160,12 @@ export const api = {
       body: JSON.stringify({ session_id: sessionId, ...bet }),
     }),
 
+  csbExecuteEngine: (bets, accountIds, sport, competition, unitSize) =>
+    request('/api/csb/execute-engine', {
+      method: 'POST',
+      body: JSON.stringify({ bets, account_ids: accountIds, sport, competition, unit_size: unitSize }),
+    }),
+
   // ─── bet365 ────────────────────────────────────────────────────────
   bet365Status: () => request('/api/bet365/status'),
   bet365StartAll: () => request('/api/bet365/start-all', { method: 'POST' }),

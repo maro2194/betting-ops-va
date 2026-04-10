@@ -1033,6 +1033,78 @@ async def api_quick_resolve(req: QuickBetRequest, _user: dict = Depends(_verify_
     return {"results": results}
 
 
+# ─── Execution Engine v2 ──────────────────────────────────────────────────────
+
+class EngineRunRequest(_BaseModel):
+    bets: list[dict]          # parsed CSV bets [{bet_type, game_id, bet, odds, min_odds, ev_pct, units, ...}]
+    account_ids: list[str]    # account_numbers to use
+    sport: str = "NBA"
+    competition: str = "NBA"
+    unit_size: float = 75
+
+
+@app.post("/api/csb/execute-engine")
+async def api_csb_execute_engine(req: EngineRunRequest, _user: dict = Depends(_verify_app_token)):
+    """Execute a CSB batch using the v2 execution engine (Shadow's spec).
+
+    Anti-detection shuffle, lazy evaluation, per-runner locking,
+    Kelly ceiling, dynamic re-pricing, safe retries.
+    """
+    from engine_integration import execute_csb_run
+
+    # Get account infos from DB
+    user_accounts = await get_accounts(_user["username"])
+    # Filter to requested account_ids
+    account_infos = [a for a in user_accounts if str(a.get("account_number")) in req.account_ids]
+
+    if not account_infos:
+        raise HTTPException(400, "No matching accounts found. Check account_ids.")
+
+    logger.info("Engine run: %d bets, %d accounts, sport=%s, unit=$%.0f",
+                len(req.bets), len(account_infos), req.sport, req.unit_size)
+
+    results = await execute_csb_run(
+        parsed_bets=req.bets,
+        account_infos=account_infos,
+        sessions=sessions,
+        username=_user["username"],
+        sport=req.sport,
+        competition=req.competition,
+        unit_size=req.unit_size,
+    )
+
+    # Summarize
+    all_entries = results.get("regular", []) + results.get("sgm", [])
+    placed = sum(1 for e in all_entries if e.get("result") and e["result"].success)
+    failed = sum(1 for e in all_entries if e.get("result") and not e["result"].success)
+    skipped = sum(1 for e in all_entries if e.get("result") is None)
+    total_staked = sum(e["result"].confirmed_amount for e in all_entries if e.get("result") and e["result"].success)
+
+    return {
+        "placed": placed,
+        "failed": failed,
+        "skipped": skipped,
+        "total_staked": total_staked,
+        "state": results.get("state", {}),
+        "results": [
+            {
+                "account": e.get("account"),
+                "account_label": e.get("account_label"),
+                "runner_id": e.get("runner_id"),
+                "bet_description": e.get("bet_description"),
+                "game_id": e.get("game_id"),
+                "is_retry": e.get("is_retry", False),
+                "success": e["result"].success if e.get("result") else False,
+                "confirmed_amount": e["result"].confirmed_amount if e.get("result") else 0,
+                "actual_odds": e["result"].actual_odds if e.get("result") else 0,
+                "error": e["result"].error if e.get("result") else "Skipped",
+                "bet_id": e["result"].bet_id if e.get("result") else "",
+            }
+            for e in all_entries
+        ],
+    }
+
+
 @app.post("/api/quick-place")
 async def api_quick_place(req: QuickBetRequest, _user: dict = Depends(_verify_app_token)):
     """Resolve, validate, and place all qualifying bets with human-like delays."""
