@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from sportsbet_auth import sportsbet_browser_login, sportsbet_token_refresh, sportsbet_get_promos
 from pointsbet_auth import pointsbet_browser_login
-from bet365_auth import bet365_browser_login, bet365_place_browser_bet, bet365_place_megaboost, bet365_status
+from bet365_auth import bet365_browser_login, bet365_place_browser_bet, bet365_place_megaboost, bet365_megaboost_all, bet365_place_custom_sgm, bet365_list_boosts, bet365_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 logger = logging.getLogger("token-farm")
@@ -186,6 +186,142 @@ async def b365_megaboost(req: B365MegaboostRequest, _=Depends(verify_key)):
         stake=req.stake,
         boost_index=req.boost_index,
     )
+
+
+class B365CustomSGMRequest(BaseModel):
+    session_id: str
+    selections: list[dict]  # [{"player": "Patrick Voss", "odds": "13.00"}, ...]
+    stake: float = 25
+    apply_promo: bool = True
+
+
+@app.post("/bet365/place-sgm")
+async def b365_place_sgm(req: B365CustomSGMRequest, _=Depends(verify_key)):
+    """Place a custom SGM by clicking individual selections on bet365."""
+    return await bet365_place_custom_sgm(
+        session_id=req.session_id,
+        selections=req.selections,
+        stake=req.stake,
+        apply_promo=req.apply_promo,
+    )
+
+
+class B365MegaboostAllRequest(BaseModel):
+    sport: str = "NRL"
+    match_team: str
+    stake: float = 20
+    boost_index: int = 0
+    accounts: list[str] | None = None  # Optional filter: list of usernames
+
+
+@app.post("/bet365/megaboost-all")
+async def b365_megaboost_all(req: B365MegaboostAllRequest, _=Depends(verify_key)):
+    """Place megaboost across all configured bet365 accounts in parallel."""
+    logger.info(f"bet365 megaboost-all: sport={req.sport} team={req.match_team} stake=${req.stake} filter={req.accounts}")
+    return await bet365_megaboost_all(
+        sport=req.sport,
+        match_team=req.match_team,
+        stake=req.stake,
+        boost_index=req.boost_index,
+        account_filter=req.accounts,
+    )
+
+
+@app.get("/bet365/list-boosts/{session_id}")
+async def b365_list_boosts(session_id: str, _=Depends(verify_key)):
+    """List all visible boost cards on bet365 homepage."""
+    return await bet365_list_boosts(session_id)
+
+
+class B365ClickRequest(BaseModel):
+    session_id: str
+    text: str
+    index: int = 0  # Which occurrence to click (0 = first)
+    exact: bool = True
+
+
+@app.post("/bet365/click")
+async def b365_click(req: B365ClickRequest, _=Depends(verify_key)):
+    """Click a visible text element on the page and return updated page text."""
+    from bet365_auth import _browser_sessions
+    s = _browser_sessions.get(req.session_id)
+    if not s:
+        return {"error": f"No session {req.session_id}"}
+    page = s["page"]
+    try:
+        els = page.get_by_text(req.text, exact=req.exact)
+        count = await els.count()
+        clicked = False
+        idx = 0
+        for i in range(count):
+            if await els.nth(i).is_visible():
+                if idx == req.index:
+                    bbox = await els.nth(i).bounding_box()
+                    # Use mouse click at center of element (more reliable for bet365)
+                    if bbox:
+                        await page.mouse.click(bbox["x"] + bbox["width"]/2, bbox["y"] + bbox["height"]/2)
+                    else:
+                        await els.nth(i).click()
+                    clicked = True
+                    break
+                idx += 1
+        if not clicked:
+            return {"error": f"'{req.text}' not found (visible count={count})", "clicked": False}
+        await page.wait_for_timeout(3000)
+        body = await page.evaluate("document.body.innerText")
+        return {"clicked": True, "text": body[:5000]}
+    except Exception as e:
+        return {"error": str(e), "clicked": False}
+
+
+class B365NavRequest(BaseModel):
+    session_id: str
+    url: str
+
+
+@app.post("/bet365/navigate")
+async def b365_navigate(req: B365NavRequest, _=Depends(verify_key)):
+    """Navigate a bet365 session to a specific URL and return page text."""
+    from bet365_auth import _browser_sessions
+    s = _browser_sessions.get(req.session_id)
+    if not s:
+        return {"error": f"No session {req.session_id}"}
+    page = s["page"]
+    await page.goto(req.url, timeout=30000)
+    await page.wait_for_timeout(5000)
+    # Dismiss cookies
+    try:
+        await page.evaluate("""() => {
+            const buttons = document.querySelectorAll('button, div[role="button"], a');
+            for (const btn of buttons) {
+                if ((btn.textContent || '').trim() === 'Accept All') { btn.click(); return; }
+            }
+        }""")
+        await page.wait_for_timeout(2000)
+    except Exception:
+        pass
+    body = await page.evaluate("document.body.innerText")
+    return {"url": page.url, "text": body[:5000]}
+
+
+class B365EvalRequest(BaseModel):
+    session_id: str
+    js: str
+
+
+@app.post("/bet365/eval")
+async def b365_eval(req: B365EvalRequest, _=Depends(verify_key)):
+    """Run arbitrary JS on a bet365 session page."""
+    from bet365_auth import _browser_sessions
+    s = _browser_sessions.get(req.session_id)
+    if not s:
+        return {"error": f"No session {req.session_id}"}
+    page = s["page"]
+    try:
+        result = await page.evaluate(req.js)
+        return {"result": result}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/bet365/debug/{session_id}")
