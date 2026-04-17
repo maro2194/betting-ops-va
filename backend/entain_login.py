@@ -297,22 +297,39 @@ class EntainLogin:
                     code = params_loc["code"][0]
 
         if not code:
-            # Check if we're already authenticated (cookies set)
+            # Note: we intentionally do NOT retry GET /auth here — Hydra rate-limits
+            # successive /auth calls (observed: second call returns 429). The right
+            # answer is to fix whichever step produced the current "no code" state.
             if self.session.cookies.get("hydra_auth") or self.session.cookies.get("frontend_session_id"):
-                logger.info("No code but auth cookies present — trying direct token request")
-                # Retry the authorize flow — should redirect with code now
-                resp3 = self.session.get(auth_url, headers=headers, timeout=30, allow_redirects=True)
-                final_url3 = str(resp3.url)
-                parsed3 = urlparse(final_url3)
-                params3 = parse_qs(parsed3.query)
-                if "code" in params3:
-                    code = params3["code"][0]
-                    logger.info(f"Got code on retry: {code[:20]}...")
+                logger.warning("hydra_auth cookie present but no code in redirect chain — response inspection needed (see dump below)")
 
         if not code:
             logger.error(f"No authorization code found. Final URL: {final_url2}")
             logger.error(f"Response status: {resp2.status_code}")
+            logger.error(f"Response headers: {dict(resp2.headers)}")
             logger.error(f"Cookies: {dict(self.session.cookies)}")
+            # Dump full body + redirect chain to help debug
+            try:
+                import tempfile, os
+                dump_path = os.path.join(tempfile.gettempdir(), f"entain_dump_{self.brand}_{int(time.time())}.html")
+                with open(dump_path, "w", encoding="utf-8") as f:
+                    f.write(f"<!-- URL: {final_url2} -->\n")
+                    f.write(f"<!-- Status: {resp2.status_code} -->\n")
+                    f.write(f"<!-- Headers: {dict(resp2.headers)} -->\n")
+                    hist = []
+                    for h in getattr(resp2, "history", []) or []:
+                        try:
+                            hist.append(f"  {h.status_code} {h.url} -> Location: {h.headers.get('location', '')}")
+                        except Exception:
+                            pass
+                    f.write(f"<!-- History ({len(hist)}): -->\n")
+                    for line in hist:
+                        f.write(f"<!-- {line} -->\n")
+                    f.write("<!-- BODY -->\n")
+                    f.write(resp2.text[:20000])
+                logger.error(f"Full dump written to: {dump_path}")
+            except Exception as dump_err:
+                logger.error(f"Failed to dump: {dump_err}")
             raise Exception("Failed to obtain authorization code")
 
         # Step 5: Exchange code for access token
