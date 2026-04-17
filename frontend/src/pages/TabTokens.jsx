@@ -34,7 +34,13 @@ export default function TabTokens() {
   const [results, setResults] = useState(null);
   const [executing, setExecuting] = useState(false);
   const [resolving, setResolving] = useState(false);
+  const [resolveProgress, setResolveProgress] = useState(0);
+  const [placementLog, setPlacementLog] = useState([]);
   const [error, setError] = useState('');
+  const [enabledAccounts, setEnabledAccounts] = useState({}); // account_number -> bool
+
+  const toggleAccount = (acctNum) => setEnabledAccounts(prev => ({ ...prev, [acctNum]: !prev[acctNum] }));
+  const isAccountEnabled = (acctNum) => enabledAccounts[acctNum] !== false; // default enabled
 
   const loadAccounts = async () => {
     setLoading(true);
@@ -84,16 +90,28 @@ export default function TabTokens() {
   const handleResolve = async () => {
     if (!csvContent.trim()) return;
     setResolving(true);
+    setResolveProgress(0);
     setError('');
+    // Animate progress bar while waiting (estimate ~8s per account)
+    const totalAccounts = accounts.filter(a => a.authenticated).length || 8;
+    const estimatedMs = totalAccounts * 8000;
+    const startTime = Date.now();
+    const progressInterval = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const pct = Math.min(92, Math.round((elapsed / estimatedMs) * 100));
+      setResolveProgress(pct);
+    }, 300);
     try {
-      const data = await api.post('/api/tab-tokens/execute', { csv_content: csvContent, dry_run: true });
+      const enabledNums = accounts.filter(a => isAccountEnabled(a.account_number)).map(a => a.account_number);
+      const data = await api.post('/api/tab-tokens/execute', { csv_content: csvContent, dry_run: true, enabled_accounts: enabledNums });
+      clearInterval(progressInterval);
+      setResolveProgress(100);
       setResolvedBets(data);
-      // Select all successful bets
       const sel = {};
       (data.results || []).forEach((r, i) => { sel[i] = r.success; });
       setSelected(sel);
       setStep(2);
-    } catch (e) { setError(e.message); }
+    } catch (e) { clearInterval(progressInterval); setError(e.message); }
     finally { setResolving(false); }
   };
 
@@ -101,10 +119,41 @@ export default function TabTokens() {
   const handlePlace = async () => {
     setExecuting(true);
     setError('');
+    setPlacementLog([]);
     try {
-      const data = await api.post('/api/tab-tokens/execute', { csv_content: csvContent, dry_run: false });
-      setResults(data);
-      setStep(3);
+      const enabledNums = accounts.filter(a => isAccountEnabled(a.account_number)).map(a => a.account_number);
+      const resp = await api.post('/api/tab-tokens/execute', { csv_content: csvContent, dry_run: false, enabled_accounts: enabledNums });
+
+      if (resp.job_id) {
+        setPlacementLog([`Job started (${resp.job_id}). Placing bets...`]);
+        let done = false;
+        let seenLines = 0;
+        while (!done) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            const status = await api.get(`/api/tab-tokens/job-status/${resp.job_id}`);
+            // Show new log lines
+            if (status.log && status.log.length > seenLines) {
+              setPlacementLog(status.log);
+              seenLines = status.log.length;
+            }
+            if (status.status === 'complete') {
+              setResults(status.result);
+              setStep(3);
+              done = true;
+            } else if (status.status === 'error') {
+              setError(status.result?.error || 'Placement failed');
+              done = true;
+            }
+          } catch (pollErr) {
+            setError(pollErr.message);
+            done = true;
+          }
+        }
+      } else {
+        setResults(resp);
+        setStep(3);
+      }
     } catch (e) { setError(e.message); }
     finally { setExecuting(false); }
   };
@@ -186,14 +235,15 @@ export default function TabTokens() {
               Accounts ({accounts.length})
             </div>
             <table className="data-table" style={{ width: '100%' }}>
-              <thead><tr><th>Group</th><th>Label</th><th>Account #</th><th>Status</th><th style={{ textAlign: 'right' }}>Savers</th><th>Matches</th></tr></thead>
+              <thead><tr><th style={{ width: 32 }}><input type="checkbox" checked={accounts.every(a => isAccountEnabled(a.account_number))} onChange={() => { const allOn = accounts.every(a => isAccountEnabled(a.account_number)); setEnabledAccounts(Object.fromEntries(accounts.map(a => [a.account_number, !allOn]))); }} /></th><th>Group</th><th>Label</th><th>Account #</th><th>Status</th><th style={{ textAlign: 'right' }}>Savers</th><th>Matches</th></tr></thead>
               <tbody>
                 {accounts.length === 0 ? (
-                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: 20, color: 'var(--text-dim)' }}>
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 20, color: 'var(--text-dim)' }}>
                     {loading ? 'Loading...' : 'Login accounts on Dashboard first, then Refresh.'}
                   </td></tr>
                 ) : accounts.map(a => (
-                  <tr key={a.account_number}>
+                  <tr key={a.account_number} style={{ opacity: isAccountEnabled(a.account_number) ? 1 : 0.4 }}>
+                    <td><input type="checkbox" checked={isAccountEnabled(a.account_number)} onChange={() => toggleAccount(a.account_number)} /></td>
                     <td>
                       <select value={a.group} onChange={e => updateGroup(a.account_number, e.target.value)} className="form-input"
                         style={{ width: 56, padding: '2px 4px', fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
@@ -235,10 +285,23 @@ export default function TabTokens() {
             <textarea value={csvContent} onChange={e => setCsvContent(e.target.value)}
               placeholder="Paste CSV here or upload..." rows={6} className="form-input"
               style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical', boxSizing: 'border-box' }} />
-            <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="btn btn-primary" onClick={handleResolve} disabled={resolving || !csvContent.trim()}>
-                {resolving ? <><Loader2 size={14} className="spin" /> Resolving...</> : <>Resolve & Review <ChevronRight size={14} /></>}
-              </button>
+            <div style={{ marginTop: 12 }}>
+              {resolving && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
+                    <span>Resolving matches, markets & pricing for {accounts.filter(a => a.authenticated).length || '...'} accounts...</span>
+                    <span>{resolveProgress}%</span>
+                  </div>
+                  <div style={{ width: '100%', height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
+                    <div style={{ width: `${resolveProgress}%`, height: '100%', borderRadius: 3, background: 'var(--accent)', transition: 'width 0.3s ease' }} />
+                  </div>
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button className="btn btn-primary" onClick={handleResolve} disabled={resolving || !csvContent.trim()}>
+                  {resolving ? <><Loader2 size={14} className="spin" /> Resolving...</> : <>Resolve & Review <ChevronRight size={14} /></>}
+                </button>
+              </div>
             </div>
           </div>
         </>
@@ -332,6 +395,23 @@ export default function TabTokens() {
               </button>
             </div>
           </div>
+
+          {/* Live placement log */}
+          {placementLog.length > 0 && (
+            <div className="card" style={{ padding: '12px 16px', maxHeight: 240, overflowY: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 16 }}>
+              {placementLog.map((line, i) => (
+                <div key={i} style={{
+                  color: line.includes('\u2713') ? 'var(--success)' : line.includes('\u2717') ? 'var(--danger)' : 'var(--text-secondary)',
+                  padding: '2px 0',
+                }}>{line}</div>
+              ))}
+              {executing && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--primary)', padding: '4px 0' }}>
+                  <Loader2 size={12} className="spin" /> Processing...
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
 

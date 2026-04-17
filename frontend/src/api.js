@@ -166,6 +166,8 @@ export const api = {
       body: JSON.stringify({ bets, account_ids: accountIds, sport, competition, unit_size: unitSize }),
     }),
 
+  csbEngineStatus: (jobId) => request(`/api/csb/engine-status/${jobId}`),
+
   // ─── bet365 ────────────────────────────────────────────────────────
   bet365Status: () => request('/api/bet365/status'),
   bet365StartAll: () => request('/api/bet365/start-all', { method: 'POST' }),
@@ -180,6 +182,10 @@ export const api = {
   bet365PipelineDisable: () => request('/api/bet365/pipeline/disable', { method: 'POST' }),
   bet365GetPicks: (limit = 50) => request(`/api/bet365/picks?limit=${limit}`),
   bet365ManualPick: (pick) => request('/api/bet365/picks/manual', { method: 'POST', body: JSON.stringify(pick) }),
+  bet365ScanBoostsStart: (sport, matchTeam) => request('/api/bet365/scan-boosts', { method: 'POST', body: JSON.stringify({ sport, match_team: matchTeam }) }),
+  bet365ScanBoostsStatus: (jobId) => request(`/api/bet365/scan-boosts/status/${jobId}`),
+  bet365MegaboostAllStart: (sport, matchTeam, stake, boostIndex, accounts) => request('/api/bet365/megaboost-all', { method: 'POST', body: JSON.stringify({ sport, match_team: matchTeam, stake, boost_index: boostIndex, accounts: accounts || null }) }),
+  bet365MegaboostAllStatus: (jobId) => request(`/api/bet365/megaboost-all/status/${jobId}`),
 
   // Live P/L (bet tracker cross-referenced with live disposal counts)
   getLivePnl: (matchId) => request(`/api/sportsbet/live-pnl?match_id=${matchId}`),

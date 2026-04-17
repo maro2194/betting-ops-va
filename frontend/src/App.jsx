@@ -21,6 +21,8 @@ import LiveStats from './pages/LiveStats';
 import Disposals from './pages/Disposals';
 import Promos from './pages/Promos';
 import TabTokens from './pages/TabTokens';
+import Megaboost from './pages/Megaboost';
+import CsbV4 from './pages/CsbV4';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -58,11 +60,13 @@ function AppRoutes() {
         <Route path="/ledger" element={<BetLedger />} />
         <Route path="/csb-results" element={<CsbResults />} />
         <Route path="/bet365" element={<Bet365 />} />
+        <Route path="/megaboost" element={<Megaboost />} />
         <Route path="/sportsbet" element={<Sportsbet />} />
         <Route path="/live" element={<LiveStats />} />
         <Route path="/disposals" element={<Disposals />} />
         <Route path="/promos" element={<Promos />} />
         <Route path="/tab-tokens" element={<TabTokens />} />
+        <Route path="/csb-v4" element={<CsbV4 />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

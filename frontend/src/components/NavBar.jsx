@@ -18,6 +18,7 @@ import {
   Zap,
   BookOpen,
   Gift,
+  Rocket,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -33,9 +34,11 @@ const NAV_GROUPS = [
   {
     label: 'Services',
     items: [
-      { to: '/csb', label: 'CSB', icon: Zap },
+      { to: '/csb-v4', label: 'CSB V4', icon: Zap },
+      { to: '/csb', label: 'CSB (Legacy)', icon: Zap },
       { to: '/json', label: 'Expload', icon: Upload },
-      { to: '/bet365', label: 'bet365', icon: Zap },
+      // { to: '/bet365', label: 'bet365', icon: Zap }, // Hidden — merge with Megaboost later
+      { to: '/megaboost', label: 'bet365', icon: Rocket },
       { to: '/sportsbet', label: 'Sportsbet', icon: Zap },
       { to: '/tab-tokens', label: 'Tab Tokens', icon: Gift },
     ],
@@ -44,8 +47,8 @@ const NAV_GROUPS = [
     label: 'Tools',
     items: [
       { to: '/disposals', label: 'Disposals', icon: FileSpreadsheet },
-      { to: '/csv', label: 'CSV Paste', icon: FileSpreadsheet },
-      { to: '/alloc', label: 'Allocation', icon: Upload },
+      // { to: '/csv', label: 'CSV Paste', icon: FileSpreadsheet }, // Hidden — use CSB Upload instead
+      { to: '/alloc', label: 'Racing Allocation', icon: Upload },
     ],
   },
   {

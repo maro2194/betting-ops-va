@@ -168,6 +168,8 @@ export default function CsbUpload() {
 
   // Placement state
   const [placing, setPlacing] = useState(false);
+  const [hasPlaced, setHasPlaced] = useState(false); // Prevents double-placing via V1+V2
+  const [v2Log, setV2Log] = useState([]);
   const [resolving, setResolving] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -509,8 +511,11 @@ export default function CsbUpload() {
     }
     setPlacing(true);
     setError('');
+    setV2Log([]);
+    const addLog = (msg) => setV2Log(prev => [...prev, { t: new Date().toLocaleTimeString('en-AU', {hour12: false}), msg }]);
+    addLog(`Starting Engine v2 with ${enabledAccounts.length} accounts, unit=$${parseFloat(unitSize)||10}...`);
 
-    // Collect selected bets
+    // Collect selected bets (engine handles account distribution internally per spec)
     const selectedList = parsedBets
       .map((b, i) => selectedBets[i] ? b : null)
       .filter(Boolean);
@@ -521,54 +526,133 @@ export default function CsbUpload() {
       return;
     }
 
-    // Get enabled account IDs
+    // Get enabled account IDs — try account_number first, fall back to label/email/id
     const accountIds = enabledAccounts
-      .map((a) => a.accountNumber || a.account_number || sessions[a.id]?.account_number)
+      .map((a) => {
+        const s = sessions[a.id];
+        return s?.account_number || a.accountNumber || a.account_number || s?.accountLabel || s?.email || a.id;
+      })
       .filter(Boolean);
 
+    // Progress updates while waiting for engine
+    const acctLabels = enabledAccounts.map(a => sessions[a.id]?.accountLabel || sessions[a.id]?.email?.split('@')[0] || a.id);
+    addLog(`Sending ${selectedList.length} bets to ${accountIds.length} accounts (${acctLabels.join(', ')})...`);
+    const progressTimers = [];
+    const estPerBet = 3; // ~3s per bet per account
+    const totalEst = selectedList.length * accountIds.length * estPerBet;
+    let betCounter = 0;
+    selectedList.forEach((bet, bi) => {
+      accountIds.forEach((acctId, ai) => {
+        betCounter++;
+        const label = acctLabels[ai] || acctId;
+        const delay = betCounter * estPerBet * 1000;
+        progressTimers.push(setTimeout(() => {
+          addLog(`Resolving & pricing: ${bet.bet?.substring(0, 50)} on ${label}...`);
+        }, delay));
+      });
+    });
+    progressTimers.push(setTimeout(() => addLog('Finalising placements...'), Math.max(totalEst * 1000 - 3000, 5000)));
+
     try {
-      const result = await api.csbExecuteEngine(
+      // Start async job (returns immediately, avoids Cloudflare 524 timeout)
+      const job = await api.csbExecuteEngine(
         selectedList,
         accountIds,
         sport.sport,
         sport.competition,
         parseFloat(unitSize) || 10,
       );
+      const jobId = job.job_id;
+      addLog(`Engine job started (${jobId}). Polling for results...`);
 
-      // Update bet statuses from engine results
-      const newStatuses = {};
-      for (const r of result.results || []) {
-        // Find matching bet index
-        const betIdx = parsedBets.findIndex(
-          (b) => (b.game_id && b.game_id === r.game_id && b.bet === r.bet_description) ||
-                 (!b.game_id && b.bet === r.bet_description)
-        );
-        if (betIdx >= 0) {
-          if (r.success) {
-            newStatuses[betIdx] = {
-              status: 'placed',
-              combined_odds: r.actual_odds,
-              account: r.account_label,
-              confirmed_amount: r.confirmed_amount,
-            };
-          } else if (r.error === 'Skipped') {
-            // Don't overwrite existing status for skipped
-          } else {
-            newStatuses[betIdx] = {
-              status: 'failed',
-              error: r.error,
-              account: r.account_label,
-            };
-          }
+      // Poll every 3s until done
+      let result = null;
+      while (true) {
+        await new Promise(r => setTimeout(r, 3000));
+        const status = await api.csbEngineStatus(jobId);
+        if (status.status === 'done') {
+          result = status.result;
+          break;
+        } else if (status.status === 'error') {
+          throw new Error(status.result?.error || 'Engine job failed');
         }
       }
-      setBetStatuses((prev) => ({ ...prev, ...newStatuses }));
+      progressTimers.forEach(clearTimeout);
+
+      addLog(`Engine returned: ${result.placed} placed, ${result.failed} failed, ${result.skipped} skipped. $${result.total_staked?.toFixed(0)} staked.`);
+
+      // Group results by bet (runner_id / bet_description) — multiple accounts per bet
+      const betGroups = {};
+      for (const r of (result.results || [])) {
+        const key = r.runner_id || r.bet_description || r.game_id || JSON.stringify(r);
+        if (!betGroups[key]) betGroups[key] = { description: r.bet_description, game_id: r.game_id, placements: [], skips: [], failures: [] };
+        if (r.success) {
+          betGroups[key].placements.push(r);
+        } else if (r.error === 'Skipped' || r.error?.includes('below min') || r.error?.includes('already_placed') || r.error?.includes('duplicate')) {
+          betGroups[key].skips.push(r);
+        } else {
+          betGroups[key].failures.push(r);
+        }
+      }
+
+      // Animate through each unique bet
+      const betKeys = Object.keys(betGroups);
+      for (let gi = 0; gi < betKeys.length; gi++) {
+        const group = betGroups[betKeys[gi]];
+        const betIdx = parsedBets.findIndex(
+          (b) => (b.game_id && b.game_id === group.game_id && b.bet === group.description) ||
+                 (!b.game_id && b.bet === group.description)
+        );
+        if (betIdx < 0) continue;
+
+        setCurrentBetIndex(betIdx);
+
+        addLog(`[${gi+1}/${betKeys.length}] ${group.description || 'bet'}`);
+
+        if (group.placements.length > 0) {
+          const totalPlaced = group.placements.reduce((s, p) => s + (p.confirmed_amount || 0), 0);
+          const accts = group.placements.map(p => `${p.account_label} $${p.confirmed_amount} @${p.actual_odds}`).join(', ');
+          addLog(`  ✓ PLACED $${totalPlaced} — ${accts}`);
+          setBetStatuses((prev) => ({ ...prev, [betIdx]: {
+            status: 'placed',
+            combined_odds: group.placements[0].actual_odds,
+            account: group.placements.map(p => p.account_label).join(', '),
+            confirmed_amount: totalPlaced,
+            placements: group.placements.map(p => ({
+              account: p.account,
+              accountLabel: p.account_label,
+              stake: p.confirmed_amount,
+              combined_odds: p.actual_odds,
+              ticket_number: p.bet_id,
+            })),
+          }}));
+        } else if (group.failures.length > 0) {
+          addLog(`  ✗ FAILED — ${group.failures.map(f => f.error).join('; ')}`);
+          setBetStatuses((prev) => ({ ...prev, [betIdx]: {
+            status: 'failed',
+            error: group.failures.map(f => `${f.account_label}: ${f.error}`).join('; '),
+            account: group.failures.map(f => f.account_label).join(', '),
+          }}));
+        } else {
+          const reasons = [...new Set(group.skips.map(s => s.error).filter(Boolean))];
+          addLog(`  ⊘ SKIPPED — ${reasons.join('; ') || 'below min / odds drift'}`);
+          setBetStatuses((prev) => ({ ...prev, [betIdx]: {
+            status: 'failed',
+            error: reasons.join('; ') || 'Skipped (odds drift / below min)',
+            account: group.skips.map(s => s.account_label).filter(Boolean).join(', '),
+          }}));
+        }
+
+        await new Promise(res => setTimeout(res, 500));
+      }
+      setCurrentBetIndex(-1);
 
       // Show summary with ALL errors
       const errors = (result.results || [])
         .filter((r) => !r.success && r.error && r.error !== 'Skipped')
         .map((r) => `${r.account_label || r.account}: ${r.error}`);
-      const summary = `Engine v2: ${result.placed} placed, ${result.failed} failed, ${result.skipped} skipped. $${result.total_staked?.toFixed(0)} staked.`;
+      const skippedNote = result.skipped > 0 ? ` (${result.skipped} duplicate-account skips)` : '';
+      const summary = `Engine v2: ${result.placed} placed, ${result.failed} failed. $${result.total_staked?.toFixed(0)} staked.${skippedNote}`;
       if (errors.length > 0) {
         setError(`${summary}\n\nErrors:\n${errors.join('\n')}`);
       } else {
@@ -576,9 +660,12 @@ export default function CsbUpload() {
       }
 
     } catch (err) {
+      progressTimers.forEach(clearTimeout);
+      addLog(`Error: ${err.message}`);
       setError(`Engine error: ${err.message}`);
     } finally {
       setPlacing(false);
+      setHasPlaced(true);
     }
   };
 
@@ -610,7 +697,7 @@ export default function CsbUpload() {
     let accIdx = 0;
     const runningBalances = {};
     for (const acc of enabledAccounts) {
-      runningBalances[acc.id] = accountBalances[acc.id] ?? 0;
+      runningBalances[acc.id] = accountBalances[acc.id] || 10000;
     }
 
     let betsSinceBreak = 0;
@@ -846,6 +933,7 @@ export default function CsbUpload() {
     }
 
     setPlacing(false);
+    setHasPlaced(true);
     setCurrentBetIndex(-1);
   };
 
@@ -866,7 +954,7 @@ export default function CsbUpload() {
     let accIdx = 0;
     const runningBalances = {};
     for (const acc of enabledAccounts) {
-      runningBalances[acc.id] = accountBalances[acc.id] ?? 0;
+      runningBalances[acc.id] = accountBalances[acc.id] || 10000;
     }
 
     for (const i of failedIndices) {
@@ -1342,13 +1430,13 @@ export default function CsbUpload() {
                   {resolving ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
                   {resolving ? 'Resolving...' : 'Resolve All'}
                 </button>
-                <button onClick={handlePlaceAll} disabled={placing || enabledAccounts.length === 0 || selectedCount === 0} className="btn btn-secondary">
+                <button onClick={handlePlaceAll} disabled={placing || hasPlaced || enabledAccounts.length === 0 || selectedCount === 0} className="btn btn-secondary" title={hasPlaced ? 'Already placed — reload page to place again' : ''}>
                   <Play size={16} />
-                  {selectedCount < parsedBets.length ? `Place v1 (${selectedCount})` : 'Place v1'}
+                  {hasPlaced ? 'Placed (v1)' : selectedCount < parsedBets.length ? `Place v1 (${selectedCount})` : 'Place v1'}
                 </button>
-                <button onClick={handlePlaceEngine} disabled={placing || enabledAccounts.length === 0 || selectedCount === 0} className="btn btn-success">
+                <button onClick={handlePlaceEngine} disabled={placing || hasPlaced || enabledAccounts.length === 0 || selectedCount === 0} className="btn btn-success" title={hasPlaced ? 'Already placed — reload page to place again' : ''}>
                   <Zap size={16} />
-                  {selectedCount < parsedBets.length ? `Place All (${selectedCount})` : 'Place All'}
+                  {hasPlaced ? 'Placed (v2)' : selectedCount < parsedBets.length ? `Place All (${selectedCount})` : 'Place All'}
                 </button>
                 {failedCount > 0 && (
                   <button onClick={handleRetryFailed} disabled={retrying || enabledAccounts.length === 0} className="btn btn-primary">
@@ -1378,6 +1466,20 @@ export default function CsbUpload() {
               {syncResult.error ? syncResult.error : syncResult.imported > 0 ? (
                 <><CheckCircle size={13} style={{ color: 'var(--success)', verticalAlign: 'middle', marginRight: 4 }} />{syncResult.imported} manual bet{syncResult.imported !== 1 ? 's' : ''} imported ({syncResult.accounts_checked?.length || 0} accounts checked)</>
               ) : `No new manual bets found (${syncResult.accounts_checked?.length || 0} accounts checked)`}
+            </div>
+          )}
+
+          {/* V2 Engine Log */}
+          {v2Log.length > 0 && (
+            <div style={{ padding: '10px 14px', borderRadius: 6, background: 'var(--bg-input)', border: '1px solid var(--border)', fontSize: 11, fontFamily: 'var(--font-mono)', maxHeight: 220, overflowY: 'auto', lineHeight: 1.8, marginBottom: 8 }}>
+              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4, fontSize: 12 }}>Engine v2 Log</div>
+              {v2Log.map((l, i) => (
+                <div key={i} style={{ color: l.msg.includes('\u2713') ? 'var(--success)' : l.msg.includes('\u2717') ? 'var(--danger)' : l.msg.includes('\u2298') ? 'var(--warning)' : 'var(--text-secondary)' }}>
+                  <span style={{ color: 'var(--text-dim)', marginRight: 6 }}>{l.t}</span>
+                  {l.msg}
+                </div>
+              ))}
+              {placing && <div style={{ color: 'var(--primary)' }}><Loader2 size={11} className="animate-spin" style={{ display: 'inline', verticalAlign: -1, marginRight: 4 }} />Waiting for engine response...</div>}
             </div>
           )}
 

@@ -64,6 +64,8 @@ export default function AllocUpload() {
   const [batchStatus, setBatchStatus] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [excludedRows, setExcludedRows] = useState(new Set());
   const pollRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -129,12 +131,46 @@ export default function AllocUpload() {
     }, 2000);
   };
 
+  const handleRetryFailed = async () => {
+    if (!batchId) return;
+    setRetrying(true);
+    setError('');
+    try {
+      await api.post(`/api/multi/csv/${batchId}/retry`);
+      setPhase('executing');
+      startPolling();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const toggleRow = (idx) => {
+    setExcludedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
+  const toggleAllRows = () => {
+    const rows = preview?.preview || [];
+    if (excludedRows.size > 0) {
+      setExcludedRows(new Set());
+    } else {
+      setExcludedRows(new Set(rows.map((_, i) => i)));
+    }
+  };
+
   const handleReset = () => {
     if (pollRef.current) clearInterval(pollRef.current);
     setCsvText('');
     setBatchId(null);
     setPreview(null);
     setBatchStatus(null);
+    setExcludedRows(new Set());
     setError('');
     setPhase('upload');
   };
@@ -174,7 +210,7 @@ export default function AllocUpload() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div>
             <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 8 }}>
-              Paste allocation CSV below — supports both racing and sports bets
+              Paste racing allocation CSV below
             </label>
             <textarea
               value={csvText}
@@ -277,11 +313,17 @@ export default function AllocUpload() {
           )}
 
           {/* Action buttons */}
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {phase === 'preview' && (
               <button onClick={handleExecute} disabled={loading || (preview?.supported || 0) === 0} className="btn btn-primary">
                 {loading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
                 Execute Batch ({preview?.supported || 0} bets)
+              </button>
+            )}
+            {phase === 'done' && currentRows.some((r) => r.status === 'failed' || r.status === 'error') && (
+              <button onClick={handleRetryFailed} disabled={retrying} className="btn btn-warning" style={{ background: 'var(--warning-muted)', color: 'var(--warning)' }}>
+                {retrying ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
+                Retry Failed ({currentRows.filter((r) => r.status === 'failed' || r.status === 'error').length})
               </button>
             )}
             <button onClick={handleReset} className="btn btn-secondary">
@@ -366,13 +408,14 @@ export default function AllocUpload() {
                 <table className="data-table">
                   <thead>
                     <tr>
+                      {phase === 'preview' && <th style={{ width: 32 }}><input type="checkbox" checked={excludedRows.size === 0} onChange={toggleAllRows} style={{ accentColor: 'var(--primary)' }} /></th>}
                       <th style={{ width: 32 }}>#</th>
                       <th>Track</th>
                       <th>Race</th>
                       <th>Horse</th>
                       <th>Bookmaker</th>
                       <th>Initials</th>
-                      <th>Stake Type</th>
+                      <th>Type</th>
                       <th style={{ textAlign: 'right' }}>Stake</th>
                       <th>Status</th>
                     </tr>
@@ -382,22 +425,27 @@ export default function AllocUpload() {
                       if (item.type === 'header') {
                         return (
                           <tr key={`hdr-${idx}`}>
-                            <td colSpan={9} style={{ padding: '10px 0 6px', fontWeight: 600, fontSize: 12, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '1px solid var(--border)' }}>
+                            <td colSpan={phase === 'preview' ? 10 : 9} style={{ padding: '10px 0 6px', fontWeight: 600, fontSize: 12, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '1px solid var(--border)' }}>
                               {item.track} — Race {item.race}
                             </td>
                           </tr>
                         );
                       }
                       const row = item.row;
+                      const rowIdx = item.index;
+                      const isExcluded = excludedRows.has(rowIdx);
+                      const stType = (row.stake_type || 'cash').toLowerCase();
+                      const typeBadge = stType === 'mug' ? 'badge-neutral' : stType === 'bonus' || stType === 'promo' || stType === 'token' ? 'badge-purple' : 'badge-accent';
                       return (
-                        <tr key={`r-${idx}`}>
-                          <td style={{ color: 'var(--text-muted)' }}>{item.index + 1}</td>
+                        <tr key={`r-${idx}`} style={{ opacity: isExcluded ? 0.4 : 1 }}>
+                          {phase === 'preview' && <td><input type="checkbox" checked={!isExcluded} onChange={() => toggleRow(rowIdx)} style={{ accentColor: 'var(--primary)' }} /></td>}
+                          <td style={{ color: 'var(--text-muted)' }}>{rowIdx + 1}</td>
                           <td style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{row.track || '-'}</td>
                           <td style={{ color: 'var(--text-secondary)' }}>{row.race || '-'}</td>
                           <td style={{ color: 'var(--text-primary)' }}>{row.horse || '-'}</td>
                           <td style={{ color: 'var(--text-secondary)' }}>{row.bookmaker || '-'}</td>
                           <td style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{row.initials || '-'}</td>
-                          <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{row.stake_type || '-'}</td>
+                          <td><span className={`badge ${typeBadge}`} style={{ fontSize: 10 }}>{stType.toUpperCase()}</span></td>
                           <td style={{ textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>${row.stake || '0'}</td>
                           <td>
                             {isExecuting ? (

@@ -44,30 +44,50 @@ function Betslip({ legs, onRemove, onClear, sessions }) {
   const [stakingMode, setStakingMode] = useState('stake');
   const [maxLiability, setMaxLiability] = useState('500');
   const [combinedOdds, setCombinedOdds] = useState(null);
-  const [selectedAccount, setSelectedAccount] = useState('');
+  const [selectedAccounts, setSelectedAccounts] = useState(new Set());
   const [checking, setChecking] = useState(false);
   const [placing, setPlacing] = useState(false);
-  const [result, setResult] = useState(null);
+  const [results, setResults] = useState([]); // [{accountId, label, success, ticket_number, error}]
   const [error, setError] = useState('');
 
   const sessionEntries = Object.entries(sessions).filter(([, s]) => s.session_id);
 
+  // Auto-select all accounts on first load
   useEffect(() => {
-    if (sessionEntries.length > 0 && !selectedAccount) {
-      setSelectedAccount(sessionEntries[0][0]);
+    if (sessionEntries.length > 0 && selectedAccounts.size === 0) {
+      setSelectedAccounts(new Set(sessionEntries.map(([id]) => id)));
     }
-  }, [sessionEntries, selectedAccount]);
+  }, [sessionEntries.length]);
 
-  const getSessionId = () => {
-    if (!selectedAccount) return null;
-    return sessions[selectedAccount]?.session_id;
+  const toggleAccount = (id) => {
+    setSelectedAccounts((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selectedAccounts.size === sessionEntries.length) {
+      setSelectedAccounts(new Set());
+    } else {
+      setSelectedAccounts(new Set(sessionEntries.map(([id]) => id)));
+    }
+  };
+
+  const getFirstSessionId = () => {
+    for (const [id] of sessionEntries) {
+      if (selectedAccounts.has(id)) return sessions[id]?.session_id;
+    }
+    return null;
   };
 
   const matchNames = [...new Set(legs.map((l) => l._matchName).filter(Boolean))];
   const isCrossGame = matchNames.length > 1;
 
   const handlePriceCheck = async () => {
-    const sid = getSessionId();
+    const sid = getFirstSessionId();
     if (!sid || legs.length < 2) return;
     setChecking(true);
     setError('');
@@ -97,37 +117,43 @@ function Betslip({ legs, onRemove, onClear, sessions }) {
   };
 
   const handlePlace = async () => {
-    const sid = getSessionId();
-    if (!sid) return;
+    if (selectedAccounts.size === 0) return;
     setPlacing(true);
     setError('');
-    setResult(null);
-    try {
-      const odds = combinedOdds || legs.reduce((acc, l) => acc * l.returnWin, 1);
-      const effectiveStake = getEffectiveStake();
-      let data;
+    setResults([]);
+    const odds = combinedOdds || legs.reduce((acc, l) => acc * l.returnWin, 1);
+    const effectiveStake = getEffectiveStake();
 
-      if (isCrossGame) {
-        const multiLegs = legs.map((l) => ({
-          propositionId: parseInt(l.numberId || l.id),
-          odds: String(l.returnWin),
-        }));
-        data = await api.placeMulti(sid, multiLegs, effectiveStake);
-      } else {
-        const propositions = legs.map((l) => ({
-          proposition_id: parseInt(l.numberId || l.id),
-          odds: String(l.returnWin),
-        }));
-        data = await api.placeSgm(sid, propositions, String(odds), effectiveStake);
-      }
+    const promises = sessionEntries
+      .filter(([id]) => selectedAccounts.has(id))
+      .map(async ([id, s]) => {
+        const sid = s.session_id;
+        const label = s.accountLabel || s.email || `#${s.account_number}`;
+        try {
+          let data;
+          if (isCrossGame) {
+            const multiLegs = legs.map((l) => ({
+              propositionId: parseInt(l.numberId || l.id),
+              odds: String(l.returnWin),
+            }));
+            data = await api.placeMulti(sid, multiLegs, effectiveStake);
+          } else {
+            const propositions = legs.map((l) => ({
+              proposition_id: parseInt(l.numberId || l.id),
+              odds: String(l.returnWin),
+            }));
+            data = await api.placeSgm(sid, propositions, String(odds), effectiveStake);
+          }
+          return { accountId: id, label, success: data.success, ticket_number: data.ticket_number, error: data.error, details: data.details };
+        } catch (err) {
+          return { accountId: id, label, success: false, error: typeof err === 'string' ? err : err.message || String(err) };
+        }
+      });
 
-      setResult(data);
-      if (data.success) onClear();
-    } catch (err) {
-      setError(typeof err === 'string' ? err : err.message || String(err));
-    } finally {
-      setPlacing(false);
-    }
+    const settled = await Promise.all(promises);
+    setResults(settled);
+    if (settled.every((r) => r.success)) onClear();
+    setPlacing(false);
   };
 
   if (legs.length === 0) {
@@ -180,17 +206,22 @@ function Betslip({ legs, onRemove, onClear, sessions }) {
 
         {sessionEntries.length > 0 && (
           <div>
-            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>Account</label>
-            <select
-              value={selectedAccount}
-              onChange={(e) => setSelectedAccount(e.target.value)}
-              className="t-input"
-              style={{ width: '100%', border: '1px solid var(--border)', padding: '8px 10px', fontSize: 13 }}
-            >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Accounts ({selectedAccounts.size}/{sessionEntries.length})</label>
+              <button onClick={toggleAll} className="btn-ghost" style={{ fontSize: 11, padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
+                {selectedAccounts.size === sessionEntries.length ? 'Deselect All' : 'Select All'}
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 140, overflowY: 'auto' }}>
               {sessionEntries.map(([id, s]) => (
-                <option key={id} value={id}>{s.accountLabel || s.email} (#{s.account_number})</option>
+                <label key={id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 'var(--radius)', background: selectedAccounts.has(id) ? 'var(--accent-muted)' : 'var(--bg-input)', border: selectedAccounts.has(id) ? '1px solid var(--primary)' : '1px solid transparent', cursor: 'pointer', fontSize: 13 }}>
+                  <input type="checkbox" checked={selectedAccounts.has(id)} onChange={() => toggleAccount(id)} style={{ accentColor: 'var(--primary)' }} />
+                  <span style={{ color: selectedAccounts.has(id) ? 'var(--primary)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {s.accountLabel || s.email} (#{s.account_number})
+                  </span>
+                </label>
               ))}
-            </select>
+            </div>
           </div>
         )}
 
@@ -253,7 +284,7 @@ function Betslip({ legs, onRemove, onClear, sessions }) {
         <div style={{ display: 'flex', gap: 8 }}>
           <button
             onClick={handlePriceCheck}
-            disabled={checking || legs.length < 2 || !getSessionId()}
+            disabled={checking || legs.length < 2 || selectedAccounts.size === 0}
             className="btn btn-secondary"
             style={{ flex: 1 }}
           >
@@ -261,11 +292,11 @@ function Betslip({ legs, onRemove, onClear, sessions }) {
           </button>
           <button
             onClick={handlePlace}
-            disabled={placing || legs.length < 2 || !getSessionId()}
+            disabled={placing || legs.length < 2 || selectedAccounts.size === 0}
             className="btn btn-success"
             style={{ flex: 1 }}
           >
-            {placing ? 'Placing...' : 'Place Bet'}
+            {placing ? `Placing (${selectedAccounts.size})...` : `Place on ${selectedAccounts.size} Account${selectedAccounts.size !== 1 ? 's' : ''}`}
           </button>
         </div>
 
@@ -274,16 +305,28 @@ function Betslip({ legs, onRemove, onClear, sessions }) {
             {error}
           </div>
         )}
-        {result && result.success && (
-          <div style={{ background: 'var(--success-muted)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 'var(--radius)', padding: 12 }}>
-            <p style={{ color: 'var(--success)', fontSize: 13, fontWeight: 500, margin: 0 }}>Bet placed successfully</p>
-            {result.ticket_number && <p style={{ color: 'var(--success)', opacity: 0.7, fontSize: 12, margin: '4px 0 0' }}>Ticket: {result.ticket_number}</p>}
-          </div>
-        )}
-        {result && !result.success && (
-          <div style={{ background: 'var(--danger-muted)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 'var(--radius)', padding: 12 }}>
-            <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>{result.error || 'Bet placement failed'}</p>
-            {result.details && <p style={{ color: 'var(--danger)', opacity: 0.7, fontSize: 12, margin: '4px 0 0' }}>{JSON.stringify(result.details)}</p>}
+        {results.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {results.map((r) => (
+              <div key={r.accountId} style={{
+                background: r.success ? 'var(--success-muted)' : 'var(--danger-muted)',
+                border: r.success ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(239,68,68,0.3)',
+                borderRadius: 'var(--radius)', padding: '8px 12px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: r.success ? 'var(--success)' : 'var(--danger)' }}>{r.label}</span>
+                  <span style={{ fontSize: 12, color: r.success ? 'var(--success)' : 'var(--danger)', opacity: 0.8 }}>
+                    {r.success ? 'Placed' : 'Failed'}
+                  </span>
+                </div>
+                {r.success && r.ticket_number && (
+                  <p style={{ color: 'var(--success)', opacity: 0.7, fontSize: 11, margin: '2px 0 0' }}>TSN: {r.ticket_number}</p>
+                )}
+                {!r.success && r.error && (
+                  <p style={{ color: 'var(--danger)', opacity: 0.7, fontSize: 11, margin: '2px 0 0' }}>{r.error}</p>
+                )}
+              </div>
+            ))}
           </div>
         )}
 

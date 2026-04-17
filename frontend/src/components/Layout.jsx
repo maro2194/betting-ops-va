@@ -10,7 +10,7 @@ const PAGE_TITLES = {
   '/csv': 'CSV Paste',
   '/multi': 'Multi Builder',
   '/json': 'JSON Upload',
-  '/alloc': 'Allocation Upload',
+  '/alloc': 'Racing Allocation',
   '/bookie-accounts': 'Bookie Accounts',
   '/bet365': 'bet365 Auto-Placer',
   '/sportsbet': 'Sportsbet',
@@ -19,6 +19,7 @@ const PAGE_TITLES = {
   '/csb-results': 'CSB Results',
   '/ledger': 'Bet Ledger',
   '/csb': 'CSB Upload',
+  '/csb-v4': 'CSB V4.0',
   '/tab-tokens': 'Tab Tokens',
 };
 

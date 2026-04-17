@@ -12,6 +12,13 @@ import {
 } from 'lucide-react';
 import { SPORT_OPTIONS } from '../sportOptions';
 
+function humanRoundDown(amount) {
+  if (amount < 1) return 1;
+  if (amount < 10) return Math.floor(amount);
+  if (amount < 100) return Math.floor(amount / 5) * 5;
+  return Math.floor(amount / 10) * 10;
+}
+
 export default function MultiBuilder() {
   const { sessions } = useSessions();
   const [selectedSportIdx, setSelectedSportIdx] = useState(0); // AFL default
@@ -24,28 +31,51 @@ export default function MultiBuilder() {
   const [loadingMatches, setLoadingMatches] = useState(false);
   const [loadingMarkets, setLoadingMarkets] = useState(false);
   const [stake, setStake] = useState('10');
-  const [selectedAccount, setSelectedAccount] = useState('');
+  const [stakingMode, setStakingMode] = useState('stake');
+  const [maxLiability, setMaxLiability] = useState('500');
+  const [selectedAccounts, setSelectedAccounts] = useState(new Set());
+  const [checking, setChecking] = useState(false);
   const [placing, setPlacing] = useState(false);
-  const [result, setResult] = useState(null);
+  const [combinedOdds, setCombinedOdds] = useState(null);
+  const [results, setResults] = useState([]);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
   const sessionEntries = Object.entries(sessions).filter(([, s]) => s.session_id);
 
   useEffect(() => {
-    if (sessionEntries.length > 0 && !selectedAccount) {
-      setSelectedAccount(sessionEntries[0][0]);
+    if (sessionEntries.length > 0 && selectedAccounts.size === 0) {
+      setSelectedAccounts(new Set(sessionEntries.map(([id]) => id)));
     }
-  }, [sessionEntries, selectedAccount]);
+  }, [sessionEntries.length]);
+
+  const toggleAccount = (id) => {
+    setSelectedAccounts((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selectedAccounts.size === sessionEntries.length) {
+      setSelectedAccounts(new Set());
+    } else {
+      setSelectedAccounts(new Set(sessionEntries.map(([id]) => id)));
+    }
+  };
 
   const getSessionId = () => {
     const vals = Object.values(sessions);
     return vals.length > 0 ? vals[0].session_id : null;
   };
 
-  const getSelectedSessionId = () => {
-    if (!selectedAccount) return null;
-    return sessions[selectedAccount]?.session_id;
+  const getFirstSessionId = () => {
+    for (const [id] of sessionEntries) {
+      if (selectedAccounts.has(id)) return sessions[id]?.session_id;
+    }
+    return null;
   };
 
   const handleLoadMatches = async () => {
@@ -103,10 +133,40 @@ export default function MultiBuilder() {
   const isSelected = (propId) => legs.some((l) => l.id === propId);
   const isMatchUsed = (matchName) => legs.some((l) => l.matchName === matchName);
 
+  const naiveOdds = legs.reduce((acc, l) => acc * l.returnWin, 1);
+
+  const getEffectiveStake = () => {
+    const odds = combinedOdds || naiveOdds;
+    if (stakingMode === 'liability') {
+      const liab = parseFloat(maxLiability) || 500;
+      const raw = liab / odds;
+      return humanRoundDown(raw);
+    }
+    return parseFloat(stake) || 10;
+  };
+
+  const handlePriceCheck = async () => {
+    const sid = getFirstSessionId();
+    if (!sid || legs.length < 2) return;
+    setChecking(true);
+    setError('');
+    try {
+      const propositions = legs.map((l) => ({
+        proposition_id: parseInt(l.numberId || l.id),
+        odds: String(l.returnWin),
+      }));
+      const data = await api.priceCheck(sid, propositions, getEffectiveStake(), 'WIN');
+      setCombinedOdds(parseFloat(data.combined_odds));
+    } catch (err) {
+      setError(typeof err === 'string' ? err : err.message || String(err));
+    } finally {
+      setChecking(false);
+    }
+  };
+
   const handlePlace = async () => {
-    const sid = getSelectedSessionId();
-    if (!sid) {
-      setError('Select a logged-in TAB account.');
+    if (selectedAccounts.size === 0) {
+      setError('Select at least one account.');
       return;
     }
     if (legs.length < 2) {
@@ -115,23 +175,31 @@ export default function MultiBuilder() {
     }
     setPlacing(true);
     setError('');
-    setResult(null);
-    try {
-      const apiLegs = legs.map((l) => ({
-        propositionId: l.id,
-        odds: String(l.returnWin),
-      }));
-      const data = await api.placeMulti(sid, apiLegs, parseFloat(stake) || 10);
-      setResult(data);
-      if (data.success) setLegs([]);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setPlacing(false);
-    }
-  };
+    setResults([]);
+    const effectiveStake = getEffectiveStake();
 
-  const naiveOdds = legs.reduce((acc, l) => acc * l.returnWin, 1);
+    const promises = sessionEntries
+      .filter(([id]) => selectedAccounts.has(id))
+      .map(async ([id, s]) => {
+        const sid = s.session_id;
+        const label = s.accountLabel || s.email || `#${s.account_number}`;
+        try {
+          const apiLegs = legs.map((l) => ({
+            propositionId: l.id,
+            odds: String(l.returnWin),
+          }));
+          const data = await api.placeMulti(sid, apiLegs, effectiveStake);
+          return { accountId: id, label, success: data.success, ticket_number: data.ticket_number, error: data.error };
+        } catch (err) {
+          return { accountId: id, label, success: false, error: typeof err === 'string' ? err : err.message || String(err) };
+        }
+      });
+
+    const settled = await Promise.all(promises);
+    setResults(settled);
+    if (settled.every((r) => r.success)) setLegs([]);
+    setPlacing(false);
+  };
 
   const filteredMarkets = search
     ? markets.filter(
@@ -337,75 +405,96 @@ export default function MultiBuilder() {
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13 }}>
                     <span style={{ color: 'var(--text-secondary)' }}>Combined Odds:</span>
-                    <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{naiveOdds.toFixed(2)}</span>
+                    <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{(combinedOdds || naiveOdds).toFixed(2)}</span>
                   </div>
 
                   {sessionEntries.length > 0 && (
                     <div>
-                      <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>Account</label>
-                      <select
-                        value={selectedAccount}
-                        onChange={(e) => setSelectedAccount(e.target.value)}
-                        className="t-input"
-                        style={{ width: '100%', border: '1px solid var(--border)', padding: '8px 10px', fontSize: 13 }}
-                      >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Accounts ({selectedAccounts.size}/{sessionEntries.length})</label>
+                        <button onClick={toggleAll} className="btn-ghost" style={{ fontSize: 11, padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
+                          {selectedAccounts.size === sessionEntries.length ? 'Deselect All' : 'Select All'}
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 140, overflowY: 'auto' }}>
                         {sessionEntries.map(([id, s]) => (
-                          <option key={id} value={id}>
-                            {s.accountLabel || s.email} {s.account_number ? `(#${s.account_number})` : ''}
-                          </option>
+                          <label key={id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 'var(--radius)', background: selectedAccounts.has(id) ? 'var(--accent-muted)' : 'var(--bg-input)', border: selectedAccounts.has(id) ? '1px solid var(--primary)' : '1px solid transparent', cursor: 'pointer', fontSize: 13 }}>
+                            <input type="checkbox" checked={selectedAccounts.has(id)} onChange={() => toggleAccount(id)} style={{ accentColor: 'var(--primary)' }} />
+                            <span style={{ color: selectedAccounts.has(id) ? 'var(--primary)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {s.accountLabel || s.email} {s.account_number ? `(#${s.account_number})` : ''}
+                            </span>
+                          </label>
                         ))}
-                      </select>
+                      </div>
                     </div>
                   )}
 
                   <div>
-                    <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>Stake ($)</label>
-                    <input
-                      type="number"
-                      value={stake}
-                      onChange={(e) => setStake(e.target.value)}
-                      min="1"
-                      step="1"
-                      className="t-input"
-                      style={{ width: '100%', border: '1px solid var(--border)', padding: '8px 10px', fontSize: 13 }}
-                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                      <button onClick={() => setStakingMode('stake')} className={stakingMode === 'stake' ? 'btn btn-primary' : 'btn btn-secondary'} style={{ padding: '4px 10px', fontSize: 12 }}>Fixed Stake</button>
+                      <button onClick={() => setStakingMode('liability')} className={stakingMode === 'liability' ? 'btn btn-primary' : 'btn btn-secondary'} style={{ padding: '4px 10px', fontSize: 12 }}>Max Liability</button>
+                    </div>
+                    {stakingMode === 'stake' ? (
+                      <input type="number" value={stake} onChange={(e) => setStake(e.target.value)} min="1" step="1" placeholder="Stake $" className="t-input" style={{ width: '100%', border: '1px solid var(--border)', padding: '8px 10px', fontSize: 13 }} />
+                    ) : (
+                      <input type="number" value={maxLiability} onChange={(e) => setMaxLiability(e.target.value)} min="10" step="10" placeholder="Max liability $" className="t-input" style={{ width: '100%', border: '1px solid var(--border)', padding: '8px 10px', fontSize: 13 }} />
+                    )}
                   </div>
+
+                  {stakingMode === 'liability' && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13 }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Calculated Stake:</span>
+                      <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>${getEffectiveStake()}</span>
+                    </div>
+                  )}
 
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13 }}>
                     <span style={{ color: 'var(--text-secondary)' }}>Potential Return:</span>
                     <span style={{ color: 'var(--success)', fontWeight: 600 }}>
-                      ${(naiveOdds * (parseFloat(stake) || 0)).toFixed(2)}
+                      ${((combinedOdds || naiveOdds) * getEffectiveStake()).toFixed(2)}
                     </span>
                   </div>
 
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      onClick={() => setLegs([])}
-                      className="btn btn-secondary"
-                    >
-                      <Trash2 size={14} />
-                      Clear
+                    <button onClick={handlePriceCheck} disabled={checking || legs.length < 2 || selectedAccounts.size === 0} className="btn btn-secondary" style={{ flex: 1 }}>
+                      {checking ? 'Checking...' : 'Price Check'}
                     </button>
-                    <button
-                      onClick={handlePlace}
-                      disabled={placing || legs.length < 2 || !getSelectedSessionId()}
-                      className="btn btn-success"
-                      style={{ flex: 1 }}
-                    >
-                      {placing ? <Loader2 size={14} className="animate-spin" /> : <ShoppingCart size={14} />}
-                      {placing ? 'Placing...' : 'Place Multi'}
+                    <button onClick={() => setLegs([])} className="btn btn-secondary" style={{ padding: '8px 12px' }}>
+                      <Trash2 size={14} />
                     </button>
                   </div>
+                  <button
+                    onClick={handlePlace}
+                    disabled={placing || legs.length < 2 || selectedAccounts.size === 0}
+                    className="btn btn-success"
+                    style={{ width: '100%' }}
+                  >
+                    {placing ? <Loader2 size={14} className="animate-spin" /> : <ShoppingCart size={14} />}
+                    {placing ? `Placing (${selectedAccounts.size})...` : `Place on ${selectedAccounts.size} Account${selectedAccounts.size !== 1 ? 's' : ''}`}
+                  </button>
 
-                  {result && result.success && (
-                    <div style={{ background: 'var(--success-muted)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 'var(--radius)', padding: 12 }}>
-                      <p style={{ color: 'var(--success)', fontSize: 13, fontWeight: 500, margin: 0 }}>Multi placed successfully</p>
-                      {result.ticket_number && <p style={{ color: 'var(--success)', opacity: 0.7, fontSize: 12, margin: '4px 0 0' }}>Ticket: {result.ticket_number}</p>}
-                    </div>
-                  )}
-                  {result && !result.success && (
-                    <div style={{ background: 'var(--danger-muted)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 'var(--radius)', padding: 12 }}>
-                      <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>{result.error || 'Placement failed'}</p>
+                  {results.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {results.map((r) => (
+                        <div key={r.accountId} style={{
+                          background: r.success ? 'var(--success-muted)' : 'var(--danger-muted)',
+                          border: r.success ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(239,68,68,0.3)',
+                          borderRadius: 'var(--radius)', padding: '8px 12px',
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ fontSize: 13, fontWeight: 500, color: r.success ? 'var(--success)' : 'var(--danger)' }}>{r.label}</span>
+                            <span style={{ fontSize: 12, color: r.success ? 'var(--success)' : 'var(--danger)', opacity: 0.8 }}>
+                              {r.success ? 'Placed' : 'Failed'}
+                            </span>
+                          </div>
+                          {r.success && r.ticket_number && (
+                            <p style={{ color: 'var(--success)', opacity: 0.7, fontSize: 11, margin: '2px 0 0' }}>TSN: {r.ticket_number}</p>
+                          )}
+                          {!r.success && r.error && (
+                            <p style={{ color: 'var(--danger)', opacity: 0.7, fontSize: 11, margin: '2px 0 0' }}>{r.error}</p>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
 
@@ -442,14 +531,79 @@ export default function MultiBuilder() {
               ))}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13, marginTop: 4 }}>
                 <span style={{ color: 'var(--text-secondary)' }}>Combined Odds:</span>
-                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{naiveOdds.toFixed(2)}</span>
+                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{(combinedOdds || naiveOdds).toFixed(2)}</span>
               </div>
+
+              {sessionEntries.length > 0 && (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Accounts ({selectedAccounts.size}/{sessionEntries.length})</label>
+                    <button onClick={toggleAll} className="btn-ghost" style={{ fontSize: 11, padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
+                      {selectedAccounts.size === sessionEntries.length ? 'Deselect All' : 'Select All'}
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {sessionEntries.map(([id, s]) => (
+                      <label key={id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 'var(--radius)', background: selectedAccounts.has(id) ? 'var(--accent-muted)' : 'var(--bg-input)', border: selectedAccounts.has(id) ? '1px solid var(--primary)' : '1px solid transparent', cursor: 'pointer', fontSize: 13 }}>
+                        <input type="checkbox" checked={selectedAccounts.has(id)} onChange={() => toggleAccount(id)} style={{ accentColor: 'var(--primary)' }} />
+                        <span style={{ color: selectedAccounts.has(id) ? 'var(--primary)' : 'var(--text-secondary)' }}>
+                          {s.accountLabel || s.email} {s.account_number ? `(#${s.account_number})` : ''}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <button onClick={() => setStakingMode('stake')} className={stakingMode === 'stake' ? 'btn btn-primary' : 'btn btn-secondary'} style={{ padding: '4px 10px', fontSize: 12 }}>Fixed Stake</button>
+                  <button onClick={() => setStakingMode('liability')} className={stakingMode === 'liability' ? 'btn btn-primary' : 'btn btn-secondary'} style={{ padding: '4px 10px', fontSize: 12 }}>Max Liability</button>
+                </div>
+                {stakingMode === 'stake' ? (
+                  <input type="number" value={stake} onChange={(e) => setStake(e.target.value)} min="1" step="1" placeholder="Stake $" className="t-input" style={{ width: '100%', border: '1px solid var(--border)', padding: '8px 10px', fontSize: 13 }} />
+                ) : (
+                  <input type="number" value={maxLiability} onChange={(e) => setMaxLiability(e.target.value)} min="10" step="10" placeholder="Max liability $" className="t-input" style={{ width: '100%', border: '1px solid var(--border)', padding: '8px 10px', fontSize: 13 }} />
+                )}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13 }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Potential Return:</span>
+                <span style={{ color: 'var(--success)', fontWeight: 600 }}>${((combinedOdds || naiveOdds) * getEffectiveStake()).toFixed(2)}</span>
+              </div>
+
               <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={() => setLegs([])} className="btn btn-secondary"><Trash2 size={14} /> Clear</button>
-                <button onClick={handlePlace} disabled={placing || legs.length < 2} className="btn btn-success" style={{ flex: 1 }}>
-                  {placing ? 'Placing...' : 'Place Multi'}
+                <button onClick={handlePriceCheck} disabled={checking || legs.length < 2 || selectedAccounts.size === 0} className="btn btn-secondary" style={{ flex: 1 }}>
+                  {checking ? 'Checking...' : 'Price Check'}
                 </button>
+                <button onClick={() => setLegs([])} className="btn btn-secondary"><Trash2 size={14} /></button>
               </div>
+              <button onClick={handlePlace} disabled={placing || legs.length < 2 || selectedAccounts.size === 0} className="btn btn-success" style={{ width: '100%' }}>
+                {placing ? `Placing (${selectedAccounts.size})...` : `Place on ${selectedAccounts.size} Account${selectedAccounts.size !== 1 ? 's' : ''}`}
+              </button>
+
+              {results.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {results.map((r) => (
+                    <div key={r.accountId} style={{
+                      background: r.success ? 'var(--success-muted)' : 'var(--danger-muted)',
+                      border: r.success ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(239,68,68,0.3)',
+                      borderRadius: 'var(--radius)', padding: '8px 12px',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 13, fontWeight: 500, color: r.success ? 'var(--success)' : 'var(--danger)' }}>{r.label}</span>
+                        <span style={{ fontSize: 12, color: r.success ? 'var(--success)' : 'var(--danger)', opacity: 0.8 }}>{r.success ? 'Placed' : 'Failed'}</span>
+                      </div>
+                      {r.success && r.ticket_number && <p style={{ color: 'var(--success)', opacity: 0.7, fontSize: 11, margin: '2px 0 0' }}>TSN: {r.ticket_number}</p>}
+                      {!r.success && r.error && <p style={{ color: 'var(--danger)', opacity: 0.7, fontSize: 11, margin: '2px 0 0' }}>{r.error}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {sessionEntries.length === 0 && (
+                <p style={{ color: 'var(--warning)', fontSize: 12 }}>Login to a TAB account on the Dashboard first.</p>
+              )}
             </div>
           )}
         </div>

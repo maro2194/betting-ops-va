@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api';
 import { useSessions } from '../context/SessionContext';
-import { User, Wifi, WifiOff, RefreshCw, Trash2, LogIn, Plus, X, TrendingUp, TrendingDown, Clock, Activity, LayoutGrid, List } from 'lucide-react';
+import { User, Wifi, WifiOff, RefreshCw, Trash2, LogIn, Plus, X, TrendingUp, TrendingDown, Clock, Activity, LayoutGrid, List, Pencil } from 'lucide-react';
 
 function StatCard({ label, value, icon: Icon, trend, trendLabel, color }) {
   return (
@@ -43,8 +43,13 @@ function StatCard({ label, value, icon: Icon, trend, trendLabel, color }) {
   );
 }
 
-function AddAccountModal({ onClose, onAdded }) {
-  const [form, setForm] = useState({ label: '', email: '', password: '', proxy_url: '', account_number: '' });
+function AccountModal({ onClose, onSaved, editAccount }) {
+  const isEdit = !!editAccount;
+  const [form, setForm] = useState(
+    isEdit
+      ? { label: editAccount.label || '', email: editAccount.email || '', password: editAccount.password || '', proxy_url: editAccount.proxyUrl || '', account_number: editAccount.accountNumber || '' }
+      : { label: '', email: '', password: '', proxy_url: '', account_number: '' }
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -53,14 +58,16 @@ function AddAccountModal({ onClose, onAdded }) {
     setLoading(true);
     setError('');
     try {
-      await api.addAccount({
+      const payload = {
         label: form.label,
         email: form.email,
         password: form.password,
         proxy_url: form.proxy_url || undefined,
         account_number: form.account_number || undefined,
-      });
-      onAdded();
+      };
+      if (isEdit) payload.id = editAccount.id;
+      await api.addAccount(payload);
+      onSaved();
       onClose();
     } catch (err) {
       setError(err.message);
@@ -98,7 +105,7 @@ function AddAccountModal({ onClose, onAdded }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>Add Account</h2>
+          <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>{isEdit ? 'Edit Account' : 'Add Account'}</h2>
           <button onClick={onClose} className="btn-ghost" style={{ padding: 4, borderRadius: 'var(--radius-sm)' }} aria-label="Close">
             <X size={18} style={{ color: 'var(--text-muted)' }} />
           </button>
@@ -130,7 +137,7 @@ function AddAccountModal({ onClose, onAdded }) {
               Cancel
             </button>
             <button type="submit" disabled={loading} className="btn btn-primary" style={{ flex: 1 }}>
-              {loading ? 'Adding...' : 'Add Account'}
+              {loading ? 'Saving...' : isEdit ? 'Save Changes' : 'Add Account'}
             </button>
           </div>
         </form>
@@ -139,7 +146,7 @@ function AddAccountModal({ onClose, onAdded }) {
   );
 }
 
-function AccountCard({ account, session, onLogin, onDelete, onLogout }) {
+function AccountCard({ account, session, onLogin, onDelete, onLogout, onEdit }) {
   const [loginLoading, setLoginLoading] = useState(false);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [balance, setBalance] = useState(null);
@@ -276,12 +283,18 @@ function AccountCard({ account, session, onLogin, onDelete, onLogout }) {
           </>
         )}
         <button
+          onClick={() => onEdit(account)}
+          className="btn btn-secondary"
+          aria-label="Edit account"
+        >
+          <Pencil size={14} />
+        </button>
+        <button
           onClick={() => onDelete(account.id)}
           className="btn btn-danger"
           aria-label="Delete account"
         >
           <Trash2 size={14} />
-          <span className="hidden sm:inline">Delete</span>
         </button>
       </div>
     </div>
@@ -368,6 +381,7 @@ export default function Dashboard() {
   const [accounts, setAccounts] = useState([]);
   const [betStats, setBetStats] = useState({ total: 0, pending: 0, won: 0, lost: 0, pl: 0, staked: 0 });
   const [showAdd, setShowAdd] = useState(false);
+  const [editAccount, setEditAccount] = useState(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('card');
   const { sessions, addSession, removeSession } = useSessions();
@@ -385,7 +399,9 @@ export default function Dashboard() {
 
   const fetchBetStats = useCallback(async () => {
     try {
-      const data = await api.getBetHistory(undefined, undefined, 500);
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const data = await api.getBetHistory(undefined, undefined, 500, todayStr, todayStr);
       const bets = data.bets || [];
       const parseMoney = (v) => parseFloat(String(v || '0').replace(/[$,]/g, '')) || 0;
       const won = bets.filter((b) => b.status === 'Won' || b.status === 'won').length;
@@ -433,10 +449,34 @@ export default function Dashboard() {
     }).catch(() => {});
   }, [fetchAccounts, fetchBetStats, addSession]);
 
+  const [loginAllRunning, setLoginAllRunning] = useState(false);
+  const [loginAllProgress, setLoginAllProgress] = useState('');
+
   const handleLogin = async (account) => {
     const result = await api.tabLogin(account.email, account.password, account.proxyUrl, account.accountNumber);
     addSession(account.id, { ...result, accountLabel: account.label });
     return result;
+  };
+
+  const handleLoginAll = async () => {
+    const offlineAccounts = accounts.filter((a) => !sessions[a.id]?.session_id);
+    if (offlineAccounts.length === 0) return;
+    setLoginAllRunning(true);
+    for (let i = 0; i < offlineAccounts.length; i++) {
+      const acct = offlineAccounts[i];
+      setLoginAllProgress(`${acct.label} (${i + 1}/${offlineAccounts.length})`);
+      try {
+        await handleLogin(acct);
+      } catch (err) {
+        console.error(`Login failed for ${acct.label}:`, err);
+      }
+      // Staggered delay: 3-5s between logins (anti-detection)
+      if (i < offlineAccounts.length - 1) {
+        await new Promise((r) => setTimeout(r, 3000 + Math.random() * 2000));
+      }
+    }
+    setLoginAllRunning(false);
+    setLoginAllProgress('');
   };
 
   const handleLogout = async (accountId) => {
@@ -474,7 +514,7 @@ export default function Dashboard() {
       {/* Stat Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 32 }}>
         <StatCard
-          label="Total Bets"
+          label="Today's Bets"
           value={betStats.total}
           icon={Activity}
           color="var(--accent-muted)"
@@ -486,7 +526,7 @@ export default function Dashboard() {
           color="var(--warning-muted)"
         />
         <StatCard
-          label="Win Rate"
+          label="Win Rate (Today)"
           value={`${winRate}%`}
           icon={TrendingUp}
           trend={parseFloat(winRate) >= 50 ? 1 : -1}
@@ -494,7 +534,7 @@ export default function Dashboard() {
           color="var(--success-muted)"
         />
         <StatCard
-          label="P/L (Settled)"
+          label="P/L (Today)"
           value={`${betStats.pl >= 0 ? '+' : ''}$${betStats.pl.toFixed(2)}`}
           icon={betStats.pl >= 0 ? TrendingUp : TrendingDown}
           trend={betStats.pl}
@@ -531,6 +571,16 @@ export default function Dashboard() {
               <List size={14} style={{ color: viewMode === 'table' ? 'var(--text-primary)' : 'var(--text-muted)' }} />
             </button>
           </div>
+          {accounts.some((a) => !sessions[a.id]?.session_id) && (
+            <button
+              onClick={handleLoginAll}
+              disabled={loginAllRunning}
+              className="btn btn-success"
+            >
+              <LogIn size={14} />
+              {loginAllRunning ? loginAllProgress : 'Login All'}
+            </button>
+          )}
           <button
             onClick={() => setShowAdd(true)}
             className="btn btn-primary"
@@ -559,6 +609,7 @@ export default function Dashboard() {
               onLogin={handleLogin}
               onDelete={handleDelete}
               onLogout={handleLogout}
+              onEdit={(a) => setEditAccount(a)}
             />
           ))}
         </div>
@@ -596,7 +647,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {showAdd && <AddAccountModal onClose={() => setShowAdd(false)} onAdded={fetchAccounts} />}
+      {showAdd && <AccountModal onClose={() => setShowAdd(false)} onSaved={fetchAccounts} />}
+      {editAccount && <AccountModal onClose={() => setEditAccount(null)} onSaved={fetchAccounts} editAccount={editAccount} />}
     </div>
   );
 }
