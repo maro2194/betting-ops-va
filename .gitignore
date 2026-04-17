@@ -23,3 +23,22 @@ Thumbs.db
 backend/.env
 backend/telegram_session.session
 backend/platforms/platforms/
+
+# Secrets
+token_farm/bet365_accounts.json
+
+# OMC session/HUD state
+.omc/
+
+# Debug data dumps
+backend/pj_*.json
+
+# One-off exploration scripts (Apr 3)
+/check_bets.py
+/check_missing_pj.py
+/cross_check.py
+/cross_check2.py
+/final_summary.py
+/full_check.py
+/import_2_missing.py
+/import_missing_and_summary.py
