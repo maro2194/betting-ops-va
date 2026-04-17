@@ -36,7 +36,8 @@ async def fetch_live_odds(bet: Bet, account: Account) -> float | None:
     competition = bet.competition or "NBA"
 
     try:
-        resolved = resolve_csb_bet(
+        resolved = await asyncio.to_thread(
+            resolve_csb_bet,
             token=token,
             proxy_url=proxy_url,
             bet_type=bet.bet_type,
@@ -50,8 +51,8 @@ async def fetch_live_odds(bet: Bet, account: Account) -> float | None:
 
         if resolved.get("resolved") and resolved.get("combined_odds"):
             odds = float(resolved["combined_odds"])
-            # Stash resolved propositions for placement later
-            bet.raw["_resolved"] = resolved
+            # Stash resolved propositions per-account (avoid shared state race)
+            bet.raw[f"_resolved_{account.id}"] = resolved
             return odds
 
         logger.warning("Live odds unavailable for %s: %s", bet.runner_id, resolved.get("error"))
@@ -125,11 +126,12 @@ async def place_bet(account: Account, bet: Bet, stake: float, live_odds: float) 
     if not legacy_token:
         return ChunkResult(success=False, error="No legacy token — re-login required")
 
-    # Re-resolve to get fresh propositions at current odds
-    resolved = bet.raw.get("_resolved")
+    # Use per-account resolved data (avoids shared state race between workers)
+    resolved = bet.raw.get(f"_resolved_{account.id}")
     if not resolved or not resolved.get("propositions"):
         try:
-            resolved = resolve_csb_bet(
+            resolved = await asyncio.to_thread(
+                resolve_csb_bet,
                 token=token, proxy_url=proxy_url,
                 bet_type=bet.bet_type, game_id=bet.game_id,
                 bet_description=bet.bet_description, stake=str(stake),
@@ -153,7 +155,8 @@ async def place_bet(account: Account, bet: Bet, stake: float, live_odds: float) 
     for attempt in range(1, MAX_PRICE_RETRIES + 1):
         try:
             if bet.is_sgm:
-                place_result = place_sgm_bet(
+                place_result = await asyncio.to_thread(
+                    place_sgm_bet,
                     legacy_token=legacy_token,
                     account_number=account_number,
                     propositions=propositions,
@@ -162,7 +165,8 @@ async def place_bet(account: Account, bet: Bet, stake: float, live_odds: float) 
                     proxy_url=proxy_url,
                 )
             else:
-                place_result = place_multi_bet(
+                place_result = await asyncio.to_thread(
+                    place_multi_bet,
                     legacy_token=legacy_token,
                     account_number=account_number,
                     legs=[{"propositionId": p.get("propositionId"), "odds": p.get("odds")}
@@ -178,7 +182,8 @@ async def place_bet(account: Account, bet: Bet, stake: float, live_odds: float) 
         if not place_result.get("success") and "price" in err.lower() and "changed" in err.lower() and attempt < MAX_PRICE_RETRIES:
             logger.info("Price changed on attempt %d for %s, re-resolving...", attempt, bet.runner_id)
             try:
-                resolved = resolve_csb_bet(
+                resolved = await asyncio.to_thread(
+                    resolve_csb_bet,
                     token=token, proxy_url=proxy_url,
                     bet_type=bet.bet_type, game_id=bet.game_id,
                     bet_description=bet.bet_description, stake=str(stake),
@@ -187,7 +192,7 @@ async def place_bet(account: Account, bet: Bet, stake: float, live_odds: float) 
                 if resolved.get("resolved"):
                     combined_odds = str(resolved["combined_odds"])
                     propositions = resolved["propositions"]
-                    bet.raw["_resolved"] = resolved
+                    bet.raw[f"_resolved_{account.id}"] = resolved
             except Exception:
                 pass
             await asyncio.sleep(random.uniform(0.3, 0.8))
@@ -196,12 +201,20 @@ async def place_bet(account: Account, bet: Bet, stake: float, live_odds: float) 
         break  # Success or non-price error
 
     if place_result and place_result.get("success"):
+        # Build V1-compatible leg details for death riding
+        detailed_legs = []
+        game_id = bet.game_id or ""
+        for prop in propositions:
+            prop_name = prop.get("name", "")
+            prop_odds = prop.get("odds", "")
+            detailed_legs.append({"name": f"{prop_name}", "odds": str(prop_odds), "propositionId": prop.get("propositionId")})
         return ChunkResult(
             success=True,
             confirmed_amount=stake,
             actual_odds=float(combined_odds) if combined_odds else live_odds,
             bet_id=place_result.get("ticket_number", ""),
             tsn=place_result.get("ticket_number", ""),
+            legs=detailed_legs,
         )
     else:
         return ChunkResult(
@@ -335,16 +348,19 @@ async def execute_csb_run(
             r = entry.get("result")
             if r and r.success:
                 account_label = entry.get("account_label", entry.get("account", ""))
+                # Use detailed legs from placement (V1-compatible format for death riding)
+                legs = r.legs if r.legs else [{"name": entry.get("bet_description", "")}]
                 await save_bet(username, {
                     "account_number": entry["account"],
                     "account_label": account_label,
                     "tsn": r.tsn or r.bet_id,
                     "bet_type": "SGM" if "::" in entry.get("runner_id", "") else "Multi",
-                    "legs": [{"name": entry.get("bet_description", "")}],
+                    "legs": legs,
                     "combined_odds": str(r.actual_odds),
                     "stake": str(r.confirmed_amount),
                     "status": "Pending",
                     "source": "csb_engine",
+                    "game_id": entry.get("game_id", ""),
                 })
     except Exception as e:
         logger.error("Failed to save engine bets to DB: %s", e)

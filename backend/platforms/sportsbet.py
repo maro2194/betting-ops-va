@@ -411,11 +411,11 @@ class SportsbetClient(PlatformClient):
         if not outcome_id or price_num is None or price_den is None:
             return {"success": False, "error": f"Missing runner data: id={outcome_id} num={price_num} den={price_den}"}
 
-        # Map stake_type to legType
-        leg_type = "W" if stake_type.lower() in ("win", "w") else "P"
+        stake_lower = (stake_type or "cash").lower()
+        is_bonus = stake_lower in ("bonus", "promo", "token")
+        leg_type = "W"
 
-        payload = {
-            "betItems": [{
+        bet_item = {
                 "betNo": 0,
                 "stakePerLine": stake,
                 "numLines": 1,
@@ -436,7 +436,27 @@ class SportsbetClient(PlatformClient):
                     }],
                 }],
                 "legType": leg_type,
-            }],
+        }
+
+        # Attach freebet token if stake_type is bonus/promo/token
+        if is_bonus:
+            try:
+                promos = await self.get_user_promos(session)
+                freebet_token = None
+                for p in promos.get("promos", []):
+                    if p.get("type") == "BonusBack" and p.get("tokens_remaining", 0) > 0:
+                        freebet_token = p
+                        break
+                if freebet_token:
+                    bet_item["freebetTokenId"] = freebet_token["promo_id"]
+                    logger.info(f"SB: attaching freebet token {freebet_token['promo_id']}")
+                else:
+                    logger.warning("SB: no freebet token found, placing as cash bet")
+            except Exception as e:
+                logger.warning(f"SB: failed to fetch freebets: {e}, placing as cash bet")
+
+        payload = {
+            "betItems": [bet_item],
             "checkBalance": True,
             "errorDetail": "ALL",
             "firstBet": True,

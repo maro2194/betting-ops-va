@@ -1,13 +1,19 @@
 """
-BetOps Execution Engine — Anti-Detection, Dynamic Re-Pricing & Safe Re-Placement.
+BetOps Execution Engine V3 — Anti-Detection, Dynamic Re-Pricing & Safe Re-Placement.
 
-Implements Shadow's v3 spec:
-  - Pseudo-random shuffle per run (unique starting bets per account)
-  - Lazy evaluation with live odds fetch per chunk
-  - Mid-split dynamic re-pricing ("Cop the Drop")
-  - Per-runner_id synchronous locking
-  - Safe retry with history-based source of truth
-  - SGM two-step game+bet shuffle
+V3 improvements over V2:
+  - $5 standard rounding (replaces $10 round-down for accurate Kelly staking)
+  - Pre-bet dwell time (2-4s before placement, mimics human browsing)
+  - Lease-based lock expiry (90s TTL, prevents deadlocks from API hangs)
+  - $9.99 closure failsafe (remaining < $10 → tip complete, no wasted API calls)
+  - Auto-sweep retry (failed tips retried in second pass after main run)
+  - asyncio.shield (protects placement + balance update from VPS crashes)
+  - 3-spin keep-alive (workers loop board 3x before shutting down)
+  - SGM match batching (lock entire match, process all tips before moving on)
+
+Architecture: MasterChecklist manages shared state. Workers are concurrent per-account
+loops that take tips from the board. Lease locks prevent collisions. JIT Kelly calculation
+ensures each account gets the right chunk based on current state.
 
 See: BetOps_Execution_Engine_Spec_v3.docx
 """
@@ -21,63 +27,63 @@ from typing import Optional, Callable, Awaitable
 
 logger = logging.getLogger("execution_engine")
 
+# ─── Constants ───────────────────────────────────────────────────────────────
 
-# ─── Canonical Runner ID ──────────────────────────────────────────────────────
+DWELL_MIN = 2.0      # Pre-bet dwell (human browsing simulation)
+DWELL_MAX = 4.0
+POST_BET_MIN = 2.0   # Post-bet delay
+POST_BET_MAX = 6.0
+SPIN_WAIT_MIN = 5.0  # Between worker spins
+SPIN_WAIT_MAX = 10.0
+LOCK_TTL = 90        # Lease lock expiry (seconds)
+MAX_SPINS = 10       # Worker keep-alive spins (generous — real exit is "no remaining work")
+MIN_BET = 10         # TAB minimum bet ($)
+
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+def standard_round_5(value: float) -> float:
+    """Round to nearest $5 (arithmetic half-up rounding)."""
+    return int(value / 5.0 + 0.5) * 5.0
+
+
+def floor_round_5(value: float) -> float:
+    """Floor to nearest $5 (never rounds up — used when capping)."""
+    return (int(value) // 5) * 5
+
+
+# ─── Canonical Runner ID ────────────────────────────────────────────────────
 
 def normalize_runner_id(game_id: str, bet_description: str, is_sgm: bool) -> str:
     """
-    Canonical runner key used for ALL tracking: placed_totals, allocated_totals,
-    history lookups, and retries.
-
+    Canonical runner key used for ALL tracking: placed_totals, history lookups, retries.
     MUST be called identically at every call site. Defined once here, imported everywhere.
-
-    SGM:   "{GAME_ID}::{normalized_description}"
-    Multi: "{normalized_description}"
     """
     desc = (bet_description or "").strip().lower()
-    desc = re.sub(r'\s+', ' ', desc)       # collapse whitespace
-    desc = desc.replace(" / ", "/")         # normalize slash spacing
-    desc = re.sub(r'\s*\+\s*', '+', desc)  # normalize plus spacing: "20 + Points", "20+ Points", "20 +Points" all → "20+Points"
+    desc = re.sub(r'\s+', ' ', desc)
+    desc = desc.replace(" / ", "/")
+    desc = re.sub(r'\s*\+\s*', '+', desc)
     if is_sgm and game_id:
         return f"{game_id.strip().upper()}::{desc}"
     return desc
 
 
-# ─── Run State ────────────────────────────────────────────────────────────────
-
-@dataclass
-class RunState:
-    """Per-run mutable state. Created fresh for each execution run."""
-    placed_totals: dict[str, float] = field(default_factory=dict)      # runner_id -> total confirmed placed
-    allocated_totals: dict[str, float] = field(default_factory=dict)    # runner_id -> total allocated this round
-    account_balances: dict[str, float] = field(default_factory=dict)    # account_id -> balance at run start
-    skipped_runners: dict[str, set] = field(default_factory=dict)       # runner_id -> set of account_ids
-    locks: dict[str, asyncio.Lock] = field(default_factory=dict)        # runner_id -> asyncio.Lock
-
-
-def get_lock(state: RunState, runner_id: str) -> asyncio.Lock:
-    """Get or create a per-runner_id lock."""
-    if runner_id not in state.locks:
-        state.locks[runner_id] = asyncio.Lock()
-    return state.locks[runner_id]
-
-
-# ─── Bet & Account Types ─────────────────────────────────────────────────────
+# ─── Data Types ──────────────────────────────────────────────────────────────
 
 @dataclass
 class Bet:
     """A single bet from the CSV."""
-    bet_type: str           # "SGM" or "Multi"
-    game_id: str            # e.g. "20260410_BOS_NYK" (SGMs) or "" (Multis)
-    bet_description: str    # e.g. "Karl-Anthony Towns 20+ Points/Sam Hauser 10+ Points"
-    odds: float             # tipped odds from CSV
-    min_odds: float         # minimum acceptable odds
-    ev_pct: float           # expected value %
-    units: float            # Kelly units
+    bet_type: str
+    game_id: str
+    bet_description: str
+    odds: float
+    min_odds: float
+    ev_pct: float
+    units: float
     sport: str = ""
     competition: str = ""
     leg_odds: list[float] = field(default_factory=list)
-    raw: dict = field(default_factory=dict)  # original parsed CSV row
+    raw: dict = field(default_factory=dict)
 
     @property
     def is_sgm(self) -> bool:
@@ -91,9 +97,9 @@ class Bet:
 @dataclass
 class Account:
     """A TAB account available for betting."""
-    id: str                 # account_number or session_id
-    label: str              # e.g. "AGK"
-    session: dict           # session data (token, legacy_token, proxy_url, etc.)
+    id: str
+    label: str
+    session: dict
     enabled: bool = True
 
 
@@ -106,420 +112,423 @@ class ChunkResult:
     error: str = ""
     bet_id: str = ""
     tsn: str = ""
+    skipped: bool = False
+    legs: list = field(default_factory=list)
 
 
-# ─── Callbacks (injected by caller) ──────────────────────────────────────────
-# The engine doesn't know HOW to fetch odds or place bets — the caller provides these.
+# ─── V2 Backward Compat ─────────────────────────────────────────────────────
+
+@dataclass
+class RunState:
+    """V2 backward-compatibility alias. V3 uses MasterChecklist internally."""
+    placed_totals: dict = field(default_factory=dict)
+    allocated_totals: dict = field(default_factory=dict)
+    account_balances: dict = field(default_factory=dict)
+    skipped_runners: dict = field(default_factory=dict)
+    placed_by_account: dict = field(default_factory=dict)
+    dead_runners: set = field(default_factory=set)
+    locks: dict = field(default_factory=dict)
+
+
+# ─── Callbacks (injected by engine_integration.py) ───────────────────────────
 
 FetchLiveOdds = Callable[[Bet, Account], Awaitable[Optional[float]]]
-GetKellyStake = Callable[[Bet, float], float]  # (bet, odds) -> stake
-PlaceBet = Callable[[Account, Bet, float, float], Awaitable[ChunkResult]]  # (account, bet, stake, odds) -> result
-GetConfirmedHistory = Callable[[Account, str], Awaitable[float]]  # (account, runner_id) -> total placed
+GetKellyStake = Callable[[Bet, float], float]
+PlaceBet = Callable[[Account, Bet, float, float], Awaitable[ChunkResult]]
+GetConfirmedHistory = Callable[[Account, str], Awaitable[float]]
 
 
-# ─── Shuffle Helpers ──────────────────────────────────────────────────────────
+# ─── Tip State ───────────────────────────────────────────────────────────────
 
-def build_queue(items: list, start_idx: int) -> list:
-    """Return items starting from start_idx, wrapping around."""
-    n = len(items)
-    return [items[(start_idx + i) % n] for i in range(n)]
-
-
-def group_by_game(bets: list[Bet]) -> dict[str, list[Bet]]:
-    """Group SGM bets by game_id."""
-    groups: dict[str, list[Bet]] = {}
-    for bet in bets:
-        key = bet.game_id or "unknown"
-        groups.setdefault(key, []).append(bet)
-    return groups
+@dataclass
+class TipState:
+    """Per-tip tracking. Managed atomically by MasterChecklist."""
+    target: Optional[float] = None
+    placed_total: float = 0.0
+    placed_accounts: set = field(default_factory=set)
+    skipped_accounts: set = field(default_factory=set)
+    status: str = "PENDING"  # PENDING → PLACED | RETRY_QUEUED → PLACED | DEAD
 
 
-# ─── Core: process_chunk ──────────────────────────────────────────────────────
+# ─── Master Checklist (Atomic State Manager) ────────────────────────────────
 
-async def process_chunk(
-    bet: Bet,
-    account: Account,
-    state: RunState,
-    fetch_live_odds: FetchLiveOdds,
-    get_kelly_stake: GetKellyStake,
-    place_bet: PlaceBet,
-) -> Optional[ChunkResult]:
+class MasterChecklist:
     """
-    Process a single bet chunk for a single account.
-    Acquires per-runner lock, fetches live odds, calculates stake, places or skips.
-    Returns ChunkResult or None if skipped.
+    Centralized brain. All shared state mutations go through _state_lock.
+    Workers are concurrent loops that take instructions from the Master.
     """
-    runner_id = bet.runner_id
-    lock = get_lock(state, runner_id)
 
-    async with lock:
-        # Step 1: fetch live odds
-        live_odds = await fetch_live_odds(bet, account)
-        if live_odds is None:
-            logger.warning("SKIP | runner=%s acct=%s | live odds unavailable", runner_id, account.label)
-            return ChunkResult(success=False, error="Live odds unavailable")
+    def __init__(self, bets: list[Bet], accounts: list[Account]):
+        self.bets = bets
+        self.account_list = accounts
+        self.tip_states: dict[str, TipState] = {}
+        self.account_balances: dict[str, float] = {}
+        self.account_exhausted: dict[str, bool] = {}
 
-        # Step 2: check minimum odds
-        if live_odds < bet.min_odds:
-            logger.info("SKIP | runner=%s acct=%s | live_odds=%.2f below min=%.2f",
-                        runner_id, account.label, live_odds, bet.min_odds)
-            state.skipped_runners.setdefault(runner_id, set()).add(account.id)
-            return None  # abort — do not redistribute
+        for bet in bets:
+            if bet.runner_id not in self.tip_states:
+                self.tip_states[bet.runner_id] = TipState()
 
-        # Step 3: check if already fully covered
-        already_placed = state.placed_totals.get(runner_id, 0)
-        original_target = get_kelly_stake(bet, bet.odds)
-        # original_target is fixed at tipped odds — does not increase if odds improve
+        self._leases: dict[str, tuple[float, str]] = {}
+        self._state_lock = asyncio.Lock()
 
-        if already_placed >= original_target:
-            logger.info("SKIP | runner=%s acct=%s | already_placed=%.0f >= target=%.0f",
-                        runner_id, account.label, already_placed, original_target)
-            return None
+    # ── Lease Locks (unified TTL) ──────────────────────────────────────────
 
-        # Step 4: recalculate Kelly at live odds (only downward adjustment)
-        kelly_target = min(original_target, get_kelly_stake(bet, live_odds))
-        if already_placed >= kelly_target:
-            logger.info("ABORT | runner=%s acct=%s | already_placed=%.0f >= kelly=%.0f",
-                        runner_id, account.label, already_placed, kelly_target)
-            return None
+    async def acquire_lock(self, bet: Bet, account_id: str) -> bool:
+        """Acquire lease. SGMs lock match, Multis lock tip. Non-blocking."""
+        lock_key = f"match:{bet.game_id}" if bet.is_sgm else f"tip:{bet.runner_id}"
+        now = time.time()
+        async with self._state_lock:
+            if lock_key in self._leases:
+                expiry, owner = self._leases[lock_key]
+                if now < expiry and owner != account_id:
+                    return False
+            self._leases[lock_key] = (now + LOCK_TTL, account_id)
+            return True
 
-        # Step 5: remaining budget
-        remaining_budget = kelly_target - already_placed
+    async def release_lock(self, bet: Bet, account_id: str):
+        lock_key = f"match:{bet.game_id}" if bet.is_sgm else f"tip:{bet.runner_id}"
+        async with self._state_lock:
+            if lock_key in self._leases:
+                _, owner = self._leases[lock_key]
+                if owner == account_id:
+                    del self._leases[lock_key]
 
-        # Step 6: identify eligible remaining accounts
-        # (handled at caller level — this function processes one account at a time)
-        # For single-account chunk, raw_chunk = remaining_budget / num_eligible
-        # Caller should pass the right share. Here we use remaining_budget directly
-        # and let the ceiling cap handle overshoot.
+    # ── JIT Chunk Calculation ──────────────────────────────────────────────
 
-        # Step 7-8: chunk calculation (caller handles multi-account splitting)
-        raw_chunk = remaining_budget
-
-        # Step 9: apply ceiling cap
-        allocated_so_far = state.allocated_totals.get(runner_id, 0)
-        ceiling = kelly_target - allocated_so_far
-        chunk = min(raw_chunk, ceiling)
-
-        # Step 10: round down to nearest $10
-        chunk = (chunk // 10) * 10
-
-        # Step 11: minimum bet check
-        if chunk < 10:
-            logger.info("SKIP | runner=%s acct=%s | chunk=%.0f below min bet",
-                        runner_id, account.label, chunk)
-            return None
-
-        # Check account balance
-        balance = state.account_balances.get(account.id, 0)
-        if chunk > balance:
-            chunk = (balance // 10) * 10
-            if chunk < 10:
-                logger.info("SKIP | runner=%s acct=%s | insufficient balance",
-                            runner_id, account.label)
+    async def calculate_chunk(
+        self, runner_id: str, account_id: str,
+        live_odds: float, get_kelly_stake: GetKellyStake, bet: Bet,
+    ) -> Optional[float]:
+        """
+        Just-in-time chunk calc. Sets/updates Kelly target, returns this account's
+        fair share. Returns stake, 0 if skip, or None if tip closed.
+        """
+        async with self._state_lock:
+            state = self.tip_states.get(runner_id)
+            if not state or state.status not in ("PENDING", "RETRY_QUEUED"):
                 return None
 
-        # Step 12: place bet
-        logger.info("PLACING | runner=%s acct=%s | chunk=$%.0f odds=%.2f",
-                     runner_id, account.label, chunk, live_odds)
+            if account_id in state.placed_accounts or account_id in state.skipped_accounts:
+                return None
 
-        result = await place_bet(account, bet, chunk, live_odds)
+            # Scout (first account) or ratchet down (odds dropped)
+            original_target = get_kelly_stake(bet, bet.odds)
+            live_target = get_kelly_stake(bet, live_odds)
 
-        # Step 13: confirm and update state
-        if result.success:
-            confirmed = result.confirmed_amount or chunk
-            state.placed_totals[runner_id] = state.placed_totals.get(runner_id, 0) + confirmed
-            state.allocated_totals[runner_id] = state.allocated_totals.get(runner_id, 0) + confirmed
-            state.account_balances[account.id] = balance - confirmed
-            logger.info("CONFIRMED | runner=%s acct=%s | placed=$%.0f running_total=$%.0f",
-                         runner_id, account.label, confirmed, state.placed_totals[runner_id])
-        else:
-            logger.warning("FAILED | runner=%s acct=%s | error=%s",
-                           runner_id, account.label, result.error)
+            if state.target is None:
+                state.target = original_target
+            new_target = min(state.target, live_target)
+            if new_target < state.target:
+                state.target = new_target
 
-        return result
+            remaining = state.target - state.placed_total
+
+            # $9.99 closure: remaining below min bet → done
+            if remaining < MIN_BET:
+                state.status = "PLACED"
+                logger.info("CLOSED | runner=%s | $%.0f / $%.0f (remaining $%.2f < $%d)",
+                            runner_id, state.placed_total, state.target, remaining, MIN_BET)
+                return None
+
+            # Eligible accounts
+            eligible = [
+                acc for acc in self.account_list
+                if acc.id not in state.placed_accounts
+                and acc.id not in state.skipped_accounts
+                and not self.account_exhausted.get(acc.id, False)
+            ]
+            num_eligible = max(1, len(eligible))
+
+            balance = self.account_balances.get(account_id, 0)
+            if balance < MIN_BET:
+                self.account_exhausted[account_id] = True
+                state.skipped_accounts.add(account_id)
+                self._check_closure(state, runner_id)
+                return None
+
+            # $5 standard rounding split
+            chunk = standard_round_5(remaining / num_eligible)
+
+            # Greedy: if split below min but tip can still fill → take larger share
+            if chunk < MIN_BET and remaining >= MIN_BET:
+                chunk = standard_round_5(min(remaining, balance))
+
+            # Cap at remaining (floor to avoid over-allocation)
+            if chunk > remaining:
+                chunk = floor_round_5(remaining)
+
+            # Cap at balance (floor)
+            if chunk > balance:
+                chunk = floor_round_5(balance)
+
+            # Final min check
+            if chunk < MIN_BET:
+                state.skipped_accounts.add(account_id)
+                self._check_closure(state, runner_id)
+                return 0
+
+            return chunk
+
+    def _check_closure(self, state: TipState, runner_id: str):
+        """Close tip if no eligible accounts remain. Must hold _state_lock."""
+        eligible = [
+            acc for acc in self.account_list
+            if acc.id not in state.placed_accounts
+            and acc.id not in state.skipped_accounts
+            and not self.account_exhausted.get(acc.id, False)
+        ]
+        if not eligible:
+            state.status = "PLACED"
+            logger.info("CLOSED | runner=%s | $%.0f / $%.0f (no eligible accounts)",
+                        runner_id, state.placed_total, state.target or 0)
+
+    # ── State Updates ──────────────────────────────────────────────────────
+
+    async def handle_odds_below_min(self, runner_id: str, account_id: str):
+        """Main run → RETRY_QUEUED. Sweep run → skip account."""
+        async with self._state_lock:
+            state = self.tip_states.get(runner_id)
+            if not state:
+                return
+            if state.status == "PENDING":
+                state.status = "RETRY_QUEUED"
+                state.skipped_accounts.clear()
+            else:
+                state.skipped_accounts.add(account_id)
+                self._check_closure(state, runner_id)
+
+    async def record_placement(self, runner_id: str, account_id: str, amount_placed: float):
+        """Record successful bet. Updates balance, checks closure."""
+        async with self._state_lock:
+            self.account_balances[account_id] -= amount_placed
+            if self.account_balances[account_id] < MIN_BET:
+                self.account_exhausted[account_id] = True
+
+            state = self.tip_states[runner_id]
+            state.placed_total += amount_placed
+            state.placed_accounts.add(account_id)
+
+            remaining = (state.target or 0) - state.placed_total
+            if remaining < MIN_BET:
+                state.status = "PLACED"
+                logger.info("CLOSED | runner=%s | $%.0f / $%.0f (target hit)",
+                            runner_id, state.placed_total, state.target or 0)
+            else:
+                self._check_closure(state, runner_id)
+
+    async def record_skip(self, runner_id: str, account_id: str):
+        """Record that an account couldn't place on this tip."""
+        async with self._state_lock:
+            state = self.tip_states.get(runner_id)
+            if state:
+                state.skipped_accounts.add(account_id)
+                self._check_closure(state, runner_id)
 
 
-# ─── Pipeline 1: Regular Multis ──────────────────────────────────────────────
+# ─── Per-Bet Processing ─────────────────────────────────────────────────────
 
-async def _run_account_multi_queue(
+def _make_entry(account: Account, bet: Bet, result: ChunkResult) -> dict:
+    """Build result entry in V2-compatible format."""
+    return {
+        "account": account.id,
+        "account_label": account.label,
+        "runner_id": bet.runner_id,
+        "bet_description": bet.bet_description,
+        "game_id": bet.game_id,
+        "result": result,
+    }
+
+
+async def process_single_tip(
     account: Account,
-    queue: list[Bet],
-    state: RunState,
-    fetch_live_odds: FetchLiveOdds,
-    get_kelly_stake: GetKellyStake,
-    place_bet: PlaceBet,
-    on_result: Callable | None = None,
-    min_delay: float = 2.0,
-    max_delay: float = 6.0,
-) -> list[dict]:
-    """Process one account's bet queue. Per-account delays between bets."""
-    results = []
-    for i, bet in enumerate(queue):
-        if i > 0:
-            delay = random.uniform(min_delay, max_delay)
-            await asyncio.sleep(delay)
-
-        result = await process_chunk(
-            bet, account, state,
-            fetch_live_odds, get_kelly_stake, place_bet,
-        )
-        entry = {
-            "account": account.id,
-            "account_label": account.label,
-            "runner_id": bet.runner_id,
-            "bet_description": bet.bet_description,
-            "game_id": bet.game_id,
-            "result": result,
-        }
-        results.append(entry)
-        if on_result:
-            on_result(entry)
-
-    return results
-
-
-async def run_multis(
-    bets: list[Bet],
-    accounts: list[Account],
-    state: RunState,
-    fetch_live_odds: FetchLiveOdds,
-    get_kelly_stake: GetKellyStake,
-    place_bet: PlaceBet,
-    on_result: Callable | None = None,
-    min_delay: float = 2.0,
-    max_delay: float = 6.0,
-) -> list[dict]:
-    """Execute regular multi bets with shuffled starting positions per account.
-    Accounts run CONCURRENTLY — delay is per-account between its own bets."""
-    if not bets or not accounts:
-        return []
-
-    n = len(bets)
-
-    # Generate one pseudo-random shuffle of bet indices
-    shuffled_indices = list(range(n))
-    random.shuffle(shuffled_indices)
-
-    # Assign each account a unique starting position
-    account_queues = {}
-    for i, account in enumerate(accounts):
-        start_pos = shuffled_indices[i % n]
-        account_queues[account.id] = build_queue(bets, start_pos)
-
-    # Run all accounts concurrently — per-runner locks ensure safe shared state
-    tasks = [
-        _run_account_multi_queue(
-            account, account_queues[account.id], state,
-            fetch_live_odds, get_kelly_stake, place_bet, on_result,
-            min_delay, max_delay,
-        )
-        for account in accounts
-    ]
-    all_results = await asyncio.gather(*tasks)
-
-    # Flatten
-    results = []
-    for account_results in all_results:
-        results.extend(account_results)
-
-    return results
-
-
-# ─── Pipeline 2: SGMs ────────────────────────────────────────────────────────
-
-async def run_sgms(
-    bets: list[Bet],
-    accounts: list[Account],
-    state: RunState,
-    fetch_live_odds: FetchLiveOdds,
-    get_kelly_stake: GetKellyStake,
-    place_bet: PlaceBet,
-    on_result: Callable | None = None,
-    min_delay: float = 2.0,
-    max_delay: float = 6.0,
-) -> list[dict]:
-    """Execute SGM bets with two-step shuffle (games then bets within games).
-    Accounts run CONCURRENTLY — delay is per-account between its own bets."""
-    if not bets or not accounts:
-        return []
-
-    results = []
-    games = group_by_game(bets)
-    game_ids = list(games.keys())
-
-    if not game_ids:
-        return []
-
-    # Step 1: Shuffle game list, assign starting game per account
-    shuffled_games = game_ids[:]
-    random.shuffle(shuffled_games)
-
-    account_game_queues = {}
-    for i, account in enumerate(accounts):
-        start_idx = i % len(shuffled_games)
-        account_game_queues[account.id] = build_queue(shuffled_games, start_idx)
-
-    # Step 2: Shuffle bets within each game
-    game_inner_shuffles = {}
-    for gid in game_ids:
-        inner = games[gid][:]
-        random.shuffle(inner)
-        game_inner_shuffles[gid] = inner
-
-    # Assign unique starting bet per account within their first game
-    game_cursors = {gid: 0 for gid in game_ids}
-    account_starting_bets = {}
-    for account in accounts:
-        first_game = account_game_queues[account.id][0]
-        cursor = game_cursors[first_game]
-        inner = game_inner_shuffles[first_game]
-        account_starting_bets[(account.id, first_game)] = cursor % len(inner)
-        game_cursors[first_game] = cursor + 1
-
-    # Execute: each account processes its game queue CONCURRENTLY
-    async def _run_account_sgm_queue(account):
-        account_results = []
-        for game_idx, game_id in enumerate(account_game_queues[account.id]):
-            game_bets = game_inner_shuffles[game_id]
-
-            start_key = (account.id, game_id)
-            start_bet_idx = account_starting_bets.get(start_key, 0)
-            ordered_bets = build_queue(game_bets, start_bet_idx)
-
-            for i, bet in enumerate(ordered_bets):
-                if i > 0 or game_idx > 0:
-                    delay = random.uniform(min_delay, max_delay)
-                    await asyncio.sleep(delay)
-
-                result = await process_chunk(
-                    bet, account, state,
-                    fetch_live_odds, get_kelly_stake, place_bet,
-                )
-                entry = {
-                    "account": account.id,
-                    "account_label": account.label,
-                    "runner_id": bet.runner_id,
-                    "bet_description": bet.bet_description,
-                    "game_id": bet.game_id,
-                    "result": result,
-                }
-                account_results.append(entry)
-                if on_result:
-                    on_result(entry)
-
-        return account_results
-
-    tasks = [_run_account_sgm_queue(account) for account in accounts]
-    all_results = await asyncio.gather(*tasks)
-
-    results = []
-    for account_results in all_results:
-        results.extend(account_results)
-
-    return results
-
-
-# ─── Retry System ─────────────────────────────────────────────────────────────
-
-async def retry_failed_bet(
     bet: Bet,
-    accounts: list[Account],
-    state: RunState,
+    master: MasterChecklist,
     fetch_live_odds: FetchLiveOdds,
     get_kelly_stake: GetKellyStake,
-    place_bet: PlaceBet,
-    get_confirmed_history: GetConfirmedHistory,
-) -> list[dict]:
+    place_bet_fn: PlaceBet,
+) -> Optional[dict]:
     """
-    Safe re-placement for a failed bet.
-    Uses bet history as source of truth — NOT in-memory state.
+    Full per-bet flow for one account on one tip:
+    1. Fetch live odds → 2. Min odds gate → 3. Pre-bet dwell →
+    4. JIT chunk calc → 5. Shielded placement → 6. Post-bet delay.
     """
     runner_id = bet.runner_id
+
+    # Step 1: Fetch live odds
+    live_odds = await fetch_live_odds(bet, account)
+    if live_odds is None:
+        return _make_entry(account, bet,
+                           ChunkResult(success=False, error="Live odds unavailable"))
+
+    # Step 2: Min odds gate
+    if live_odds < bet.min_odds:
+        logger.info("ODDS_DROP | runner=%s acct=%s | live=%.2f < min=%.2f",
+                     runner_id, account.label, live_odds, bet.min_odds)
+        await master.handle_odds_below_min(runner_id, account.id)
+        return _make_entry(account, bet, ChunkResult(
+            success=False, skipped=True,
+            error=f"Odds drifted: {live_odds:.2f} < min {bet.min_odds:.2f}"))
+
+    # Step 3: Pre-bet dwell (human browsing simulation)
+    await asyncio.sleep(random.uniform(DWELL_MIN, DWELL_MAX))
+
+    # Step 4: JIT chunk calculation
+    chunk = await master.calculate_chunk(
+        runner_id, account.id, live_odds, get_kelly_stake, bet)
+    if chunk is None:
+        return None  # Tip closed or account already processed
+    if chunk < MIN_BET:
+        return _make_entry(account, bet, ChunkResult(
+            success=False, skipped=True, error=f"Stake ${chunk:.0f} below ${MIN_BET} min"))
+
+    # Step 5: Shielded placement + state update
+    logger.info("PLACING | runner=%s acct=%s | $%.0f @ %.2f",
+                 runner_id, account.label, chunk, live_odds)
+
+    result = ChunkResult(success=False, error="Execution interrupted")
+    try:
+        async def _shielded():
+            nonlocal result
+            result = await place_bet_fn(account, bet, chunk, live_odds)
+            if result.success:
+                confirmed = result.confirmed_amount or chunk
+                await master.record_placement(runner_id, account.id, confirmed)
+                logger.info("CONFIRMED | runner=%s acct=%s | $%.0f",
+                             runner_id, account.label, confirmed)
+            else:
+                await master.record_skip(runner_id, account.id)
+                logger.warning("FAILED | runner=%s acct=%s | %s",
+                                runner_id, account.label, result.error)
+
+        await asyncio.shield(_shielded())
+    except asyncio.CancelledError:
+        # Shielded coroutine is still running — don't re-raise until it's done.
+        # Return whatever result we have so the bet isn't "lost" from the response.
+        logger.warning("SHIELD | runner=%s | cancelled, returning partial result", runner_id)
+        return _make_entry(account, bet, result)
+
+    # Step 6: Post-bet delay
+    await asyncio.sleep(random.uniform(POST_BET_MIN, POST_BET_MAX))
+
+    return _make_entry(account, bet, result)
+
+
+# ─── Worker Loop ─────────────────────────────────────────────────────────────
+
+async def worker_loop(
+    account: Account,
+    master: MasterChecklist,
+    fetch_live_odds: FetchLiveOdds,
+    get_kelly_stake: GetKellyStake,
+    place_bet_fn: PlaceBet,
+    on_result: Callable | None = None,
+    sweep_run: bool = False,
+) -> list[dict]:
+    """
+    Per-account worker. Loops through the tip board placing bets.
+    3-spin keep-alive: shuts down after 3 consecutive empty passes.
+    Random starting index for anti-detection staggering.
+    """
     results = []
+    total_tips = len(master.bets)
+    if total_tips == 0 or master.account_exhausted.get(account.id, False):
+        return results
 
-    # Step 1: pull confirmed history from all accounts
-    history_placed = 0
-    for account in accounts:
-        history_placed += await get_confirmed_history(account, runner_id)
+    target_status = "RETRY_QUEUED" if sweep_run else "PENDING"
+    spin_count = 0
+    start_index = random.randint(0, total_tips - 1)
 
-    logger.info("RETRY | runner=%s | history_placed=$%.0f", runner_id, history_placed)
-
-    # Step 2: fetch live odds
-    # Use first available account for odds fetch
-    live_odds = None
-    for account in accounts:
-        live_odds = await fetch_live_odds(bet, account)
-        if live_odds is not None:
+    while spin_count < MAX_SPINS:
+        if master.account_exhausted.get(account.id, False):
             break
 
-    if live_odds is None:
-        logger.warning("RETRY ABORT | runner=%s | live odds unavailable", runner_id)
-        return results
+        # Any tips still need work?
+        has_work = any(
+            (ts := master.tip_states.get(b.runner_id)) and ts.status == target_status
+            for b in master.bets
+        )
+        if not has_work:
+            break
 
-    if live_odds < bet.min_odds:
-        logger.info("RETRY ABORT | runner=%s | live_odds=%.2f below min=%.2f",
-                     runner_id, live_odds, bet.min_odds)
-        return results
+        bets_placed = 0
 
-    # Step 3: recalculate Kelly at live odds
-    kelly_target = min(
-        get_kelly_stake(bet, bet.odds),
-        get_kelly_stake(bet, live_odds),
-    )
+        for offset in range(total_tips):
+            if master.account_exhausted.get(account.id, False):
+                break
 
-    # Step 4: apply ceiling — history counts toward cap
-    remaining = kelly_target - history_placed
-    if remaining <= 0:
-        logger.info("RETRY SKIP | runner=%s | already fully covered ($%.0f >= $%.0f)",
-                     runner_id, history_placed, kelly_target)
-        return results
+            idx = (start_index + offset) % total_tips
+            bet = master.bets[idx]
+            ts = master.tip_states.get(bet.runner_id)
 
-    # Step 5: round down, minimum check
-    chunk = (remaining // 10) * 10
-    if chunk < 10:
-        logger.info("RETRY SKIP | runner=%s | remainder $%.0f too small", runner_id, remaining)
-        return results
+            # Quick pre-checks (no lock needed — stale reads are safe)
+            if not ts or ts.status != target_status:
+                continue
+            if account.id in ts.placed_accounts or account.id in ts.skipped_accounts:
+                continue
 
-    # Step 6: place on first eligible account
-    for account in accounts:
-        if not account.enabled:
-            continue
-        balance = state.account_balances.get(account.id, 0)
-        if balance < chunk:
-            continue
+            # Acquire lease (non-blocking — skip if another account holds it)
+            if not await master.acquire_lock(bet, account.id):
+                continue
 
-        logger.info("RETRY PLACING | runner=%s acct=%s | chunk=$%.0f odds=%.2f",
-                     runner_id, account.label, chunk, live_odds)
+            try:
+                if bet.is_sgm:
+                    # SGM match batch: lock match, process ALL tips for it
+                    match_bets = [
+                        b for b in master.bets
+                        if b.game_id == bet.game_id
+                        and (mts := master.tip_states.get(b.runner_id))
+                        and mts.status == target_status
+                        and account.id not in mts.placed_accounts
+                        and account.id not in mts.skipped_accounts
+                    ]
+                    for m_bet in match_bets:
+                        if master.account_exhausted.get(account.id, False):
+                            break
+                        entry = await process_single_tip(
+                            account, m_bet, master,
+                            fetch_live_odds, get_kelly_stake, place_bet_fn)
+                        if entry:
+                            results.append(entry)
+                            if on_result:
+                                on_result(entry)
+                            if entry["result"].success:
+                                bets_placed += 1
+                else:
+                    entry = await process_single_tip(
+                        account, bet, master,
+                        fetch_live_odds, get_kelly_stake, place_bet_fn)
+                    if entry:
+                        results.append(entry)
+                        if on_result:
+                            on_result(entry)
+                        if entry["result"].success:
+                            bets_placed += 1
+            finally:
+                await master.release_lock(bet, account.id)
 
-        result = await place_bet(account, bet, chunk, live_odds)
-
-        entry = {
-            "account": account.id,
-            "account_label": account.label,
-            "runner_id": runner_id,
-            "bet_description": bet.bet_description,
-            "game_id": bet.game_id,
-            "result": result,
-            "is_retry": True,
-        }
-        results.append(entry)
-
-        if result.success:
-            confirmed = result.confirmed_amount or chunk
-            state.placed_totals[runner_id] = state.placed_totals.get(runner_id, 0) + confirmed
-            state.account_balances[account.id] = balance - confirmed
-            logger.info("RETRY CONFIRMED | runner=%s acct=%s | placed=$%.0f",
-                         runner_id, account.label, confirmed)
+        if bets_placed == 0:
+            # Check if there's still work this account could do
+            can_still_work = any(
+                (ts := master.tip_states.get(b.runner_id))
+                and ts.status == target_status
+                and account.id not in ts.placed_accounts
+                and account.id not in ts.skipped_accounts
+                for b in master.bets
+            )
+            if not can_still_work:
+                break  # No remaining work for this account
+            spin_count += 1
+            if spin_count < MAX_SPINS:
+                await asyncio.sleep(random.uniform(SPIN_WAIT_MIN, SPIN_WAIT_MAX))
         else:
-            logger.warning("RETRY FAILED | runner=%s acct=%s | error=%s",
-                           runner_id, account.label, result.error)
-
-        break  # Only retry on one account
+            spin_count = 0
+            start_index = random.randint(0, total_tips - 1)
 
     return results
 
 
-# ─── Main Entry Point ─────────────────────────────────────────────────────────
+# ─── Main Entry Point ────────────────────────────────────────────────────────
 
 async def run_execution(
     bet_list: list[Bet],
@@ -532,52 +541,99 @@ async def run_execution(
     max_delay: float = 6.0,
 ) -> dict:
     """
-    Main entry point for the execution engine.
+    Main entry point. Same API as V2.
+    Runs main pass (PENDING tips), then auto-sweep (RETRY_QUEUED tips).
 
-    Args:
-        bet_list: All bets from CSV
-        account_list: All enabled accounts
-        fetch_live_odds: Callback to get live TAB odds for a bet
-        get_kelly_stake: Callback to calculate Kelly stake at given odds
-        place_bet: Callback to place a bet on an account
-        on_result: Optional callback for real-time status updates
-
-    Returns: {"regular": results, "sgm": results, "state": run_state}
+    Returns: {"regular": [...], "sgm": [...], "state": {...}}
     """
-    state = RunState()
+    master = MasterChecklist(bet_list, account_list)
 
-    # Snapshot balances at start of run
+    # Snapshot balances (default 10000 if unknown — TAB enforces real limits)
     for account in account_list:
-        state.account_balances[account.id] = account.session.get("balance", 0)
+        master.account_balances[account.id] = account.session.get("balance", 0) or 10000
+        master.account_exhausted[account.id] = False
 
-    # Separate regular multis from SGMs
-    regular_bets = [b for b in bet_list if not b.is_sgm]
-    sgm_bets = [b for b in bet_list if b.is_sgm]
+    logger.info("V3 Engine starting: %d tips, %d accounts", len(bet_list), len(account_list))
 
-    logger.info("Execution starting: %d regular, %d SGM, %d accounts",
-                len(regular_bets), len(sgm_bets), len(account_list))
+    # ── Main Run (PENDING tips) ──
+    tasks = [
+        worker_loop(acc, master, fetch_live_odds, get_kelly_stake, place_bet, on_result)
+        for acc in account_list
+    ]
+    all_main = await asyncio.gather(*tasks)
+    main_results = [entry for acct_results in all_main for entry in acct_results]
 
-    # Run both pipelines
-    regular_results = await run_multis(
-        regular_bets, account_list, state,
-        fetch_live_odds, get_kelly_stake, place_bet, on_result,
-        min_delay, max_delay,
-    )
+    # ── Sweep Run (RETRY_QUEUED tips) ──
+    retry_runners = [
+        rid for rid, ts in master.tip_states.items()
+        if ts.status == "RETRY_QUEUED"
+    ]
+    sweep_results = []
 
-    sgm_results = await run_sgms(
-        sgm_bets, account_list, state,
-        fetch_live_odds, get_kelly_stake, place_bet, on_result,
-        min_delay, max_delay,
-    )
+    if retry_runners:
+        logger.info("V3 Sweep: %d tips queued for retry", len(retry_runners))
 
-    logger.info("Execution complete: placed_totals=%s", state.placed_totals)
+        # Clear skipped accounts so everyone gets another shot
+        for rid in retry_runners:
+            master.tip_states[rid].skipped_accounts.clear()
+
+        sweep_accounts = [
+            acc for acc in account_list
+            if not master.account_exhausted.get(acc.id, False)
+        ]
+        if sweep_accounts:
+            tasks = [
+                worker_loop(acc, master, fetch_live_odds, get_kelly_stake, place_bet,
+                            on_result, sweep_run=True)
+                for acc in sweep_accounts
+            ]
+            all_sweep = await asyncio.gather(*tasks)
+            sweep_results = [entry for acct_results in all_sweep for entry in acct_results]
+
+    # ── Build V2-compatible response ──
+    all_entries = main_results + sweep_results
+    regular = [e for e in all_entries if "::" not in e.get("runner_id", "")]
+    sgm = [e for e in all_entries if "::" in e.get("runner_id", "")]
+
+    placed = sum(1 for e in all_entries if e.get("result") and e["result"].success)
+    failed = sum(1 for e in all_entries
+                 if e.get("result") and not e["result"].success and not e["result"].skipped)
+    skipped = sum(1 for e in all_entries if e.get("result") and e["result"].skipped)
+
+    logger.info("V3 complete: %d placed, %d failed, %d skipped", placed, failed, skipped)
 
     return {
-        "regular": regular_results,
-        "sgm": sgm_results,
+        "regular": regular,
+        "sgm": sgm,
         "state": {
-            "placed_totals": state.placed_totals,
-            "allocated_totals": state.allocated_totals,
-            "skipped_runners": {k: list(v) for k, v in state.skipped_runners.items()},
+            "placed_totals": {
+                rid: ts.placed_total
+                for rid, ts in master.tip_states.items() if ts.placed_total > 0
+            },
+            "allocated_totals": {
+                rid: ts.target or 0
+                for rid, ts in master.tip_states.items() if ts.target
+            },
+            "skipped_runners": {
+                rid: list(ts.skipped_accounts)
+                for rid, ts in master.tip_states.items()
+                if ts.status in ("DEAD", "RETRY_QUEUED")
+            },
         },
     }
+
+
+# ─── V2 Compat: retry_failed_bet ────────────────────────────────────────────
+
+async def retry_failed_bet(
+    bet: Bet,
+    accounts: list[Account],
+    state: RunState,
+    fetch_live_odds: FetchLiveOdds,
+    get_kelly_stake: GetKellyStake,
+    place_bet: PlaceBet,
+    get_confirmed_history: GetConfirmedHistory,
+) -> list[dict]:
+    """V2 compat — runs a mini V3 execution for a single failed bet."""
+    result = await run_execution([bet], accounts, fetch_live_odds, get_kelly_stake, place_bet)
+    return result.get("regular", []) + result.get("sgm", [])

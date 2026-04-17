@@ -162,6 +162,59 @@ def parse_leg_name(name: str) -> Optional[dict]:
                     "team": "",
                     "raw": name,
                 }
+            # V2 engine format: "Charlie Ballard (GC) — 15+ Disposals"
+            # or "Tom McCartin (SYD) — 15+ Disposals"
+            pattern_v2 = re.compile(
+                r'^(?P<player>.+?)\s*'
+                r'\((?P<team>[A-Z0-9]+)\)\s*'
+                r'[—\-]+\s*'
+                r'(?P<line>\d+(?:\.\d+)?)\+?\s*'
+                r'(?P<stat_raw>[A-Za-z\s]+?)$',
+                re.IGNORECASE,
+            )
+            m_v2 = pattern_v2.match(name)
+            if m_v2:
+                player = m_v2.group("player").strip()
+                team = m_v2.group("team").upper()
+                line = float(m_v2.group("line"))
+                stat_raw = m_v2.group("stat_raw").strip().lower().replace(" ", "")
+                # Detect sport from stat type
+                sport = "AFL" if stat_raw in ("disposals", "goals", "marks", "tackles") else "NBA"
+                stat = AFL_STAT_MAP.get(stat_raw, stat_raw) if sport == "AFL" else NBA_STAT_MAP.get(stat_raw, stat_raw)
+                return {
+                    "sport": sport,
+                    "teams": "",  # V2 doesn't have teams code — will be resolved by team abbr
+                    "line": line,
+                    "stat": stat,
+                    "player": player,
+                    "team": team,
+                    "raw": name,
+                }
+
+            # V2 old format (unmigrated): "Player Name 15+ Disposals" (no team, no dash)
+            pattern_v2_simple = re.compile(
+                r'^(?P<player>.+?)\s+'
+                r'(?P<line>\d+(?:\.\d+)?)\+?\s*'
+                r'(?P<stat_raw>[A-Za-z\s]+?)$',
+                re.IGNORECASE,
+            )
+            m_v2s = pattern_v2_simple.match(name)
+            if m_v2s:
+                player = m_v2s.group("player").strip()
+                line = float(m_v2s.group("line"))
+                stat_raw = m_v2s.group("stat_raw").strip().lower().replace(" ", "")
+                sport = "AFL" if stat_raw in ("disposals", "goals", "marks", "tackles") else "NBA"
+                stat = AFL_STAT_MAP.get(stat_raw, stat_raw) if sport == "AFL" else NBA_STAT_MAP.get(stat_raw, stat_raw)
+                return {
+                    "sport": sport,
+                    "teams": "",
+                    "line": line,
+                    "stat": stat,
+                    "player": player,
+                    "team": "",
+                    "raw": name,
+                }
+
             logger.warning(f"parse_leg_name: could not parse '{name}'")
             return None
 
@@ -444,10 +497,50 @@ async def check_afl_leg(client: httpx.AsyncClient, parsed: dict) -> dict:
 
     try:
         round_num = await _get_afl_current_round(client)
-        game = await _find_afl_game(client, parsed["teams"], round_num)
+        game = None
+        if parsed["teams"]:
+            game = await _find_afl_game(client, parsed["teams"], round_num)
+
+        # V2 fallback: find game by player's team abbreviation
+        if not game and parsed.get("team"):
+            team_code = parsed["team"]
+            for rnd in [round_num, round_num - 1]:
+                games_data = await _squiggle_get(client, {"q": f"games;year=2026;round={rnd}"})
+                for g in games_data.get("games", []):
+                    if _teams_match(g.get("hteam", ""), team_code) or _teams_match(g.get("ateam", ""), team_code):
+                        game = g
+                        break
+                if game:
+                    break
+
+        # V2 last resort: no teams or team — search all games for the player
+        if not game and not parsed.get("teams") and not parsed.get("team"):
+            player_name = parsed.get("player", "").lower()
+            for rnd in [round_num, round_num - 1]:
+                games_data = await _squiggle_get(client, {"q": f"games;year=2026;round={rnd}"})
+                for g in games_data.get("games", []):
+                    gid = g.get("id")
+                    if not gid:
+                        continue
+                    # Check if this game has started
+                    if not g.get("complete") or g.get("complete") == 0:
+                        continue
+                    try:
+                        pdata = await _squiggle_get(client, {"q": f"players;year=2026;round={rnd};gid={gid}"})
+                        for p in pdata.get("players", []):
+                            pn = (p.get("player", "") or p.get("surname", "")).lower()
+                            if player_name.split()[-1] in pn or pn in player_name:
+                                game = g
+                                break
+                    except Exception:
+                        pass
+                    if game:
+                        break
+                if game:
+                    break
 
         if not game:
-            result["note"] = f"Game not found for {parsed['teams']}"
+            result["note"] = f"Game not found for {parsed.get('teams') or parsed.get('team', '?')}"
             return result
 
         game_id = game.get("id")
@@ -748,7 +841,18 @@ async def check_leg_results(legs: list[dict]) -> list[dict]:
         tasks = []
         parsed_legs = []
 
+        # Expand combined legs (old V2 format: "Player A 15+ Disposals/Player B 20+ Disposals")
+        expanded_legs = []
         for leg in legs:
+            leg_name = leg.get("name", "") if isinstance(leg, dict) else str(leg)
+            if "/" in leg_name and "—" not in leg_name and "@" not in leg_name:
+                # Split combined format into individual legs
+                for part in leg_name.split("/"):
+                    expanded_legs.append({"name": part.strip()})
+            else:
+                expanded_legs.append(leg)
+
+        for leg in expanded_legs:
             leg_name = leg.get("name", "") if isinstance(leg, dict) else str(leg)
             parsed = parse_leg_name(leg_name)
 

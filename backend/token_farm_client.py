@@ -236,6 +236,58 @@ async def bet365_megaboost(session_id: str, sport: str, match_team: str, stake: 
         return {"success": False, "error": f"Megaboost error: {e}"}
 
 
+async def bet365_scan_boosts(session_id: str) -> dict:
+    """List available boosts on bet365 homepage via Token Farm browser."""
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.get(
+                f"{FARM_URL}/bet365/list-boosts/{session_id}",
+                headers=_headers(),
+            )
+        if resp.status_code != 200:
+            return {"success": False, "error": f"Farm scan-boosts failed: HTTP {resp.status_code}: {resp.text[:200]}"}
+        return resp.json()
+    except httpx.TimeoutException:
+        return {"success": False, "error": "Token farm timeout — boost scan took too long"}
+    except httpx.ConnectError:
+        return {"success": False, "error": "Token farm unreachable — check WireGuard tunnel"}
+    except Exception as e:
+        return {"success": False, "error": f"Scan boosts error: {e}"}
+
+
+async def bet365_megaboost_all(sport: str, match_team: str, stake: float = 20, boost_index: int = 0,
+                                accounts: list[str] | None = None) -> dict:
+    """Place megaboost across all configured bet365 accounts via Token Farm.
+
+    This fires all accounts in parallel on the token farm.
+    Timeout is long because 5 parallel browser sessions take time.
+    """
+    try:
+        payload = {
+            "sport": sport,
+            "match_team": match_team,
+            "stake": stake,
+            "boost_index": boost_index,
+        }
+        if accounts:
+            payload["accounts"] = accounts
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(
+                f"{FARM_URL}/bet365/megaboost-all",
+                headers=_headers(),
+                json=payload,
+            )
+        if resp.status_code != 200:
+            return {"success": False, "error": f"Farm megaboost-all failed: HTTP {resp.status_code}: {resp.text[:200]}"}
+        return resp.json()
+    except httpx.TimeoutException:
+        return {"success": False, "error": "Token farm timeout — megaboost-all took too long (>5min)"}
+    except httpx.ConnectError:
+        return {"success": False, "error": "Token farm unreachable — check WireGuard tunnel"}
+    except Exception as e:
+        return {"success": False, "error": f"Megaboost-all error: {e}"}
+
+
 # ─── Health ──────────────────────────────────────────────────────────────────
 
 async def health() -> dict:

@@ -127,17 +127,29 @@ def get_live_stats(match_id: int) -> dict:
         session.close()
 
 
+_TEAM_NICKNAMES = {
+    "gold coast": "suns", "sydney": "swans", "essendon": "bombers",
+    "melbourne": "demons", "hawthorn": "hawks", "western bulldogs": "bulldogs",
+    "north melbourne": "kangaroos", "brisbane": "lions", "geelong": "cats",
+    "collingwood": "magpies", "fremantle": "dockers", "richmond": "tigers",
+    "carlton": "blues", "st kilda": "saints", "port adelaide": "power",
+    "adelaide": "crows", "west coast": "eagles", "gws": "giants",
+}
+
+
 def find_match_id_by_teams(team_a: str, team_b: str) -> Optional[int]:
     """Find the Footywire match ID for a specific AFL match by team names.
-    Searches both the match list page and homepage for mid= links near team names.
-    Results cached for 10 minutes."""
-    # Check cache first
+    Searches live_stats page first (current round), then match list + homepage.
+    Results cached for 2 minutes."""
+    # Build search terms: city name fragments + nicknames
     ta = team_a.lower().split()[-1] if team_a else ""
     tb = team_b.lower().split()[-1] if team_b else ""
+    ta_nick = _TEAM_NICKNAMES.get(team_a.lower(), "")
+    tb_nick = _TEAM_NICKNAMES.get(team_b.lower(), "")
     cache_key = f"fw_mid:{ta}:{tb}"
     if cache_key in _cache:
         cached_time, cached_data = _cache[cache_key]
-        if time.time() - cached_time < 600:  # 10 min cache
+        if time.time() - cached_time < 120:  # 2 min cache for live data
             return cached_data
 
     session = Session(impersonate="chrome131")
@@ -145,6 +157,7 @@ def find_match_id_by_teams(team_a: str, team_b: str) -> Optional[int]:
 
     try:
         for url in [
+            "https://www.footywire.com/afl/footy/live_stats",  # Current round IDs first
             "https://www.footywire.com",
             "https://www.footywire.com/afl/footy/ft_match_list",
         ]:
@@ -161,7 +174,9 @@ def find_match_id_by_teams(team_a: str, team_b: str) -> Optional[int]:
                 chunk = resp.text[max(0, idx - 500):idx + 500]
                 chunk_clean = re.sub(r'<[^>]+>', ' ', chunk).lower()
 
-                if ta in chunk_clean and tb in chunk_clean:
+                ta_found = ta in chunk_clean or (ta_nick and ta_nick in chunk_clean)
+                tb_found = tb in chunk_clean or (tb_nick and tb_nick in chunk_clean)
+                if ta_found and tb_found:
                     logger.info(f"Footywire match found: {team_a} vs {team_b} → mid={mid}")
                     result = int(mid)
                     _cache[cache_key] = (time.time(), result)

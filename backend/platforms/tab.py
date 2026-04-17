@@ -244,10 +244,11 @@ class TabClient(PlatformClient):
             if not prop_id:
                 return {"success": False, "error": "No proposition ID"}
 
-            bet_type = "WIN" if stake_type.lower() in ("win", "w", "cash") else "PLACE"
+            stake_lower = (stake_type or "cash").lower()
+            is_bonus = stake_lower in ("bonus", "promo", "token")
+            bet_type = "WIN"
 
-            payload = {
-                "bets": [{
+            bet_obj = {
                     "type": "FIXED_ODDS",
                     "betType": bet_type,
                     "stake": f"{stake:.2f}",
@@ -256,7 +257,27 @@ class TabClient(PlatformClient):
                         "propositionId": int(prop_id),
                         "odds": f"{float(odds):.2f}",
                     }],
-                }],
+            }
+
+            # Attach bonus bet token if stake_type is bonus/promo/token
+            if is_bonus:
+                try:
+                    promos = await self.get_user_promos(session)
+                    bonus_token = None
+                    for p in promos.get("promos", []):
+                        if p.get("type") == "BonusBack" and p.get("tokens_remaining", 0) > 0:
+                            bonus_token = p
+                            break
+                    if bonus_token:
+                        bet_obj["bonusBetToken"] = bonus_token["promo_id"]
+                        logger.info(f"TAB: attaching bonus bet token {bonus_token['promo_id']}")
+                    else:
+                        logger.warning("TAB: no bonus bet token found, placing as cash bet")
+                except Exception as e:
+                    logger.warning(f"TAB: failed to fetch bonus tokens: {e}, placing as cash bet")
+
+            payload = {
+                "bets": [bet_obj],
                 "transactionId": str(uuid.uuid4()),
             }
 

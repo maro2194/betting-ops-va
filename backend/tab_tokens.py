@@ -110,13 +110,19 @@ def get_sgm_savers(token: str, account_number: str, proxy_url: str | None = None
 
 def get_matches(token: str, sport: str, competition: str, proxy_url: str | None = None) -> list[dict]:
     url = MATCHES_URL.format(sport=sport, competition=competition)
+    logger.info("get_matches: url=%s proxy=%s", url, (proxy_url or "none")[:50])
     s = _make_session(proxy_url)
     try:
-        resp = s.get(url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=15)
+        resp = s.get(url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=10)
+        logger.info("get_matches: status=%s content_type=%s len=%d", resp.status_code, resp.headers.get("content-type", "?"), len(resp.text))
         if resp.status_code != 200:
+            logger.warning("get_matches: non-200 response: %s", resp.text[:200])
             return []
-        return resp.json().get("matches", [])
-    except Exception:
+        matches = resp.json().get("matches", [])
+        logger.info("get_matches: found %d matches: %s", len(matches), [m.get("name", "?") for m in matches[:5]])
+        return matches
+    except Exception as e:
+        logger.error("get_matches: exception: %s", e)
         return []
     finally:
         s.close()
@@ -368,16 +374,24 @@ def resolve_proposition(leg_desc: str, markets: list, match: dict, tryscorer_tea
                     if team in pn and line_val in pn:
                         return {"proposition_id": int(prop.get("id", prop.get("numberId"))), "name": prop.get("name", ""), "odds": float(prop.get("returnWin", 0)), "market": market.get("betOption", ""), "status": prop.get("bettingStatus", "Unknown"), "leg_description": leg_desc}
 
-    # Total: "Under 54.5"
-    total_match = re.match(r'^(under|over)\s+(\d+\.?\d*)$', desc_lower)
+    # Total: "Under 54.5", "Over 40.5 Pick Your Own Total", "Over 18.5 1st Half Pick Your Own Total"
+    total_match = re.match(r'^(under|over)\s+(\d+\.?\d*)', desc_lower)
     if total_match:
         direction, value = total_match.group(1), total_match.group(2)
+        is_first_half = "1st half" in desc_lower or "first half" in desc_lower
         for market in markets:
-            if any(k in market.get("betOption", "").lower() for k in ("total", "pick your own")):
-                for prop in market.get("propositions", []):
-                    pn = prop.get("name", "").lower()
-                    if direction in pn and value in pn:
-                        return {"proposition_id": int(prop.get("id", prop.get("numberId"))), "name": prop.get("name", ""), "odds": float(prop.get("returnWin", 0)), "market": market.get("betOption", ""), "status": prop.get("bettingStatus", "Unknown"), "leg_description": leg_desc}
+            bo = market.get("betOption", "").lower()
+            if not any(k in bo for k in ("total", "pick your own")):
+                continue
+            # Filter by half if specified
+            if is_first_half and "1st half" not in bo and "first half" not in bo:
+                continue
+            if not is_first_half and ("1st half" in bo or "first half" in bo):
+                continue
+            for prop in market.get("propositions", []):
+                pn = prop.get("name", "").lower()
+                if direction in pn and value in pn:
+                    return {"proposition_id": int(prop.get("id", prop.get("numberId"))), "name": prop.get("name", ""), "odds": float(prop.get("returnWin", 0)), "market": market.get("betOption", ""), "status": prop.get("bettingStatus", "Unknown"), "leg_description": leg_desc}
 
     # Generic fallback
     for market in markets:
@@ -394,16 +408,21 @@ def get_sgm_price(token: str, account_number: str, legs: list[dict], proxy_url: 
     """Get SGM price from authenticated pricing endpoint (returns decoTokens for savers).
     Uses Bearer for pricing (it works), TabcorpAuth for promotions."""
     url = PRICING_AUTH_URL.format(account=account_number)
+    # Deduplicate propositions — TAB returns 502 if same prop ID appears twice
+    seen_ids = set()
+    unique_props = []
+    for leg in legs:
+        pid = leg["proposition_id"]
+        if pid not in seen_ids:
+            seen_ids.add(pid)
+            unique_props.append({"type": "WIN", "propositionId": pid})
     payload = {
         "clientDetails": {"jurisdiction": "QLD", "channel": "web"},
         "bets": [{
             "type": "FIXED_ODDS",
             "legs": [{
                 "type": "SAME_GAME_MULTI",
-                "propositions": [
-                    {"type": "WIN", "propositionId": leg["proposition_id"]}
-                    for leg in legs
-                ],
+                "propositions": unique_props,
             }],
         }],
         "returnValidationMatrix": True,
@@ -411,9 +430,14 @@ def get_sgm_price(token: str, account_number: str, legs: list[dict], proxy_url: 
     s = _make_session(proxy_url)
     try:
         # Authenticated pricing requires TabcorpAuth (legacy token), NOT Bearer
+        auth_method = "TabcorpAuth" if legacy_token else "Bearer"
+        prop_ids = [p["propositionId"] for p in payload["bets"][0]["legs"][0]["propositions"]]
+        logger.info("Pricing for %s using %s (legacy_len=%s) props=%s", account_number, auth_method, len(legacy_token or ""), prop_ids)
         headers = _tabcorp_headers(legacy_token) if legacy_token else _bearer_headers(token)
         resp = s.post(url, headers=headers, json=payload, timeout=15)
         if resp.status_code != 200:
+            body_preview = resp.text[:300] if resp.text else "empty"
+            logger.error("Pricing failed %s for account %s: %s", resp.status_code, account_number, body_preview)
             return {"error": f"Pricing failed: {resp.status_code}", "combined_odds": None, "deco_tokens": []}
 
         data = resp.json()
@@ -571,14 +595,17 @@ def parse_bets_csv(csv_content: str) -> list[dict]:
             else:
                 try_leg = f"{tryscorer} To Score a Try"
 
-            # Collect short legs
+            # Collect short legs — split on " & " since each column can contain multiple legs
             short1 = row.get("short1", row.get("short_leg_1", "")).strip()
             short2 = row.get("short2", row.get("short_leg_2", "")).strip()
             legs = [try_leg]
-            if short1:
-                legs.append(short1)
-            if short2:
-                legs.append(short2)
+            for s in [short1, short2]:
+                if not s:
+                    continue
+                for part in s.split(" & "):
+                    part = part.strip()
+                    if part:
+                        legs.append(part)
         else:
             # Format 1: explicit legs
             legs = []

@@ -287,6 +287,125 @@ async def place_megaboost(req: MegaBoostRequest):
     return result
 
 
+class ScanBoostsRequest(BaseModel):
+    sport: str = "HOME"  # HOME = homepage, or NRL/AFL/NBA + match_team
+    match_team: str = ""
+
+
+_scan_jobs: dict[str, dict] = {}
+
+
+@router.post("/scan-boosts")
+async def scan_boosts(req: ScanBoostsRequest):
+    """Start boost scan as async job. Returns job_id to poll."""
+    import uuid
+    from token_farm_client import bet365_login, bet365_megaboost, bet365_scan_boosts
+
+    username = os.environ.get("BET365_USERNAME", "")
+    password = os.environ.get("BET365_PASSWORD", "")
+    if not username:
+        raise HTTPException(400, "No bet365 username configured")
+
+    job_id = str(uuid.uuid4())[:8]
+    _scan_jobs[job_id] = {"status": "running", "result": None}
+
+    async def run_scan():
+        try:
+            login_result = await bet365_login(username, password)
+            if not login_result.get("success"):
+                _scan_jobs[job_id] = {"status": "done", "result": {"success": False, "error": f"Login failed: {login_result.get('error')}", "boosts": []}}
+                return
+
+            session_id = login_result["session_id"]
+
+            if req.sport.upper() == "HOME":
+                result = await bet365_scan_boosts(session_id)
+            else:
+                result = await bet365_megaboost(
+                    session_id=session_id,
+                    sport=req.sport,
+                    match_team=req.match_team,
+                    stake=0,
+                    boost_index=999,
+                )
+                if not result.get("success") and "boosts detected" in result.get("error", ""):
+                    all_boosts = result.get("error", "")
+                    try:
+                        bracket_start = all_boosts.index("[")
+                        boosts_json = all_boosts[bracket_start:]
+                        boosts_list = eval(boosts_json)
+                        result = {"success": True, "boosts": boosts_list, "count": len(boosts_list)}
+                    except Exception:
+                        result = {"success": True, "boosts": [], "count": 0}
+                else:
+                    result = {"success": True, "boosts": [], "count": 0}
+
+            result["balance"] = login_result.get("balance")
+            result["session_id"] = session_id
+            _scan_jobs[job_id] = {"status": "done", "result": result}
+        except Exception as e:
+            _scan_jobs[job_id] = {"status": "done", "result": {"success": False, "error": str(e), "boosts": []}}
+
+    asyncio.create_task(run_scan())
+    return {"job_id": job_id, "status": "running"}
+
+
+@router.get("/scan-boosts/status/{job_id}")
+async def scan_boosts_status(job_id: str):
+    """Poll for scan-boosts job result."""
+    job = _scan_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job
+
+
+class MegaBoostAllRequest(BaseModel):
+    sport: str = "NRL"
+    match_team: str
+    stake: int = 20
+    boost_index: int = 0
+    accounts: list[str] | None = None  # Optional filter: list of usernames (None = all)
+
+
+# In-memory job store for async megaboost placement
+_megaboost_jobs: dict[str, dict] = {}
+
+
+@router.post("/megaboost-all")
+async def place_megaboost_all(req: MegaBoostAllRequest):
+    """Start megaboost placement as async job. Returns job_id to poll for results."""
+    import uuid
+    from token_farm_client import bet365_megaboost_all
+
+    job_id = str(uuid.uuid4())[:8]
+    _megaboost_jobs[job_id] = {"status": "running", "result": None}
+
+    async def run_job():
+        try:
+            result = await bet365_megaboost_all(
+                sport=req.sport,
+                match_team=req.match_team,
+                stake=req.stake,
+                boost_index=req.boost_index,
+                accounts=req.accounts,
+            )
+            _megaboost_jobs[job_id] = {"status": "done", "result": result}
+        except Exception as e:
+            _megaboost_jobs[job_id] = {"status": "error", "result": {"error": str(e)}}
+
+    asyncio.create_task(run_job())
+    return {"job_id": job_id, "status": "running"}
+
+
+@router.get("/megaboost-all/status/{job_id}")
+async def megaboost_all_status(job_id: str):
+    """Poll for megaboost-all job result."""
+    job = _megaboost_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job
+
+
 @router.post("/start-all")
 async def start_all():
     """Start browser + telegram + enable pipeline — one button."""

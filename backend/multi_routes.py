@@ -505,6 +505,47 @@ async def _safe_process_batch(batch_id: str, rows: list[dict], username: str):
             pass
 
 
+# ─── Retry Failed ─────────────────────────────────────────────────────────
+
+@multi_router.post("/csv/{batch_id}/retry")
+async def api_csv_retry(batch_id: str, body: dict = None, user: dict = Depends(_verify_app_token)):
+    """Retry failed rows in a batch. Optionally pass {row_ids: [...]} to retry specific rows."""
+    batch = await get_batch_status(batch_id)
+    if not batch:
+        raise HTTPException(404, "Batch not found")
+    if batch.get("status") == "running":
+        raise HTTPException(409, "Batch is already running")
+
+    row_ids = (body or {}).get("row_ids")  # Optional: specific rows to retry
+
+    # Reset failed/error rows back to pending
+    retry_rows = []
+    for r in batch.get("rows", []):
+        if r.get("status") in ("failed", "error"):
+            if row_ids and r.get("id") not in row_ids:
+                continue
+            if r.get("account_id"):
+                await update_csv_row(r["id"], {"status": "pending", "error": None})
+                retry_rows.append({**r, "status": "pending"})
+
+    if not retry_rows:
+        raise HTTPException(400, "No failed rows to retry")
+
+    from multi_database import update_batch_summary
+    await update_batch_summary(batch_id, {"status": "running"})
+
+    asyncio.create_task(
+        _safe_process_batch(batch_id, retry_rows, user["username"])
+    )
+
+    return {
+        "ok": True,
+        "batch_id": batch_id,
+        "retrying": len(retry_rows),
+        "message": "Retry started. Poll status endpoint for progress.",
+    }
+
+
 # ─── Batch Status ──────────────────────────────────────────────────────────
 
 @multi_router.get("/csv/{batch_id}/status")

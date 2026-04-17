@@ -75,7 +75,7 @@ def legacy_authenticate(account_number: str, password: str, proxy_url: Optional[
             "Accept": "application/json",
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
-        }, timeout=15)
+        }, timeout=5)
 
         logger.info(f"Legacy authenticate: {resp.status_code}")
 
@@ -111,7 +111,7 @@ def get_account_info(token: str, customer_id: str, proxy_url: Optional[str] = No
     session = _make_session(proxy_url)
     try:
         url = ACCOUNT_LIST_URL.format(customer_id=customer_id)
-        resp = session.get(url, headers=_api_beta_headers(token), timeout=15)
+        resp = session.get(url, headers=_api_beta_headers(token), timeout=5)
         logger.info(f"Account list response: {resp.status_code} {resp.text[:300]}")
         if resp.status_code == 200:
             data = resp.json()
@@ -155,7 +155,7 @@ def get_matches(token: str, proxy_url: Optional[str] = None,
     session.headers.update({"Accept": "application/json", "User-Agent": USER_AGENT})
     try:
         url = MATCHES_URL.format(sport=sport.replace(" ", "%20"), competition=competition)
-        resp = session.get(url, timeout=15)
+        resp = session.get(url, timeout=5)
         if resp.status_code == 200:
             data = resp.json()
             if isinstance(data, list):
@@ -209,7 +209,7 @@ def get_match_markets(token: str, match_id: str, proxy_url: Optional[str] = None
         session = _make_session(px)
         session.headers.update(headers)
         try:
-            resp = session.get(url, timeout=15)
+            resp = session.get(url, timeout=5)
             if resp.status_code == 200:
                 try:
                     data = resp.json()
@@ -223,7 +223,7 @@ def get_match_markets(token: str, match_id: str, proxy_url: Optional[str] = None
                 for m in matches:
                     if m["match_id"] == match_id:
                         full_url = f"https://api.beta.tab.com.au/v1/tab-info-service/sports/{sport.replace(' ', '%20')}/competitions/{competition}/matches/{m['match_name_url']}?jurisdiction=QLD"
-                        resp2 = session.get(full_url, timeout=15)
+                        resp2 = session.get(full_url, timeout=5)
                         if resp2.status_code == 200:
                             return resp2.json()
                         break
@@ -249,7 +249,7 @@ def get_sgm_propositions(token: str, match_id: str, proxy_url: Optional[str] = N
             competition=competition,
             match_id=match_id,
         )
-        resp = session.get(url, timeout=15)
+        resp = session.get(url, timeout=5)
 
         if resp.status_code == 404 and " " not in match_id and "%20" not in match_id:
             matches = get_matches(token, proxy_url, sport, competition)
@@ -260,7 +260,7 @@ def get_sgm_propositions(token: str, match_id: str, proxy_url: Optional[str] = N
                         competition=competition,
                         match_id=m["match_name_url"],
                     )
-                    resp = session.get(url, timeout=15)
+                    resp = session.get(url, timeout=5)
                     break
 
         if resp.status_code == 200:
@@ -304,7 +304,7 @@ def price_check(token: str, propositions: list[dict], stake: str = "10.00",
             }],
         }
 
-        resp = session.post(PRICING_URL, json=payload, timeout=15)
+        resp = session.post(PRICING_URL, json=payload, timeout=5)
         if resp.status_code == 200:
             data = resp.json()
             try:
@@ -378,7 +378,7 @@ def place_sgm_bet(legacy_token: str, account_number: str, propositions: list[dic
         }
 
         url = BETSLIP_URL.format(account=account_number)
-        resp = session.post(url, json=payload, timeout=15)
+        resp = session.post(url, json=payload, timeout=5)
 
         logger.info(f"Place SGM response: {resp.status_code} {resp.text[:500]}")
 
@@ -435,7 +435,7 @@ def place_multi_bet(legacy_token: str, account_number: str, legs: list[dict],
         }
 
         url = BETSLIP_URL.format(account=account_number)
-        resp = session.post(url, json=payload, timeout=15)
+        resp = session.post(url, json=payload, timeout=5)
 
         logger.info(f"Place multi response: {resp.status_code} {resp.text[:500]}")
 
@@ -483,7 +483,7 @@ def get_my_bets(legacy_token: str, account_number: str, proxy_url: Optional[str]
         all_bets = []
 
         for page in range(max_pages):
-            resp = session.get(url, timeout=15)
+            resp = session.get(url, timeout=5)
             logger.info(f"My bets response page {page}: {resp.status_code}")
 
             if resp.status_code == 200:

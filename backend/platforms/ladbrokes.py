@@ -77,28 +77,75 @@ class EntainClient(PlatformClient):
     # ── Login ─────────────────────────────────────────────────────
 
     async def login(self, email: str, password: str, proxy_url: str, brand_config: dict) -> dict:
-        """Return a session dict. Auth is not required for reading odds.
+        """Login via OAuth2 Hydra + HyperSolutions Akamai bypass.
 
-        Stores credentials for future bet placement (which will need browser auth).
+        Returns session with access_token for bet placement.
+        Falls back to public-only mode if login fails (can still read odds).
         """
         brand = brand_config.get("brand", "ladbrokes")
         entain_config = ENTAIN_BRANDS.get(brand, ENTAIN_BRANDS["ladbrokes"])
 
-        logger.info(f"Entain login: brand={brand}, email={email} (public API — no auth needed for odds)")
+        logger.info(f"Entain login: brand={brand}, email={email}")
 
-        return {
-            "success": True,
-            "platform": "ladbrokes",
-            "brand": brand,
-            "email": email,
-            "password": password,
-            "proxy_url": proxy_url,
-            "expires_at": time.time() + 86400,
-            "brand_config": {**entain_config, "brand": brand},
-        }
+        try:
+            from entain_login import entain_browser_login
+            result = await entain_browser_login(
+                username=email,
+                password=password,
+                brand=brand,
+                proxy_url=proxy_url or None,
+            )
+
+            if result.get("success") and result.get("access_token"):
+                logger.info(f"Entain login SUCCESS for {email}@{brand}")
+                return {
+                    "success": True,
+                    "platform": "ladbrokes",
+                    "brand": brand,
+                    "email": email,
+                    "password": password,
+                    "proxy_url": proxy_url,
+                    "access_token": result["access_token"],
+                    "cookies": result.get("cookies", {}),
+                    "expires_at": time.time() + 3600,  # 1 hour
+                    "brand_config": {**entain_config, "brand": brand},
+                }
+            else:
+                error = result.get("error", "Unknown login error")
+                logger.warning(f"Entain login failed for {email}@{brand}: {error}")
+                # Fall back to public-only mode
+                return {
+                    "success": True,
+                    "platform": "ladbrokes",
+                    "brand": brand,
+                    "email": email,
+                    "password": password,
+                    "proxy_url": proxy_url,
+                    "expires_at": time.time() + 86400,
+                    "brand_config": {**entain_config, "brand": brand},
+                    "_public_only": True,
+                    "_login_error": error,
+                }
+        except Exception as e:
+            logger.error(f"Entain login exception for {email}@{brand}: {e}")
+            return {
+                "success": True,
+                "platform": "ladbrokes",
+                "brand": brand,
+                "email": email,
+                "password": password,
+                "proxy_url": proxy_url,
+                "expires_at": time.time() + 86400,
+                "brand_config": {**entain_config, "brand": brand},
+                "_public_only": True,
+                "_login_error": str(e),
+            }
 
     def is_session_valid(self, session: dict) -> bool:
-        """Public API — always valid."""
+        """Check if session has a valid (non-expired) access token."""
+        expires = session.get("expires_at", 0)
+        if expires and time.time() > expires:
+            return False
         return True
 
     # ── Racing ────────────────────────────────────────────────────
@@ -287,6 +334,7 @@ class EntainClient(PlatformClient):
                     "barrier": int(entrant.get("barrier", 0)),
                     "win_price": win_price,
                     "place_price": place_price,
+                    "market_id": win_market_id,
                     "jockey": form.get("riderOrDriver", ""),
                     "trainer": form.get("trainerName", ""),
                     "scratched": False,
@@ -300,23 +348,200 @@ class EntainClient(PlatformClient):
             logger.error(f"Entain get_runners error: {e}")
             return []
 
+    # Entain product type UUIDs (reverse-engineered from frontend)
+    PRODUCT_FIXED_WIN = "940b8704-e497-4a76-b390-00918ff7d282"
+    PRODUCT_FIXED_PLACE = "7cf3eea6-5654-42be-9c2e-6de280e7bb34"
+
+    # Racing category UUIDs
+    CATEGORY_HORSE = "4a2788f8-e825-4d36-9894-efd4baf1cfae"
+    CATEGORY_GREYHOUND = "9daef0d7-bf3c-4f50-921d-8e818c60fe61"
+    CATEGORY_HARNESS = "161d9be2-e909-4326-8c2c-35ed71fb460b"
+
+    # Category ID mapping from racecard category_id field
+    _CATEGORY_MAP = {
+        "9daef0d7-bf3c-4f50-921d-8e818c60fe61": CATEGORY_GREYHOUND,
+        "161d9be2-e909-4326-8c2c-35ed71fb460b": CATEGORY_HARNESS,
+        "4a2788f8-e825-4d36-9894-efd4baf1cfae": CATEGORY_HORSE,
+    }
+
     async def place_bet(self, session: dict, race_info: dict, runner: dict,
                         stake: float, stake_type: str, brand_config: dict) -> dict:
-        """Stub — Entain bet placement requires browser auth (not yet implemented)."""
-        return {
-            "success": False,
-            "error": "Entain bet placement requires browser auth — not yet implemented",
+        """Place a fixed-odds WIN bet on Entain (Ladbrokes/Neds).
+
+        Uses reverse-engineered /v2/betting/place-bet REST endpoint.
+        Requires access_token from OAuth2 login.
+        """
+        access_token = session.get("access_token")
+        if not access_token:
+            if session.get("_public_only"):
+                return {"success": False, "error": f"Entain login failed: {session.get('_login_error', 'no token')} — cannot place bets"}
+            return {"success": False, "error": "No Entain access token — re-login required"}
+
+        brand_config_resolved = session.get("brand_config", ENTAIN_BRANDS["ladbrokes"])
+        api_base = brand_config_resolved.get("api_base", ENTAIN_BRANDS["ladbrokes"]["api_base"])
+        web_base = brand_config_resolved.get("web_base", ENTAIN_BRANDS["ladbrokes"]["web_base"])
+        proxy_url = session.get("proxy_url")
+
+        entrant_id = runner.get("id")
+        market_id = runner.get("market_id")
+        win_price = runner.get("win_price", 0)
+        race_id = race_info.get("race_id")
+
+        if not entrant_id or not race_id:
+            return {"success": False, "error": f"Missing data: entrant_id={entrant_id}, race_id={race_id}"}
+
+        if not market_id:
+            return {"success": False, "error": "No market_id — runner data incomplete"}
+
+        # Determine racing category from race_info
+        category_id = race_info.get("category_id", "")
+        root_category_id = self._CATEGORY_MAP.get(category_id, self.CATEGORY_HORSE)
+
+        # Convert decimal odds to numerator/denominator
+        # Entain format: decimal = 1.0 + num/den
+        if win_price and win_price > 1:
+            # Find clean fraction: (price - 1) as num/den
+            price_minus_one = win_price - 1.0
+            # Use denominator of 100 for clean representation
+            numerator = round(price_minus_one * 100)
+            denominator = 100
+            # Simplify common cases
+            from math import gcd
+            g = gcd(numerator, denominator)
+            numerator //= g
+            denominator //= g
+        else:
+            numerator = 1
+            denominator = 1
+
+        payload = {
+            "client_id": "web-frontend",
+            "stake": float(stake),
+            "bets": [{
+                "legs": [{
+                    "product_type_id": self.PRODUCT_FIXED_WIN,
+                    "root_category_id": root_category_id,
+                    "selections": [{
+                        "entrant_id": entrant_id,
+                        "event_id": race_id,
+                        "market_id": market_id,
+                        "odds": {
+                            "numerator": numerator,
+                            "denominator": denominator,
+                        },
+                        "position": 1,
+                    }],
+                }],
+            }],
         }
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": CHROME_UA,
+            "Origin": web_base,
+            "Referer": f"{web_base}/",
+        }
+
+        try:
+            async with AsyncSession(impersonate="chrome131") as s:
+                if proxy_url:
+                    resp = await s.post(
+                        f"{api_base}/v2/betting/place-bet",
+                        headers=headers, json=payload, proxy=proxy_url, timeout=20,
+                    )
+                else:
+                    resp = await s.post(
+                        f"{api_base}/v2/betting/place-bet",
+                        headers=headers, json=payload, timeout=20,
+                    )
+
+            logger.info(f"Entain place_bet: HTTP {resp.status_code}")
+
+            if resp.status_code == 403:
+                return {"success": False, "error": "Kasada blocked (403) — Akamai bypass may be needed on bet API"}
+
+            data = resp.json()
+
+            # Check for errors
+            if resp.status_code != 200:
+                detail = data.get("detail", data.get("message", resp.text[:300]))
+                return {"success": False, "error": f"HTTP {resp.status_code}: {detail}", "raw": data}
+
+            # Check for bet placement errors in response
+            error = data.get("error") or data.get("detail")
+            if error:
+                return {"success": False, "error": str(error), "raw": data}
+
+            # Extract bet ID / receipt from response
+            bet_id = data.get("bet_id") or data.get("id") or data.get("transaction_id") or ""
+            receipt = data.get("receipt") or bet_id
+
+            # Check for successful placement indicators
+            status = data.get("status", "")
+            if status in ("rejected", "failed", "error"):
+                reason = data.get("reason") or data.get("message") or data.get("detail") or "Bet rejected"
+                return {"success": False, "error": reason, "raw": data}
+
+            logger.info(f"Entain place_bet SUCCESS: bet_id={bet_id}")
+            return {
+                "success": True,
+                "bet_id": str(bet_id),
+                "receipt": str(receipt),
+                "stake": stake,
+                "balance": data.get("balance"),
+                "raw": data,
+            }
+
+        except Exception as e:
+            logger.error(f"Entain place_bet error: {e}")
+            return {"success": False, "error": f"Entain placement failed: {e}"}
 
     # ── Balance ───────────────────────────────────────────────────
 
     async def get_balance(self, session: dict) -> float:
-        """Get account balance (requires auth — returns 0.0)."""
-        return 0.0
+        """Get account balance via authenticated API."""
+        access_token = session.get("access_token")
+        if not access_token:
+            return 0.0
+
+        brand_config = session.get("brand_config", ENTAIN_BRANDS["ladbrokes"])
+        api_base = brand_config.get("api_base", ENTAIN_BRANDS["ladbrokes"]["api_base"])
+        web_base = brand_config.get("web_base", ENTAIN_BRANDS["ladbrokes"]["web_base"])
+        proxy_url = session.get("proxy_url")
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "User-Agent": CHROME_UA,
+            "Origin": web_base,
+            "Referer": f"{web_base}/",
+        }
+
+        try:
+            async with AsyncSession(impersonate="chrome131") as s:
+                if proxy_url:
+                    resp = await s.get(f"{api_base}/v2/account/balance", headers=headers, proxy=proxy_url, timeout=10)
+                else:
+                    resp = await s.get(f"{api_base}/v2/account/balance", headers=headers, timeout=10)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                # Try common balance field names
+                bal = data.get("balance") or data.get("cash_balance") or data.get("available_balance") or 0
+                return float(bal) if bal else 0.0
+            else:
+                logger.warning(f"Entain balance check: HTTP {resp.status_code}")
+                return 0.0
+        except Exception as e:
+            logger.warning(f"Entain balance error: {e}")
+            return 0.0
 
     async def get_balances(self, session: dict) -> dict:
-        """Get cash + bonus balances (requires auth — returns zeros)."""
-        return {"cash": 0.0, "bonus": 0.0}
+        """Get cash + bonus balances."""
+        cash = await self.get_balance(session)
+        return {"cash": cash, "bonus": 0.0}
 
     # ── Internal helpers ─────────────────────────────────────────
 
