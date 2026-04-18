@@ -1,6 +1,6 @@
 # BotOps Backlog
 
-Last updated: 2026-04-16
+Last updated: 2026-04-18
 
 ## Legend
 - 🔴 **CRITICAL** — blocking production use
@@ -12,12 +12,94 @@ Last updated: 2026-04-16
 
 ## 🔴 CRITICAL
 
-### Ladbrokes/Neds Live Test
-- **Status:** Code complete, untested (rate-limited)
-- **What:** Login via OAuth2 Hydra + HyperSolutions, place bet via `/v2/betting/place-bet`
-- **Action:** Wait for rate limit to clear (30+ min from last attempt), do ONE clean login → balance check → place bet
-- **Fixed this session:** Brand-specific client IDs (Ladbrokes: `4f075c04...`, Neds: `89362562...`)
-- **Files:** `entain_login.py`, `platforms/ladbrokes.py`
+### ~~Ladbrokes/Neds Live Test~~ ✅ DONE (2026-04-18)
+- Cracked via Patchright browser login → cookie jar → REST API (SGM + cross-game multi)
+- Reverse-engineered from real HAR captures
+- Placed live 2 bets on williamdean327 (Neds): Raptors SGM + cross-game Ingram+DiVincenzo
+- Code: `token_farm/entain_client.py` (login, get_balance, get_event_card,
+  get_sgm_quote, place_sgm, place_cross_game_multi) + `scan_sgm.py`
+- **Not yet done:** integrate into Token Farm FastAPI + wire `platforms/ladbrokes.py` to call it (moved to HIGH)
+
+---
+
+## 🔴 Entain API — post-ship security + hygiene (red-team findings 2026-04-18)
+
+### Rotate leaked secrets (git history)
+- Old commits still contain `HYPERSOLUTIONS_API_KEY`, `BET365_PASSWORD`, `TELEGRAM_API_HASH`, `ANTHROPIC_API_KEY` (before `backend/.env` was untracked)
+- Repo is private so low urgency, but rotate when convenient
+
+### Clean up reverse-SSH key
+- VPS `~/.ssh/authorized_keys` has `vm-reverse-tunnel` entry from today's tunnel debugging
+- Tunnel is fixed via wstunnel now; this key is a dead secondary auth path → remove
+
+### Stabilise Device-Id
+- Currently regenerates UUID on each `EntainClient.__init__`
+- Real users have stable device IDs → rotating one is a bot signal
+- Fix: persist in session cache (~3 lines)
+
+### 401 auto-recovery on cached login
+- `login(skip_validation=True)` trusts cache age; if server invalidated session, first API call 401s with no retry
+- Fix: wrap calls in "catch 401 → force_browser=True re-login → retry" (~10 lines)
+
+### Chmod + delete session cache
+- `/tmp/entain_session_neds.json` has `hydra_auth` + 47 cookies unencrypted, mode 644
+- Fix: save mode 600, optionally delete on process exit
+
+---
+
+## 🟠 Entain API — correctness + coverage
+
+### Wire Entain into production
+- `token_farm/entain_client.py` is standalone — not integrated into Token Farm FastAPI service
+- Wire `backend/platforms/ladbrokes.py::EntainClient.place_bet` to call Token Farm REST endpoint (same pattern as `bet365_routes.py`)
+- Add `/auth/entain/login`, `/v2/entain/quote_sgm`, `/v2/entain/place_sgm`, `/v2/entain/place_multi` endpoints to `token_farm/main.py`
+
+### Stale-quote handling on place_sgm
+- Odds can move between quote and place → API rejects with "price_changed"
+- Fix: catch, re-quote, retry once with user-specified max-drift threshold
+
+### Rate-limit the scanner
+- Currently ~110 req/s burst during scan — non-human, could trigger account flag
+- Add semaphore-limit + exponential backoff on 429 (~15 lines)
+
+### Scan coverage — missing market categories
+- `PLAYER_MARKETS_RE` in `scan_sgm.py` matches only Points/Assists/Rebounds/Threes
+- Misses: Blocks, Steals, Performance, PRA/PR/PA/combo markets
+- Expand regex or enumerate market "type" from schema
+
+### Same-player combos off by default
+- `--same-player` flag defaults False; we showed biggest SGM boosts often come from same-player cross-market
+- Flip default ON, add flag to exclude
+
+### SGM-boost number inflation
+- Raw-multi already contains ~4–5% overround per leg; reported "boost" magnitudes are inflated ~8–10%
+- Re-baseline against vig-stripped probabilities before presenting percentages
+
+### Hardcoded NBA category UUID
+- `CATEGORY_BASKETBALL_NBA = "4d54ccd1-..."` in `entain_client.py`
+- Look up per event via event-card's `sportCategory.id` instead of hardcoding
+
+### No tests
+- All correctness checks are manual HAR-comparison
+- Add pytest with recorded responses (`respx` or similar)
+
+---
+
+## 🟠 Operational hygiene (post-session cleanup)
+
+### Restart 4 stopped bet365 VMs (when needed)
+- Shut down today for RAM bump: `698 JV-MEC-Bet365`, `704 JV-Bet365-MAP`, `706 JV-B365-GEW`, `707 JV-BET365-JAM`
+- Start via Proxmox web UI or `qm start <id>` when next needed
+
+### Prune `backend/scripts/` probe files
+- ~15 one-off investigation scripts from today (probe_kasada, probe_mfc, test_batching, probe_fixture_link, etc.)
+- Move to `scripts/investigation/` or delete after commit
+
+### Centralise account credentials
+- `williamdean327 / Deanslister27!` and `alexandredayant28 / Daddario528!` appear in 8+ files
+- Move to `.env` references; delete hardcoded plaintexts
+
+---
 
 ### Sportsbet Freebet Payload Verification
 - **Status:** Code complete, unverified

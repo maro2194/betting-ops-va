@@ -25,6 +25,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional, Callable, Awaitable
 
+from engine_allocator import allocate_plan, Acct
+
 logger = logging.getLogger("execution_engine")
 
 # ─── Constants ───────────────────────────────────────────────────────────────
@@ -148,6 +150,10 @@ class TipState:
     placed_accounts: set = field(default_factory=set)
     skipped_accounts: set = field(default_factory=set)
     status: str = "PENDING"  # PENDING → PLACED | RETRY_QUEUED → PLACED | DEAD
+    # Pre-computed allocation plan: account_id -> chunk ($). Refreshed when
+    # the eligible set changes or target ratchets down.
+    plan: dict = field(default_factory=dict)
+    plan_signature: Optional[tuple] = None  # (target, frozenset(eligible_ids))
 
 
 # ─── Master Checklist (Atomic State Manager) ────────────────────────────────
@@ -238,7 +244,6 @@ class MasterChecklist:
                 and acc.id not in state.skipped_accounts
                 and not self.account_exhausted.get(acc.id, False)
             ]
-            num_eligible = max(1, len(eligible))
 
             balance = self.account_balances.get(account_id, 0)
             if balance < MIN_BET:
@@ -247,22 +252,52 @@ class MasterChecklist:
                 self._check_closure(state, runner_id)
                 return None
 
-            # $5 standard rounding split
-            chunk = standard_round_5(remaining / num_eligible)
+            # ── Upfront allocation plan (replaces JIT remaining/num split) ──
+            # Plan once per target value — do NOT replan on eligible-set
+            # shrinkage (accounts moving from eligible to placed). Replanning
+            # there would let each mini-plan's ratio guard be respected
+            # locally while the GLOBAL spread across placements drifts over 3×.
+            # Only replan when (a) no plan yet, (b) target ratcheted down, or
+            # (c) a newly-eligible account isn't in the plan (e.g. returned
+            # from retry).
+            signature = round(state.target, 2)
+            needs_replan = (
+                not state.plan
+                or state.plan_signature != signature
+                or account_id not in state.plan
+            )
+            if needs_replan:
+                alloc_accts = [
+                    Acct(acc.id, self.account_balances.get(acc.id, 0))
+                    for acc in eligible
+                ]
+                seed = hash((signature, frozenset(a.id for a in alloc_accts))) & 0xFFFFFFFF
+                # When replanning mid-tip (target ratchet), split only what's
+                # left; otherwise use full target at first entry.
+                plan_target = remaining if state.placed_total > 0 else state.target
+                new_plan = allocate_plan(
+                    plan_target, alloc_accts, seed=seed, min_bet=MIN_BET
+                )
+                # Preserve already-placed accounts' chunks in the plan so
+                # they're not double-counted or dropped from logs.
+                for aid in state.placed_accounts:
+                    if aid not in new_plan:
+                        new_plan[aid] = 0
+                state.plan = new_plan
+                state.plan_signature = signature
+                logger.info(
+                    "ALLOC | runner=%s | plan_target=$%.0f | %s",
+                    runner_id, plan_target, dict(new_plan),
+                )
 
-            # Greedy: if split below min but tip can still fill → take larger share
-            if chunk < MIN_BET and remaining >= MIN_BET:
-                chunk = standard_round_5(min(remaining, balance))
+            chunk = state.plan.get(account_id, 0)
 
-            # Cap at remaining (floor to avoid over-allocation)
+            # Safety caps (belt + braces vs allocator output)
             if chunk > remaining:
                 chunk = floor_round_5(remaining)
-
-            # Cap at balance (floor)
             if chunk > balance:
                 chunk = floor_round_5(balance)
 
-            # Final min check
             if chunk < MIN_BET:
                 state.skipped_accounts.add(account_id)
                 self._check_closure(state, runner_id)
