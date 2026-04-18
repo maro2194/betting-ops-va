@@ -152,7 +152,7 @@ function AccountCard({ account, session, onLogin, onDelete, onLogout, onEdit }) 
   const [balance, setBalance] = useState(null);
   const [error, setError] = useState('');
 
-  const isOnline = !!session;
+  const isOnline = !!session?.session_id && (!session.token_exp || Date.now() / 1000 < session.token_exp - 300);
   const autoFetched = useRef(false);
 
   // Auto-fetch balance when session exists
@@ -444,6 +444,7 @@ export default function Dashboard() {
           account_number: s.account_number,
           customer_id: s.customer_id,
           accountLabel: acct.label || '',
+          token_exp: s.token_exp || null,
         });
       }
     }).catch(() => {});
@@ -629,7 +630,7 @@ export default function Dashboard() {
             <tbody>
               {accounts.map((acc) => {
                 const session = sessions[acc.id];
-                const isOnline = !!session;
+                const isOnline = !!session?.session_id && (!session.token_exp || Date.now() / 1000 < session.token_exp - 300);
                 return (
                   <AccountTableRow
                     key={acc.id}

@@ -238,6 +238,7 @@ async def api_login(req: LoginRequest, _user: dict = Depends(_verify_app_token))
                             customer_id=s["customer_id"],
                             balance=bal["account_balance"],
                             email=email,
+                            token_exp=exp,
                         )
                     except Exception:
                         # Token might be dead, re-login
@@ -314,6 +315,7 @@ async def api_login(req: LoginRequest, _user: dict = Depends(_verify_app_token))
             customer_id=customer_id,
             balance=balance_str,
             email=email,
+            token_exp=session_data.get("token_exp"),
         )
 
 
@@ -992,6 +994,7 @@ async def api_active_sessions(_user: dict = Depends(_verify_app_token)):
                 "email": s["email"],
                 "account_number": s["account_number"],
                 "customer_id": s["customer_id"],
+                "token_exp": exp,
             })
     return {"sessions": active}
 
@@ -2440,7 +2443,11 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                     continue
 
                 svs = _tt.get_sgm_savers(token, acct, proxy, legacy_token=legacy)
-                matching = [sv for sv in svs if bet["match"].lower() in sv.get("match", "").lower()]
+                bet_match_lower = bet["match"].lower()
+                matching = [sv for sv in svs if (
+                    bet_match_lower in sv.get("match", "").lower() or
+                    sv.get("match", "").lower() in bet_match_lower
+                )]
                 stake = float(matching[0]["max_reward"]) if matching else 10.0
 
                 resolved_legs = []

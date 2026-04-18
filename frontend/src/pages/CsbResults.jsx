@@ -2,148 +2,210 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api';
 import {
   TrendingUp, TrendingDown, Loader2, RefreshCw,
-  CheckCircle, XCircle, Clock, Filter, ChevronLeft, ChevronRight, Calendar,
+  CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 const SPORTS = ['All', 'AFL', 'NBA', 'NRL'];
 
 const parseMoney = (v) => parseFloat(String(v || '0').replace(/[$,]/g, '')) || 0;
 
-function StatusBadge({ status }) {
-  const s = (status || '').toLowerCase();
-  if (s === 'won') return <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><CheckCircle size={10} /> Won</span>;
-  if (s === 'mb1') return <span className="badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#3b82f6', color: '#fff' }}><RefreshCw size={10} /> MB1</span>;
-  if (s === 'lost') return <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><XCircle size={10} /> Lost</span>;
-  return <span className="badge badge-warning" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><Clock size={10} /> Pending</span>;
+// ── Colour tokens (CSS vars defined in global theme) ──────────────────────────
+const C = {
+  green:      'var(--success)',
+  greenDim:   'var(--success-muted, oklch(28% 0.08 155))',
+  red:        'var(--danger)',
+  redDim:     'var(--danger-muted, oklch(28% 0.09 25))',
+  blue:       '#3b82f6',
+  blueDim:    'oklch(28% 0.09 245)',
+  amber:      'var(--warning, #f59e0b)',
+  amberDim:   'oklch(32% 0.08 75)',
+  muted:      'var(--text-muted)',
+  sec:        'var(--text-secondary)',
+  border:     'var(--border)',
+  cardAlt:    'var(--secondary)',
+};
+
+function getLegTypeTag(legText, stat) {
+  const t = `${legText} ${stat || ''}`.toLowerCase();
+  if (t.includes('tryscorer') || t.includes('try scorer') || (t.includes('try') && !t.includes('total'))) return 'Try';
+  if (t.includes('disposal') || t.includes('disp')) return 'DISP';
+  if (t.includes('goal')) return 'GOAL';
+  if (t.includes('mark')) return 'MARK';
+  if (t.includes('assist')) return 'AST';
+  if (t.includes('rebound') || t.includes('reb')) return 'REB';
+  if (t.includes('point') || t.includes(' pts')) return 'PTS';
+  if (t.includes('head to head') || t.includes('h2h') || t.includes('match result') || t.includes('winner')) return 'H2H';
+  if (t.includes('over') || t.includes('under') || t.includes('total') || t.includes('pyot') || t.includes('pyol')) return 'PYOT';
+  return 'LEG';
 }
 
-/**
- * LegStatus — shows a leg with real stat result if available.
- * legResult: {name, player, stat, line, actual, result: 'won'|'lost'|'pending', note}
- * betStatus: the overall bet status (used as fallback when no legResult)
- */
-function LegStatus({ leg, betStatus, legResult }) {
-  const legText = typeof leg === 'string' ? leg : (leg.name || JSON.stringify(leg));
+// ── StatusBadge ───────────────────────────────────────────────────────────────
+function StatusBadge({ status }) {
+  const s = (status || '').toLowerCase();
+  const base = {
+    display: 'inline-flex', alignItems: 'center', gap: 4,
+    padding: '3px 8px', borderRadius: 4,
+    fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
+    flexShrink: 0,
+  };
+  if (s === 'won')  return <span style={{ ...base, background: C.greenDim, color: C.green }}><CheckCircle size={9} /> Won</span>;
+  if (s === 'mb1')  return <span style={{ ...base, background: C.blueDim,  color: C.blue  }}><RefreshCw  size={9} /> MB1</span>;
+  if (s === 'lost') return <span style={{ ...base, background: C.redDim,   color: C.red   }}><XCircle    size={9} /> Lost</span>;
+  return                   <span style={{ ...base, background: C.amberDim, color: C.amber }}><Clock      size={9} /> Pending</span>;
+}
 
-  // If we have a real per-leg result, use it
+// ── LegStatus — all original logic, new visual ────────────────────────────────
+function LegStatus({ leg, legResult }) {
+  const legText = typeof leg === 'string' ? leg : (leg.name || JSON.stringify(leg));
+  const typeTag = getLegTypeTag(legText, legResult?.stat);
+
+  const rowStyle = {
+    display: 'grid',
+    gridTemplateColumns: '14px 1fr auto',
+    alignItems: 'center',
+    gap: 7,
+  };
+  const infoStyle = { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 };
+  const nameStyle = { fontSize: 11, fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+  const tagStyle  = { fontSize: 9, color: C.muted, textAlign: 'right', whiteSpace: 'nowrap' };
+
   if (legResult) {
     const r = (legResult.result || 'pending').toLowerCase();
-    const isWon = r === 'won';
+    const isWon  = r === 'won';
     const isLost = r === 'lost';
 
-    const iconColor = isWon ? 'var(--success)' : isLost ? 'var(--danger)' : 'var(--text-muted)';
-    const textColor = isWon ? 'var(--success)' : isLost ? 'var(--danger)' : 'var(--text-secondary)';
-    const icon = isWon
-      ? <CheckCircle size={11} style={{ color: iconColor, flexShrink: 0 }} />
-      : isLost
-        ? <XCircle size={11} style={{ color: iconColor, flexShrink: 0 }} />
-        : <Clock size={11} style={{ color: iconColor, flexShrink: 0 }} />;
+    // Pre-compute missedByOne so we can use it for the icon too
+    let missedByOne = false;
+    if (legResult.actual !== null && legResult.actual !== undefined && legResult.line !== null) {
+      const _stat   = (legResult.stat || '').toLowerCase();
+      const _legLow = legText.toLowerCase();
+      const _isPromo = ['pts', 'points', 'disp', 'disposals'].some((k) => _stat.includes(k) || _legLow.includes(k));
+      missedByOne = _isPromo && parseFloat(legResult.line) > 0 && parseFloat(legResult.actual) === parseFloat(legResult.line) - 1 && !isWon;
+    }
 
-    // Build progress bar + stat display
+    const iconColor = missedByOne ? C.blue : isWon ? C.green : isLost ? C.red : C.amber;
+    const icon = missedByOne
+      ? <RefreshCw size={12} style={{ color: iconColor }} />
+      : isWon
+        ? <CheckCircle size={12} style={{ color: iconColor }} />
+        : isLost
+          ? <XCircle size={12} style={{ color: iconColor }} />
+          : <Clock   size={12} style={{ color: iconColor }} />;
+
     let statDisplay = null;
     if (legResult.actual !== null && legResult.actual !== undefined && legResult.line !== null) {
       const target = parseFloat(legResult.line) || 0;
       const actual = parseFloat(legResult.actual) || 0;
-      const pct = target > 0 ? Math.min((actual / target) * 100, 100) : 0;
-      // "Miss by 1" promo: Points and Disposals — blue when exactly 1 away from target
-      // Shows during game (one more to hit!) AND after game (promo refund triggered)
-      const stat = (legResult.stat || '').toLowerCase();
-      const legName = legText.toLowerCase();
-      const isPromoStat = ['pts', 'points', 'disp', 'disposals'].some((k) => stat.includes(k) || legName.includes(k));
-      const missedByOne = isPromoStat && target > 0 && actual === target - 1 && !isWon;
-      const barColor = missedByOne ? '#3b82f6' : isWon ? 'var(--success)' : isLost ? 'var(--danger)' : pct >= 100 ? 'var(--success)' : pct >= 75 ? '#f59e0b' : '#ef4444';
+      const pct    = target > 0 ? Math.min((actual / target) * 100, 100) : 0;
+      const stat   = (legResult.stat || '').toLowerCase();
+      const legLow = legText.toLowerCase();
+      const isPromoStat = ['pts', 'points', 'disp', 'disposals'].some((k) => stat.includes(k) || legLow.includes(k));
+      const barColor = missedByOne ? C.blue
+        : isWon  ? C.green
+        : isLost ? C.red
+        : pct >= 100 ? C.green : pct >= 75 ? C.amber : C.red;
 
       statDisplay = (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 6, flex: '0 0 140px' }}>
-          <div style={{
-            position: 'relative',
-            width: 100,
-            height: 8,
-            borderRadius: 4,
-            background: 'var(--border)',
-            overflow: 'hidden',
-          }}>
-            {/* Progress fill */}
-            <div style={{
-              width: `${pct}%`,
-              height: '100%',
-              borderRadius: 4,
-              background: barColor,
-              transition: 'width 0.3s',
-            }} />
-            {/* Target marker line at 100% */}
-            <div style={{
-              position: 'absolute',
-              right: 0,
-              top: -1,
-              width: 2,
-              height: 10,
-              background: 'var(--text-muted)',
-              borderRadius: 1,
-            }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
+          <div style={{ position: 'relative', height: 4, borderRadius: 99, background: C.border, flex: 1, maxWidth: 130, overflow: 'visible' }}>
+            <div style={{ width: `${pct}%`, height: '100%', borderRadius: 99, background: barColor, transition: 'width 0.4s' }} />
+            <div style={{ position: 'absolute', right: 0, top: -3, width: 2, height: 10, borderRadius: 1, background: 'oklch(42% 0.01 240)' }} />
           </div>
-          <span style={{ fontSize: 11, fontWeight: 700, color: barColor, whiteSpace: 'nowrap' }}>
-            {actual}{isWon ? ' ✓' : missedByOne ? ' ≈' : isLost ? ' ✗' : ''}<span style={{ fontSize: 9, fontWeight: 400, color: 'var(--text-muted)' }}>/{target}</span>
-            {missedByOne && <span style={{ fontSize: 9, marginLeft: 2, color: '#3b82f6', fontWeight: 600 }}>MB1</span>}
+          <span style={{ fontSize: 10, fontWeight: 700, color: barColor, whiteSpace: 'nowrap' }}>
+            {actual}
+            {isWon ? ' ✓' : missedByOne ? ' ≈' : isLost ? ' ✗' : ''}
+            <span style={{ fontSize: 9, fontWeight: 400, color: C.muted }}>/{target}</span>
+            {missedByOne && <span style={{ fontSize: 8, marginLeft: 2, color: C.blue, fontWeight: 700 }}>MB1</span>}
           </span>
         </div>
       );
     } else if (legResult.note) {
-      statDisplay = (
-        <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-          {legResult.note}
-        </span>
-      );
+      statDisplay = <span style={{ fontSize: 10, color: C.muted, fontStyle: 'italic', marginTop: 2 }}>{legResult.note}</span>;
     }
 
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, flexWrap: 'wrap' }}>
-        {icon}
-        <span style={{ color: textColor }}>{legText}</span>
-        {statDisplay}
+      <div style={rowStyle}>
+        <div style={{ display: 'flex', alignItems: 'center' }}>{icon}</div>
+        <div style={infoStyle}>
+          <span style={nameStyle}>{legText}</span>
+          {statDisplay}
+        </div>
+        <span style={tagStyle}>{typeTag}</span>
       </div>
     );
   }
 
-  // Fallback: no individual leg result — show neutral/pending (don't inherit bet status)
-  let color = 'var(--text-secondary)';
-  let icon = <Clock size={11} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />;
-
+  // Fallback: no leg result data yet
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-      {icon}
-      <span style={{ color }}>{legText}</span>
+    <div style={rowStyle}>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <Clock size={12} style={{ color: C.muted }} />
+      </div>
+      <div style={infoStyle}>
+        <span style={{ ...nameStyle, color: C.sec }}>{legText}</span>
+      </div>
+      <span style={tagStyle}>{typeTag}</span>
     </div>
   );
 }
 
-function todayStr() {
-  const now = new Date();
-  return fmtDate(now);
-}
-
+// ── Date helpers ──────────────────────────────────────────────────────────────
+function todayStr() { return fmtDate(new Date()); }
 function fmtDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+function displayDate(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  const isToday = dateStr === todayStr();
+  const isYesterday = dateStr === fmtDate(new Date(Date.now() - 86400000));
+  const label = isToday ? 'Today' : isYesterday ? 'Yesterday' : '';
+  const long = d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  return label ? `${label} · ${long}` : long;
+}
 
+// ── Pill button ───────────────────────────────────────────────────────────────
+function Pill({ active, onClick, children, activeColor, activeBg }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: '4px 9px', borderRadius: 4, fontSize: 10, fontWeight: 500,
+      border: `1px solid ${active ? (activeColor || 'var(--primary)') : C.border}`,
+      background: active ? (activeBg || 'var(--primary-muted, oklch(38% 0.1 160))') : 'transparent',
+      color: active ? (activeColor || 'var(--primary)') : C.sec,
+      cursor: 'pointer', whiteSpace: 'nowrap', letterSpacing: '0.02em',
+      transition: 'all 0.12s',
+    }}>
+      {children}
+    </button>
+  );
+}
+
+// ── MetaItem ──────────────────────────────────────────────────────────────────
+function MetaItem({ label, value, color }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+      <span style={{ fontSize: 8, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</span>
+      <span style={{ fontSize: 11, fontWeight: 700, color: color || C.sec }}>{value}</span>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export default function CsbResults() {
-  const [bets, setBets] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [checking, setChecking] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState(null);
-  const [legResults, setLegResults] = useState({}); // betId -> [legResult, ...]
+  const [bets, setBets]                       = useState([]);
+  const [loading, setLoading]                 = useState(true);
+  const [checking, setChecking]               = useState(false);
+  const [syncing, setSyncing]                 = useState(false);
+  const [syncResult, setSyncResult]           = useState(null);
+  const [legResults, setLegResults]           = useState({});
   const [legResultsLoading, setLegResultsLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [sportFilter, setSportFilter] = useState('All');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [accountFilter, setAccountFilter] = useState('All');
-  const [selectedDate, setSelectedDate] = useState(todayStr());
-  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [error, setError]                     = useState('');
+  const [sportFilter, setSportFilter]         = useState('All');
+  const [statusFilter, setStatusFilter]       = useState('');
+  const [accountFilter, setAccountFilter]     = useState('All');
+  const [selectedDate, setSelectedDate]       = useState(todayStr());
+  const [autoRefresh, setAutoRefresh]         = useState(false);
   const autoRefreshRef = useRef(null);
-
-  // Track which bet IDs we've already fetched leg results for to avoid re-fetching
-  const fetchedBetIds = useRef(new Set());
+  const fetchedBetIds  = useRef(new Set());
 
   const fetchBets = useCallback(async () => {
     try {
@@ -153,11 +215,11 @@ export default function CsbResults() {
         .filter((b) => csbSources.has((b.source || '').toLowerCase()))
         .map((b) => ({
           ...b,
-          _stake: parseMoney(b.stake),
-          _odds: parseMoney(b.combined_odds),
+          _stake:  parseMoney(b.stake),
+          _odds:   parseMoney(b.combined_odds),
           _payout: parseMoney(b.payout),
           _status: (b.status || '').toLowerCase(),
-          _sport: detectSport(b),
+          _sport:  detectSport(b),
         }));
       setBets(allBets);
       return allBets;
@@ -169,27 +231,21 @@ export default function CsbResults() {
     }
   }, [selectedDate]);
 
-  // Fetch per-leg results for ALL bets (pending + settled — shows actual stats)
   const fetchLegResults = useCallback(async (betsToCheck) => {
     const eligible = betsToCheck.filter((b) => {
       if (fetchedBetIds.current.has(b.id)) return false;
       const legs = b.legs || [];
       if (!legs.length) return false;
       const text = JSON.stringify(legs).toUpperCase();
-      // V1 has "AFL"/"NBA" prefix; V2 has stat names like "Disposals", "Goals", "Points"
-      return text.includes('AFL') || text.includes('NBA') || text.includes('DISPOSALS') || text.includes('GOALS') || text.includes('POINTS') || text.includes('MARKS');
+      return text.includes('AFL') || text.includes('NBA')
+        || text.includes('DISPOSALS') || text.includes('GOALS')
+        || text.includes('POINTS') || text.includes('MARKS');
     });
-
     if (!eligible.length) return;
-
     setLegResultsLoading(true);
     const ids = eligible.map((b) => b.id);
-
-    // Mark as fetched immediately to prevent duplicate calls
     ids.forEach((id) => fetchedBetIds.current.add(id));
-
     try {
-      // Batch in groups of 10 to avoid huge query strings
       const BATCH = 10;
       const merged = {};
       for (let i = 0; i < ids.length; i += BATCH) {
@@ -199,7 +255,6 @@ export default function CsbResults() {
       }
       setLegResults((prev) => ({ ...prev, ...merged }));
     } catch (err) {
-      // Non-fatal — leg results are supplemental
       console.warn('leg-results fetch failed:', err.message);
     } finally {
       setLegResultsLoading(false);
@@ -210,12 +265,9 @@ export default function CsbResults() {
     setLoading(true);
     fetchedBetIds.current.clear();
     setLegResults({});
-    fetchBets().then((allBets) => {
-      if (allBets.length) fetchLegResults(allBets);
-    });
+    fetchBets().then((allBets) => { if (allBets.length) fetchLegResults(allBets); });
   }, [fetchBets, fetchLegResults, selectedDate]);
 
-  // Auto-refresh: poll leg results every 60s when enabled
   useEffect(() => {
     if (autoRefreshRef.current) clearInterval(autoRefreshRef.current);
     if (autoRefresh && bets.length > 0) {
@@ -227,7 +279,6 @@ export default function CsbResults() {
     return () => { if (autoRefreshRef.current) clearInterval(autoRefreshRef.current); };
   }, [autoRefresh, bets, fetchLegResults]);
 
-  // Combined refresh: check results from TAB + refresh live stats
   const handleRefreshAll = async () => {
     setChecking(true);
     setError('');
@@ -260,60 +311,53 @@ export default function CsbResults() {
     }
   };
 
-  // Derive effective status from leg results for each bet
-  // A leg is "effectively won" if result==='won' OR if actual >= line (target already hit)
+  // ── Status helpers (unchanged logic) ───────────────────────────────────────
   const isLegHit = (l) => {
     const r = (l.result || '').toLowerCase();
     if (r === 'won') return true;
     if (r === 'lost') return false;
-    // Pending but actual >= line means target already hit (over line reached mid-game)
-    if (l.actual !== null && l.actual !== undefined && l.line !== null && l.line !== undefined) {
+    if (l.actual !== null && l.actual !== undefined && l.line !== null && l.line !== undefined)
       return parseFloat(l.actual) >= parseFloat(l.line);
-    }
     return false;
   };
   const isLegLost = (l) => (l.result || '').toLowerCase() === 'lost';
   const isLegMissedByOne = (l) => {
-    // Leg missed target by exactly 1 (for TAB SGM MB1 refund detection)
-    if (l.actual !== null && l.actual !== undefined && l.line !== null && l.line !== undefined) {
-      const actual = parseFloat(l.actual);
-      const line = parseFloat(l.line);
-      return actual === line - 1;
-    }
+    if (l.actual !== null && l.actual !== undefined && l.line !== null && l.line !== undefined)
+      return parseFloat(l.actual) === parseFloat(l.line) - 1;
     return false;
   };
 
   const getEffectiveStatus = (bet) => {
     const lr = legResults[bet.id] || [];
+    const hasData = (l) => l.actual !== null && l.actual !== undefined;
     if (lr.length > 0 && bet._status === 'pending') {
-      // Any leg confirmed lost → check for MB1 first
       if (lr.some(isLegLost)) {
-        // MB1: exactly 1 leg missed by exactly 1, all other legs hit
-        const missedLegs = lr.filter((l) => !isLegHit(l));
-        if (missedLegs.length === 1 && isLegMissedByOne(missedLegs[0])) return 'mb1';
+        const missedLegs  = lr.filter((l) => hasData(l) && !isLegHit(l));
+        const pendingLegs = lr.filter((l) => !hasData(l) && (l.result || 'pending').toLowerCase() === 'pending');
+        if (missedLegs.length === 1 && isLegMissedByOne(missedLegs[0])) {
+          // Only declare MB1 once all other legs have resolved
+          if (pendingLegs.length === 0) return 'mb1';
+          return 'pending';
+        }
         return 'lost';
       }
       const legs = bet.legs || [];
-      // All legs hit their target → effectively won
       if (lr.length >= legs.length && lr.every(isLegHit)) return 'won';
-      // Check MB1 mid-game: all legs resolved, exactly 1 missed by 1
       if (lr.length >= legs.length) {
-        const missedLegs = lr.filter((l) => !isLegHit(l));
+        const missedLegs = lr.filter((l) => hasData(l) && !isLegHit(l));
         if (missedLegs.length === 1 && isLegMissedByOne(missedLegs[0])) return 'mb1';
       }
     }
-    // Also check settled bets — TAB might mark as "lost" but it's actually MB1
-    if (lr.length > 0 && (bet._status === 'lost' || bet._status === 'Settled - Loser')) {
-      const missedLegs = lr.filter((l) => !isLegHit(l));
+    if (lr.length > 0 && (bet._status === 'lost' || bet._status === 'settled - loser')) {
+      const missedLegs = lr.filter((l) => hasData(l) && !isLegHit(l));
       if (missedLegs.length === 1 && isLegMissedByOne(missedLegs[0])) return 'mb1';
     }
     return bet._status;
   };
 
-  // Unique account labels for filter dropdown
+  // ── Derived data ──────────────────────────────────────────────────────────
   const accountLabels = [...new Set(bets.map((b) => b.account_label).filter(Boolean))].sort();
 
-  // Filter (using effective status)
   const filtered = bets.filter((b) => {
     if (sportFilter !== 'All' && b._sport !== sportFilter) return false;
     if (statusFilter && getEffectiveStatus(b) !== statusFilter) return false;
@@ -321,252 +365,336 @@ export default function CsbResults() {
     return true;
   });
 
-  // Calculations (using effective status)
-  const totalStaked = filtered.reduce((s, b) => s + b._stake, 0);
-  const wonBets = filtered.filter((b) => { const s = getEffectiveStatus(b); return s === 'won' || s === 'mb1'; });
-  const lostBets = filtered.filter((b) => getEffectiveStatus(b) === 'lost');
-  const pendingBets = filtered.filter((b) => getEffectiveStatus(b) === 'pending');
-
-  // For effectively-won bets that haven't been settled in DB yet, calculate profit from odds
-  const wonProfit = wonBets.reduce((s, b) => {
-    const profit = b._payout > 0 ? (b._payout - b._stake) : (b._odds - 1) * b._stake;
-    return s + profit;
-  }, 0);
-  const lostStake = lostBets.reduce((s, b) => s + b._stake, 0);
-  // MB1 bets are refunded — $0 P/L impact
-  const settledPL = wonProfit - lostStake;
-
+  const totalStaked  = filtered.reduce((s, b) => s + b._stake, 0);
+  const wonBets      = filtered.filter((b) => { const s = getEffectiveStatus(b); return s === 'won' || s === 'mb1'; });
+  const lostBets     = filtered.filter((b) => getEffectiveStatus(b) === 'lost');
+  const pendingBets  = filtered.filter((b) => getEffectiveStatus(b) === 'pending');
+  const mb1Bets      = filtered.filter((b) => getEffectiveStatus(b) === 'mb1');
+  const wonProfit    = wonBets.reduce((s, b) => s + (b._payout > 0 ? (b._payout - b._stake) : (b._odds - 1) * b._stake), 0);
+  const lostStake    = lostBets.reduce((s, b) => s + b._stake, 0);
+  const settledPL    = wonProfit - lostStake;
   const pendingPotential = pendingBets.reduce((s, b) => s + (b._odds * b._stake) - b._stake, 0);
-  const ceiling = settledPL + pendingPotential;
-
   const pendingStake = pendingBets.reduce((s, b) => s + b._stake, 0);
-  const floor = settledPL - pendingStake;
+  const ceiling      = settledPL + pendingPotential;
+  const floor        = settledPL - pendingStake;
+  const currentPL    = settledPL;
+  const winRate      = wonBets.length + lostBets.length > 0
+    ? ((wonBets.length / (wonBets.length + lostBets.length)) * 100).toFixed(1)
+    : null;
 
-  const currentPL = settledPL;
+  // ── Navigation helpers ────────────────────────────────────────────────────
+  const stepDate = (dir) => {
+    const d = new Date(selectedDate + 'T12:00:00');
+    d.setDate(d.getDate() + dir);
+    setSelectedDate(fmtDate(d));
+  };
 
+  // ── Styles ────────────────────────────────────────────────────────────────
+  const filterBarStyle = {
+    display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
+    padding: '10px 0 14px', marginBottom: 16,
+    borderBottom: '1px solid var(--border)',
+  };
+  const filterSep = <div style={{ width: 1, height: 18, background: C.border, margin: '0 2px' }} />;
+
+  const statsRowStyle = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+    gap: 10,
+    marginBottom: 18,
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="animate-fade-in">
-      {/* Sport + Status Filters */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 20 }}>
-        {/* Date picker */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
-          <button className="btn btn-secondary" style={{ padding: '6px 8px', fontSize: 12, lineHeight: 1 }}
-            onClick={() => { const d = new Date(selectedDate + 'T12:00:00'); d.setDate(d.getDate() - 1); setSelectedDate(fmtDate(d)); }}>
-            <ChevronLeft size={14} />
+
+      {/* ── Filter bar ── */}
+      <div style={filterBarStyle}>
+        {/* Date navigation */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <button className="btn btn-secondary" style={{ padding: '5px 7px' }} onClick={() => stepDate(-1)}>
+            <ChevronLeft size={13} />
           </button>
           <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}
-            style={{ padding: '5px 8px', fontSize: 12, borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }} />
-          <button className="btn btn-secondary" style={{ padding: '6px 8px', fontSize: 12, lineHeight: 1 }}
-            onClick={() => { const d = new Date(selectedDate + 'T12:00:00'); d.setDate(d.getDate() + 1); setSelectedDate(fmtDate(d)); }}>
-            <ChevronRight size={14} />
+            style={{ padding: '4px 8px', fontSize: 11, borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer', fontFamily: 'inherit' }} />
+          <button className="btn btn-secondary" style={{ padding: '5px 7px' }} onClick={() => stepDate(1)}>
+            <ChevronRight size={13} />
           </button>
           {selectedDate !== todayStr() && (
-            <button className="btn btn-primary" style={{ padding: '5px 10px', fontSize: 11 }}
-              onClick={() => setSelectedDate(todayStr())}>
+            <button className="btn btn-primary" style={{ padding: '4px 9px', fontSize: 10 }} onClick={() => setSelectedDate(todayStr())}>
               Today
             </button>
           )}
         </div>
-        <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
-        <Filter size={14} style={{ color: 'var(--text-muted)' }} />
-        {SPORTS.map((s) => (
-          <button key={s} onClick={() => setSportFilter(s)}
-            className={sportFilter === s ? 'btn btn-primary' : 'btn btn-secondary'}
-            style={{ padding: '6px 14px', fontSize: 12 }}>
-            {s}
-          </button>
-        ))}
-        <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
-        {[{ l: 'All', v: '' }, { l: 'Pending', v: 'pending' }, { l: 'Won', v: 'won' }, { l: 'Lost', v: 'lost' }, { l: 'MB1', v: 'mb1' }].map((f) => (
-          <button key={f.v} onClick={() => setStatusFilter(f.v)}
-            className={statusFilter === f.v ? 'btn btn-primary' : 'btn btn-secondary'}
-            style={{ padding: '6px 14px', fontSize: 12 }}>
-            {f.l}
-          </button>
-        ))}
+
+        {filterSep}
+
+        {/* Sport */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <span style={{ fontSize: 9, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: 2 }}>Sport</span>
+          {SPORTS.map((s) => (
+            <Pill key={s} active={sportFilter === s} onClick={() => setSportFilter(s)}>{s}</Pill>
+          ))}
+        </div>
+
+        {filterSep}
+
+        {/* Status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <span style={{ fontSize: 9, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: 2 }}>Status</span>
+          <Pill active={statusFilter === ''} onClick={() => setStatusFilter('')}>All</Pill>
+          <Pill active={statusFilter === 'won'}     onClick={() => setStatusFilter('won')}     activeColor={C.green} activeBg={C.greenDim}>Won</Pill>
+          <Pill active={statusFilter === 'mb1'}     onClick={() => setStatusFilter('mb1')}     activeColor={C.blue}  activeBg={C.blueDim}>MB1</Pill>
+          <Pill active={statusFilter === 'lost'}    onClick={() => setStatusFilter('lost')}    activeColor={C.red}   activeBg={C.redDim}>Lost</Pill>
+          <Pill active={statusFilter === 'pending'} onClick={() => setStatusFilter('pending')} activeColor={C.amber} activeBg={C.amberDim}>Pending</Pill>
+        </div>
+
         {accountLabels.length > 1 && (
-          <select value={accountFilter} onChange={(e) => setAccountFilter(e.target.value)}
-            className="t-input" style={{ padding: '5px 8px', fontSize: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
-            <option value="All">All Accounts</option>
-            {accountLabels.map((a) => <option key={a} value={a}>{a}</option>)}
-          </select>
+          <>
+            {filterSep}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+              <span style={{ fontSize: 9, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: 2 }}>Account</span>
+              <Pill active={accountFilter === 'All'} onClick={() => setAccountFilter('All')}>All</Pill>
+              {accountLabels.map((a) => (
+                <Pill key={a} active={accountFilter === a} onClick={() => setAccountFilter(a)}>{a}</Pill>
+              ))}
+            </div>
+          </>
         )}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+
+        {/* Right side: status indicators + actions */}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           {(legResultsLoading || checking) && (
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Loader2 size={12} className="animate-spin" /> {checking ? 'Checking...' : 'Fetching stats...'}
+            <span style={{ fontSize: 10, color: C.muted, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Loader2 size={11} className="animate-spin" />
+              {checking ? 'Checking...' : 'Fetching stats...'}
             </span>
           )}
           <button onClick={() => setAutoRefresh((p) => !p)}
             className={autoRefresh ? 'btn btn-primary' : 'btn btn-secondary'}
-            style={{ padding: '6px 14px', fontSize: 12 }}>
-            <Clock size={14} />
-            {autoRefresh ? 'Auto 60s' : 'Auto'}
+            style={{ padding: '5px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }}>
+            <Clock size={12} />{autoRefresh ? 'Auto 60s' : 'Auto'}
           </button>
-          <button onClick={handleRefreshAll} disabled={checking || legResultsLoading} className="btn btn-secondary" style={{ padding: '6px 14px', fontSize: 12 }}>
-            {checking ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            Refresh
+          <button onClick={handleRefreshAll} disabled={checking || legResultsLoading}
+            className="btn btn-secondary" style={{ padding: '5px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }}>
+            {checking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}Refresh
           </button>
-          <button onClick={handleSyncManualBets} disabled={syncing} className="btn btn-secondary" style={{ padding: '6px 14px', fontSize: 12 }}>
-            {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            Sync
+          <button onClick={handleSyncManualBets} disabled={syncing}
+            className="btn btn-secondary" style={{ padding: '5px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }}>
+            {syncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}Sync
           </button>
         </div>
-        {syncResult && (
-          <div style={{ fontSize: 12, padding: '8px 14px', marginTop: 8, borderRadius: 6, background: syncResult.imported > 0 ? 'var(--success-muted)' : 'var(--bg-card)', color: syncResult.error ? 'var(--danger)' : 'var(--text-secondary)' }}>
-            {syncResult.error ? syncResult.error : syncResult.imported > 0 ? (
-              <><CheckCircle size={13} style={{ color: 'var(--success)', verticalAlign: 'middle', marginRight: 4 }} />{syncResult.imported} manual bet{syncResult.imported !== 1 ? 's' : ''} imported</>
-            ) : `No new manual bets found (${syncResult.accounts_checked?.length || 0} accounts checked)`}
-          </div>
-        )}
       </div>
 
-      {/* Stats Cards: Floor / Current / Ceiling */}
+      {/* Sync result feedback */}
+      {syncResult && (
+        <div style={{ fontSize: 12, padding: '8px 14px', marginBottom: 14, borderRadius: 6,
+          background: syncResult.imported > 0 ? 'var(--success-muted)' : 'var(--bg-card)',
+          color: syncResult.error ? C.red : C.sec }}>
+          {syncResult.error ? syncResult.error
+            : syncResult.imported > 0
+              ? <><CheckCircle size={13} style={{ color: C.green, verticalAlign: 'middle', marginRight: 4 }} />{syncResult.imported} manual bet{syncResult.imported !== 1 ? 's' : ''} imported</>
+              : `No new manual bets found (${syncResult.accounts_checked?.length || 0} accounts checked)`}
+        </div>
+      )}
+
+      {error && (
+        <div style={{ background: 'var(--danger-muted)', color: C.red, padding: '10px 14px', borderRadius: 'var(--radius)', fontSize: 12, marginBottom: 14 }}>
+          {error}
+        </div>
+      )}
+
+      {/* ── Stats row ── */}
       {filtered.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
-          <div className="stat-card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', marginBottom: 6 }}>Bets</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>{filtered.length}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-              {wonBets.length}W / {lostBets.length}L / {pendingBets.length}P
+        <div style={statsRowStyle}>
+          <div className="stat-card" style={{ padding: '12px 14px' }}>
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: C.muted, marginBottom: 4 }}>Bets</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)' }}>{filtered.length}</div>
+            <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
+              <span style={{ color: C.green }}>{wonBets.length - mb1Bets.length}W</span>
+              {mb1Bets.length > 0 && <> / <span style={{ color: C.blue }}>{mb1Bets.length}MB1</span></>}
+              {' / '}<span style={{ color: C.red }}>{lostBets.length}L</span>
+              {' / '}<span style={{ color: C.amber }}>{pendingBets.length}P</span>
             </div>
           </div>
-          <div className="stat-card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', marginBottom: 6 }}>Staked</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>${totalStaked.toFixed(2)}</div>
+
+          <div className="stat-card" style={{ padding: '12px 14px' }}>
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: C.muted, marginBottom: 4 }}>Staked</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)' }}>${totalStaked.toFixed(2)}</div>
           </div>
-          <div className="stat-card" style={{ padding: 16, borderLeft: '3px solid var(--danger)' }}>
-            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--danger)', marginBottom: 6 }}>
-              Floor (worst case)
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <TrendingDown size={16} style={{ color: 'var(--danger)' }} />
-              <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--danger)' }}>
-                {floor >= 0 ? '+' : ''}${floor.toFixed(2)}
-              </span>
+
+          <div className="stat-card" style={{ padding: '12px 14px', borderLeft: `3px solid ${C.red}` }}>
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: C.red, marginBottom: 4 }}>Floor</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <TrendingDown size={14} style={{ color: C.red }} />
+              <span style={{ fontSize: 20, fontWeight: 700, color: C.red }}>{floor >= 0 ? '+' : ''}${floor.toFixed(2)}</span>
             </div>
           </div>
-          <div className="stat-card" style={{ padding: 16, borderLeft: '3px solid var(--primary)' }}>
-            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--primary)', marginBottom: 6 }}>
-              Current P/L (settled)
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {currentPL >= 0 ? <TrendingUp size={16} style={{ color: 'var(--success)' }} /> : <TrendingDown size={16} style={{ color: 'var(--danger)' }} />}
-              <span style={{ fontSize: 22, fontWeight: 700, color: currentPL >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+
+          <div className="stat-card" style={{ padding: '12px 14px', borderLeft: '3px solid var(--primary)' }}>
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--primary)', marginBottom: 4 }}>Current P/L</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              {currentPL >= 0
+                ? <TrendingUp size={14} style={{ color: C.green }} />
+                : <TrendingDown size={14} style={{ color: C.red }} />}
+              <span style={{ fontSize: 20, fontWeight: 700, color: currentPL >= 0 ? C.green : C.red }}>
                 {currentPL >= 0 ? '+' : ''}${currentPL.toFixed(2)}
               </span>
             </div>
           </div>
-          <div className="stat-card" style={{ padding: 16, borderLeft: '3px solid var(--success)' }}>
-            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--success)', marginBottom: 6 }}>
-              Ceiling (best case)
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <TrendingUp size={16} style={{ color: 'var(--success)' }} />
-              <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--success)' }}>
-                {ceiling >= 0 ? '+' : ''}${ceiling.toFixed(2)}
-              </span>
+
+          <div className="stat-card" style={{ padding: '12px 14px', borderLeft: `3px solid ${C.green}` }}>
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: C.green, marginBottom: 4 }}>Ceiling</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <TrendingUp size={14} style={{ color: C.green }} />
+              <span style={{ fontSize: 20, fontWeight: 700, color: C.green }}>{ceiling >= 0 ? '+' : ''}${ceiling.toFixed(2)}</span>
             </div>
           </div>
-          {wonBets.length + lostBets.length > 0 && (
-            <div className="stat-card" style={{ padding: 16 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', marginBottom: 6 }}>Win Rate</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>
-                {((wonBets.length / (wonBets.length + lostBets.length)) * 100).toFixed(1)}%
-              </div>
+
+          {winRate !== null && (
+            <div className="stat-card" style={{ padding: '12px 14px' }}>
+              <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: C.muted, marginBottom: 4 }}>Win Rate</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)' }}>{winRate}%</div>
             </div>
           )}
         </div>
       )}
 
-      {error && (
-        <div style={{ background: 'var(--danger-muted)', color: 'var(--danger)', padding: '10px 12px', borderRadius: 'var(--radius)', fontSize: 13, marginBottom: 16 }}>
-          {error}
-        </div>
-      )}
-
-      {/* Bet Cards */}
+      {/* ── Bet feed ── */}
       {loading ? (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--text-secondary)', padding: '48px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: C.sec, padding: '56px 0' }}>
           <Loader2 size={16} className="animate-spin" /> Loading...
         </div>
       ) : filtered.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: '48px 24px', color: 'var(--text-muted)' }}>
-          No bets found for {selectedDate === todayStr() ? 'today' : new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' })}.
+        <div className="card" style={{ textAlign: 'center', padding: '56px 24px', color: C.muted }}>
+          No CSB bets found for {displayDate(selectedDate)}.
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {filtered.map((bet) => {
-            const legs = bet.legs || [];
-            const potReturn = bet._odds * bet._stake;
-            const betLegResults = legResults[bet.id] || [];
-            const effectiveStatus = getEffectiveStatus(bet);
-            const isWon = effectiveStatus === 'won';
-            const isLost = effectiveStatus === 'lost';
-            const isMb1 = effectiveStatus === 'mb1';
-            const borderColor = isWon ? 'var(--success)' : isMb1 ? '#3b82f6' : isLost ? 'var(--danger)' : 'var(--warning)';
+        <>
+          {/* Section header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
+            paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              {displayDate(selectedDate)}
+            </span>
+            <span style={{ fontSize: 9, color: C.muted, background: 'var(--bg-card)', border: `1px solid ${C.border}`, borderRadius: 3, padding: '1px 5px' }}>
+              {filtered.length} bets
+            </span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: currentPL >= 0 ? C.green : C.red }}>
+              {currentPL >= 0 ? '+' : ''}${currentPL.toFixed(2)}
+            </span>
+          </div>
 
-            return (
-              <div key={bet.id} className="card" style={{
-                padding: 0, overflow: 'hidden',
-                borderLeft: `3px solid ${borderColor}`,
-              }}>
-                {/* Header */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className="badge badge-neutral" style={{ fontSize: 11 }}>{bet.account_label || '-'}</span>
-                    <span className={`badge ${bet.bet_type === 'SGM' ? 'badge-purple' : 'badge-accent'}`} style={{ fontSize: 11 }}>{bet.bet_type}</span>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{bet._sport}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <StatusBadge status={effectiveStatus} />
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                      {bet.placed_at ? new Date(bet.placed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {filtered.map((bet) => {
+              const legs = bet.legs || [];
+              const betLegResults  = legResults[bet.id] || [];
+              const effectiveStatus = getEffectiveStatus(bet);
+              const isWon     = effectiveStatus === 'won';
+              const isLost    = effectiveStatus === 'lost';
+              const isMb1     = effectiveStatus === 'mb1';
+              const isPending = effectiveStatus === 'pending';
+              const borderColor = isWon ? C.green : isMb1 ? C.blue : isLost ? C.red : C.amber;
+              const matchName = bet.match || bet.event_name || bet.event || '';
+              const placedTime = bet.placed_at
+                ? new Date(bet.placed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : '';
+              const potReturn = bet._odds * bet._stake;
+              const profit = bet._payout > 0 ? (bet._payout - bet._stake) : (bet._odds - 1) * bet._stake;
+
+              return (
+                <article key={bet.id} style={{
+                  background: 'var(--bg-card)',
+                  border: `1px solid var(--border)`,
+                  borderLeft: `3px solid ${borderColor}`,
+                  borderRadius: 9,
+                  overflow: 'hidden',
+                }}>
+                  {/* Card header */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '8px 13px',
+                    background: C.cardAlt, borderBottom: '1px solid var(--border)',
+                  }}>
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em',
+                      padding: '2px 6px', borderRadius: 3,
+                      background: 'var(--bg-card)', color: C.muted, border: `1px solid ${C.border}`,
+                      flexShrink: 0,
+                    }}>{bet._sport}</span>
+
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {matchName || `${bet.bet_type} — ${bet.account_label || ''}`}
                     </span>
-                  </div>
-                </div>
 
-                {/* Legs */}
-                <div style={{ padding: '10px 16px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {/* Live pulse for pending */}
+                    {isPending && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                        <div style={{
+                          width: 6, height: 6, borderRadius: '50%', background: C.amber,
+                          animation: 'csb-pulse 1.4s infinite',
+                        }} />
+                        <span style={{ fontSize: 10, color: C.amber }}>Live</span>
+                      </div>
+                    )}
+
+                    <span style={{ fontSize: 10, color: C.muted, flexShrink: 0 }}>{placedTime}</span>
+                  </div>
+
+                  {/* Legs */}
+                  <div style={{ padding: '9px 13px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {legs.map((leg, j) => (
                       <LegStatus
                         key={j}
                         leg={leg}
-                        betStatus={bet.status}
                         legResult={betLegResults[j] || null}
                       />
                     ))}
                   </div>
-                </div>
 
-                {/* Footer */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', borderTop: '1px solid var(--border)', background: 'var(--secondary)' }}>
-                  <div style={{ fontSize: 12, display: 'flex', gap: 16 }}>
-                    <span><span style={{ color: 'var(--text-muted)' }}>Stake </span><span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>${bet._stake.toFixed(2)}</span></span>
-                    <span><span style={{ color: 'var(--text-muted)' }}>Odds </span><span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{bet._odds.toFixed(2)}</span></span>
-                    <span><span style={{ color: 'var(--text-muted)' }}>Liability </span><span style={{ color: 'var(--text-muted)' }}>${((bet._odds - 1) * bet._stake).toFixed(0)}</span></span>
+                  {/* Card footer */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '7px 13px',
+                    borderTop: '1px solid var(--border)', background: C.cardAlt,
+                  }}>
+                    <span style={{ fontSize: 10, color: C.muted }}>
+                      Account: <span style={{ color: C.sec, fontWeight: 600 }}>{bet.account_label || '—'}</span>
+                      {bet.bet_type && <span style={{ marginLeft: 8, fontSize: 9, color: C.muted, border: `1px solid ${C.border}`, borderRadius: 3, padding: '1px 4px' }}>{bet.bet_type}</span>}
+                    </span>
+
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <MetaItem label="Stake" value={`$${bet._stake.toFixed(2)}`} />
+                      <MetaItem label="Odds" value={bet._odds.toFixed(2)} />
+                      <MetaItem
+                        label={isWon || isMb1 ? 'Profit' : isLost ? 'Loss' : 'To Win'}
+                        value={
+                          isWon || isMb1 ? `+$${profit.toFixed(2)}`
+                          : isLost       ? `-$${bet._stake.toFixed(2)}`
+                          : `$${potReturn.toFixed(2)}`
+                        }
+                        color={isWon || isMb1 ? C.green : isLost ? C.red : C.amber}
+                      />
+                      <StatusBadge status={effectiveStatus} />
+                    </div>
                   </div>
-                  <div>
-                    {isWon && <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--success)' }}>+${(bet._payout > 0 ? (bet._payout - bet._stake) : (bet._odds - 1) * bet._stake).toFixed(2)}</span>}
-                    {isMb1 && <span style={{ fontSize: 16, fontWeight: 700, color: '#3b82f6' }}>+${((bet._odds - 1) * bet._stake).toFixed(2)}</span>}
-                    {isLost && <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--danger)' }}>-${bet._stake.toFixed(2)}</span>}
-                    {!isWon && !isLost && !isMb1 && <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--warning)' }}>Pot. ${potReturn.toFixed(2)}</span>}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                </article>
+              );
+            })}
+          </div>
+        </>
       )}
+
+      <style>{`
+        @keyframes csb-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.25; }
+        }
+      `}</style>
     </div>
   );
 }
 
 function detectSport(bet) {
-  const legs = bet.legs || [];
-  const text = JSON.stringify(legs).toLowerCase();
+  const text = JSON.stringify(bet.legs || []).toLowerCase();
   if (text.includes('afl') || text.includes('disp') || text.includes('disposal')) return 'AFL';
   if (text.includes('nba') || text.includes('pts') || text.includes('points') || text.includes('rebounds')) return 'NBA';
   if (text.includes('nrl') || text.includes('rugby')) return 'NRL';

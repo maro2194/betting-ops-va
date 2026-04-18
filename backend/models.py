@@ -17,6 +17,7 @@ class LoginResponse(BaseModel):
     customer_id: str
     balance: str
     email: str
+    token_exp: Optional[float] = None
 
 
 class BalanceResponse(BaseModel):

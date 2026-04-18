@@ -67,6 +67,21 @@ def _make_session(proxy_url: str | None = None) -> Session:
     return s
 
 
+def _request_with_retry(fn, *args, max_retries: int = 2, retry_delay: float = 1.5, **kwargs):
+    """Retry a curl_cffi request on transient proxy/CONNECT tunnel errors (502, recv error 56)."""
+    for attempt in range(max_retries + 1):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            msg = str(e).lower()
+            is_transient = any(k in msg for k in ("connect tunnel", "502", "recv", "56", "connection", "tunnel failed"))
+            if attempt < max_retries and is_transient:
+                logger.warning("Proxy error attempt %d/%d: %s — retrying in %.1fs", attempt + 1, max_retries + 1, e, retry_delay)
+                time.sleep(retry_delay)
+            else:
+                raise
+
+
 # ── Saver Token Fetching ──────────────────────────────────────────
 
 def get_sgm_savers(token: str, account_number: str, proxy_url: str | None = None, legacy_token: str | None = None) -> list[dict]:
@@ -75,7 +90,7 @@ def get_sgm_savers(token: str, account_number: str, proxy_url: str | None = None
     s = _make_session(proxy_url)
     try:
         headers = _tabcorp_headers(legacy_token) if legacy_token else _bearer_headers(token)
-        resp = s.get(url, headers=headers, timeout=15)
+        resp = _request_with_retry(s.get, url, headers=headers, timeout=15)
         if resp.status_code != 200:
             logger.warning("Bet tokens failed for %s: %d", account_number, resp.status_code)
             return []
@@ -113,7 +128,7 @@ def get_matches(token: str, sport: str, competition: str, proxy_url: str | None 
     logger.info("get_matches: url=%s proxy=%s", url, (proxy_url or "none")[:50])
     s = _make_session(proxy_url)
     try:
-        resp = s.get(url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=10)
+        resp = _request_with_retry(s.get, url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=10)
         logger.info("get_matches: status=%s content_type=%s len=%d", resp.status_code, resp.headers.get("content-type", "?"), len(resp.text))
         if resp.status_code != 200:
             logger.warning("get_matches: non-200 response: %s", resp.text[:200])
@@ -148,7 +163,7 @@ def get_sgm_markets(token: str, match: dict, sport: str, competition: str, proxy
         # Primary: use match _links.markets (public, reliable)
         markets_url = match.get("_links", {}).get("markets", "")
         if markets_url:
-            resp = s.get(markets_url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=15, params={"jurisdiction": "QLD"})
+            resp = _request_with_retry(s.get, markets_url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=15, params={"jurisdiction": "QLD"})
             if resp.status_code == 200:
                 markets = resp.json().get("markets", [])
                 logger.info("Got %d markets for %s", len(markets), match.get("name", "?"))
@@ -157,7 +172,7 @@ def get_sgm_markets(token: str, match: dict, sport: str, competition: str, proxy
         # Fallback: bff-sports SGM endpoint
         match_id = match.get("id") or match.get("name", "").replace(" ", "")
         url = SGM_MARKETS_URL.format(sport=sport, competition=competition, match_id=match_id)
-        resp = s.get(url, headers=_bearer_headers(token), timeout=15)
+        resp = _request_with_retry(s.get, url, headers=_bearer_headers(token), timeout=15)
         if resp.status_code == 200:
             data = resp.json()
             return data.get("markets", data.get("categories", []))
@@ -434,7 +449,7 @@ def get_sgm_price(token: str, account_number: str, legs: list[dict], proxy_url: 
         prop_ids = [p["propositionId"] for p in payload["bets"][0]["legs"][0]["propositions"]]
         logger.info("Pricing for %s using %s (legacy_len=%s) props=%s", account_number, auth_method, len(legacy_token or ""), prop_ids)
         headers = _tabcorp_headers(legacy_token) if legacy_token else _bearer_headers(token)
-        resp = s.post(url, headers=headers, json=payload, timeout=15)
+        resp = _request_with_retry(s.post, url, headers=headers, json=payload, timeout=15)
         if resp.status_code != 200:
             body_preview = resp.text[:300] if resp.text else "empty"
             logger.error("Pricing failed %s for account %s: %s", resp.status_code, account_number, body_preview)
@@ -515,7 +530,7 @@ def place_sgm_with_saver(
     try:
         logger.info("Placing SGM bet: acct=%s stake=$%.2f odds=%s deco=%d legs=%d",
                      account_number, stake, combined_odds, len(deco_tokens), len(legs))
-        resp = s.post(url, headers=_betslip_headers(legacy_token), json=payload, timeout=15)
+        resp = _request_with_retry(s.post, url, headers=_betslip_headers(legacy_token), json=payload, timeout=15)
         logger.info("Betslip response: %d %s", resp.status_code, resp.text[:500])
 
         if resp.status_code == 201:
