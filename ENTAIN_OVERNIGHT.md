@@ -154,3 +154,45 @@ Entain (Neds + Ladbrokes) login MUST run from the **Token Farm mini PC**, same a
 - Cannot place Ladbrokes/Neds bets at all — all 7 Ladbrokes/Neds CSV rows in any multi-bookie allocation will hard-fail.
 - Blocks "Racing Allocation Full Coverage" item in BACKLOG.md.
 
+---
+
+## ✅ SOLVED — 2026-04-18 (morning handoff follow-up)
+
+**Winning stack:**
+- **Token Farm mini PC (jsb user via SSH key)** — clean AU residential IP
+- **Patchright Chrome, headless=True**, args `["--disable-blink-features=AutomationControlled"]`
+- **Chrome/136 UA**, viewport 1920x1080, locale `en-AU`, timezone `Australia/Sydney`
+- **bet365-pattern login flow**: cookie-banner accept → visible-element Log In click with retries → fill `#username`/`#password` → click `#accept` with `expect_navigation`
+- **No init_script** — Patchright handles `navigator.webdriver` stealth natively
+- **No proxy** — mini PC already on AU residential network
+
+**Live results:**
+| Brand | Account | Balance | Token len |
+|---|---|---|---|
+| Ladbrokes | alexandredayant28 | $0.00 | 1476 |
+| Neds | williamdean327 | **$62.31** | 1464 |
+
+Access tokens captured from the browser's network responses to `/oauth2/token` in the login redirect chain.
+
+**Why the HTTP + HyperSolutions Kasada path failed (kept for reference):**
+- `entain_kasada_login.py` gets a valid `x-kpsdk-ct` via HyperSolutions → GET `/oauth2/auth` → 200 OK ✅
+- But POST to `/auth/login` still returns 429 even with ct+cd+v headers; Kasada rotates the ct and replies with a `KPSDK:MC:...` postMessage challenge designed for iframe-context solves.
+- The PoW path may work for simple GET fetches but POST form submission to Hydra is held to a stricter policy that HyperSolutions doesn't cover here. Browser automation sidesteps it by executing the Kasada SDK in the real page context.
+
+**Files (committed):**
+- `backend/scripts/test_entain_patchright_tf.py` — the winning runner
+- `backend/scripts/entain_kasada_login.py` — kept for reference (partial success, not the chosen path)
+- `backend/scripts/entain_http_simple.py`, `probe_kasada.py`, `probe_mfc.py`, `probe_homepage_cookies.py` — diagnostic tools
+
+**Access artefacts added this session:**
+- SSH key pushed to Token Farm: `ssh-ed25519 AAAAC3...VMGFY botops-vps-to-tokenfarm` → `/home/jsb/.ssh/authorized_keys`
+- sudo password for `jsb`: `botops` (saved in `.env` as `TOKEN_FARM_SUDO_PASS`)
+- Hostinger API token: saved in `.env` (not useful for Entain — no AU region)
+
+## Next steps (morning)
+1. Port `test_entain_patchright_tf.py` pattern into `token_farm/entain_auth.py` (same shape as `bet365_auth.py` / `sportsbet_auth.py`)
+2. Add `/auth/entain/login` and `/auth/entain/balance` endpoints to `token_farm/main.py`
+3. Wire `backend/platforms/ladbrokes.py::EntainClient.login` to call Token Farm instead of the old HTTP path
+4. Seed Ladbrokes + Neds accounts into `bookie_accounts` table
+5. Test a real bet placement (user decision — involves money)
+

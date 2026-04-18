@@ -36,8 +36,10 @@ IPROYAL = {
 }
 
 
-def build_proxy() -> dict:
+def build_proxy() -> dict | None:
     which = os.environ.get("ENTAIN_PROXY", "oxylabs").lower()
+    if which in ("none", "no", "direct", ""):
+        return None
     if which in ("mobile", "gw"):
         return GW_MOBILE
     if which in ("iproyal", "ipr"):
@@ -71,10 +73,14 @@ async def run(brand: str, username: str, password: str) -> dict:
     from camoufox.async_api import AsyncCamoufox
 
     proxy = build_proxy()
-    result["proxy"] = {k: v for k, v in proxy.items() if k != "password"}
-    event("proxy_config", server=proxy["server"])
-
-    cfox_kwargs = {"headless": True, "proxy": proxy, "geoip": True}
+    if proxy:
+        result["proxy"] = {k: v for k, v in proxy.items() if k != "password"}
+        event("proxy_config", server=proxy["server"])
+        cfox_kwargs = {"headless": True, "proxy": proxy, "geoip": True}
+    else:
+        result["proxy"] = None
+        event("proxy_config", server="DIRECT (no proxy)")
+        cfox_kwargs = {"headless": True}
 
     browser = None
     try:
