@@ -12,6 +12,18 @@ Last updated: 2026-04-18
 
 ## 🔴 CRITICAL
 
+### CSB V4 — retry function needs work
+- **Noted 2026-04-20** — details to be captured when we sit down on it
+- Context: CSB V4 already has auto-sweep retry for failed tips after main run
+  (see `MAX_SPINS`, `RETRY_QUEUED` state in `execution_engine.py`) — but
+  behaviour needs revising. Collect specifics during next session.
+- Files: `backend/execution_engine.py`, `backend/engine_integration.py`,
+  `frontend/src/pages/CsbV4.jsx`
+- Related: `MasterChecklist.handle_odds_below_min()` transitions tip to
+  `RETRY_QUEUED` and clears `skipped_accounts`. May interact with the new
+  upfront allocation plan (plan signature is target-keyed, so retries
+  should re-use the same plan unless target ratchets)
+
 ### ~~Ladbrokes/Neds Live Test~~ ✅ DONE (2026-04-18)
 - Cracked via Patchright browser login → cookie jar → REST API (SGM + cross-game multi)
 - Reverse-engineered from real HAR captures
