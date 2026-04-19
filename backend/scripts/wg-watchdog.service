@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart wstunnel + wg-quick if wg peer handshake is stale
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/wg-watchdog.sh
