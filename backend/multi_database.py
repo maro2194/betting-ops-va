@@ -334,7 +334,12 @@ async def get_recent_batches(username: str, limit: int = 20) -> list[dict]:
 
 
 async def save_multi_bet(data: dict):
-    """Insert a bet record into the unified bet ledger."""
+    """Insert a bet record into the unified bet ledger.
+
+    Also fires emit_racing_bet_to_betops so confirmed non-TAB bets flow into the
+    external BetOps tracker. See betops_sync.py — same fire-and-forget + outbox
+    retry guarantees as the TAB save_bet path.
+    """
     async with _db.pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO multi_bets
@@ -360,6 +365,14 @@ async def save_multi_bet(data: dict):
             data.get("payout"),
             json.dumps(data.get("raw_response")) if data.get("raw_response") else None,
         )
+
+    try:
+        import asyncio as _asyncio
+        from betops_sync import emit_racing_bet_to_betops
+        _asyncio.create_task(emit_racing_bet_to_betops(dict(data), data["username"], _db.pool))
+    except Exception as _e:
+        import logging as _logging
+        _logging.getLogger(__name__).error("BetOps racing emit scheduling failed: %s", _e)
 
 
 async def get_multi_bets(

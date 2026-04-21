@@ -153,12 +153,34 @@ def _normalize(s: str) -> str:
     return re.sub(r'[^a-z0-9]', '', s.lower())
 
 
+def _hyphen_tokens(s: str) -> list:
+    """
+    Split on whitespace AND hyphens, then normalize each token.
+    Used to bridge CSV abbreviations like 'Shai G-Alexander' against TAB's
+    'Shai Gilgeous-Alexander' — tokens ['shai','g','alexander'] vs
+    ['shai','gilgeous','alexander']. The surname 'alexander' now lines up
+    directly as a standalone token even though the hyphenated full form
+    would otherwise concatenate with 'gilgeous' and defeat substring checks.
+    """
+    return [_normalize(t) for t in re.split(r'[\s\-]+', (s or '').lower()) if t]
+
+
 # Common player abbreviations/nicknames used by tipsters
 PLAYER_ALIASES = {
     # NBA
     "sga": "shai gilgeous-alexander",
+    "shai g-alexander": "shai gilgeous-alexander",
+    "shai g alexander": "shai gilgeous-alexander",
+    "shai galexander": "shai gilgeous-alexander",
+    "s gilgeous-alexander": "shai gilgeous-alexander",
+    "s g-alexander": "shai gilgeous-alexander",
     "naw": "nickeil alexander-walker",
+    "nickeil a-walker": "nickeil alexander-walker",
+    "n alexander-walker": "nickeil alexander-walker",
+    "n a-walker": "nickeil alexander-walker",
     "kat": "karl-anthony towns",
+    "karl-a towns": "karl-anthony towns",
+    "k-a towns": "karl-anthony towns",
     "pg": "paul george",
     "ad": "anthony davis",
     "lbj": "lebron james",
@@ -261,18 +283,33 @@ def _match_proposition(leg: dict, propositions: list) -> Optional[dict]:
             if last_name and len(last_name) > 2 and last_name in sel_norm:
                 score += 7
             else:
-                # Token-based fuzzy match: every word in the player name must appear
-                # in the selection name. Handles "Nickeil A Walker" vs "Nickeil Alexander-Walker"
-                # and abbreviated middle names.
-                player_tokens = [_normalize(t) for t in player_raw.split() if len(t) > 1]
-                if player_tokens and len(player_tokens) >= 2:
-                    matches = sum(1 for tok in player_tokens if tok in sel_norm or sel_norm.startswith(tok[:3]))
-                    # Also try: each token is a PREFIX of a word in sel_clean
-                    sel_words = [_normalize(w) for w in sel_clean.split()]
-                    prefix_matches = sum(1 for tok in player_tokens if any(w.startswith(tok) or tok.startswith(w) for w in sel_words))
-                    best_match = max(matches, prefix_matches)
-                    if best_match >= len(player_tokens) - 1 and best_match >= 2:
-                        score += 6  # Good partial match
+                # Hyphen-aware multi-token match. Splits both sides on space AND hyphen
+                # so "Shai G-Alexander" → ['shai','g','alexander'] lines up against TAB's
+                # 'Shai Gilgeous-Alexander' → ['shai','gilgeous','alexander'] on 'shai'
+                # and 'alexander'. Requires ≥2 multi-char CSV tokens to hit sel tokens
+                # (as substring or prefix) to stay disambiguated from e.g. Alexander-Walker.
+                csv_tokens = _hyphen_tokens(player_raw)
+                csv_multi = [t for t in csv_tokens if len(t) > 1]
+                sel_tokens_split = _hyphen_tokens(sel_clean)
+                token_matches = sum(
+                    1 for t in csv_multi
+                    if any(t in st or st.startswith(t) or t.startswith(st) for st in sel_tokens_split)
+                )
+                if len(csv_multi) >= 2 and token_matches >= 2:
+                    score += 8  # Strong hyphen-aware multi-token match
+                else:
+                    # Token-based fuzzy match: every word in the player name must appear
+                    # in the selection name. Handles "Nickeil A Walker" vs "Nickeil Alexander-Walker"
+                    # and abbreviated middle names.
+                    player_tokens = [_normalize(t) for t in player_raw.split() if len(t) > 1]
+                    if player_tokens and len(player_tokens) >= 2:
+                        matches = sum(1 for tok in player_tokens if tok in sel_norm or sel_norm.startswith(tok[:3]))
+                        # Also try: each token is a PREFIX of a word in sel_clean
+                        sel_words = [_normalize(w) for w in sel_clean.split()]
+                        prefix_matches = sum(1 for tok in player_tokens if any(w.startswith(tok) or tok.startswith(w) for w in sel_words))
+                        best_match = max(matches, prefix_matches)
+                        if best_match >= len(player_tokens) - 1 and best_match >= 2:
+                            score += 6  # Good partial match
 
         if score == 0:
             continue  # Must at least match player name

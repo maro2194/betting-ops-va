@@ -23,6 +23,7 @@ from betting import (
     place_multi_bet, get_my_bets,
 )
 from resolver import resolve_and_price, resolve_csb_bet, _get_all_sport_props, _sport_props_cache
+import database
 from database import (
     init_db, close_db, get_accounts, upsert_account, delete_account, sync_accounts,
     save_app_session, get_app_session, delete_app_session, load_all_app_sessions,
@@ -66,6 +67,12 @@ async def startup():
     # Init bet365 tables
     from bet365_routes import init_bet365_tables, save_pick_to_db
     await init_bet365_tables()
+    # Init BetOps outbox table + start the background retry loop. save_bet fires
+    # emit_to_betops on every confirmed placement; anything that fails to reach
+    # www.betops.sh falls into betops_outbox and this loop flushes it.
+    from betops_sync import init_outbox as _betops_init_outbox, flush_outbox_loop as _betops_flush_loop
+    await _betops_init_outbox(database.pool)
+    asyncio.create_task(_betops_flush_loop(database.pool))
     # Wire DB save into pipeline
     from pick_pipeline import pick_pipeline
     pick_pipeline._save_pick_fn = save_pick_to_db
@@ -835,13 +842,49 @@ async def api_check_results(session_id: str = None, _user: dict = Depends(_verif
             tab_bet = tab_by_tsn[tsn]
             tab_status = tab_bet.get("status", "")
 
-            if tab_status in ("Won", "Lost"):
-                payout = tab_bet.get("payout", "$0.00") if tab_status == "Won" else "$0.00"
-                await update_bet_status(bet["id"], tab_status, payout)
+            # Normalize TAB's status vocabulary to the handful of local values
+            # the rest of the system (frontend badges + BetOps grading map) knows.
+            # TAB can return "Won", "Lost", "Refunded", "Void", "Cashed Out",
+            # "Partially Refunded", "Settled - Winner/Loser", etc. — everything
+            # settled needs to flow through update_bet_status so BetOps receives
+            # the grade. Anything still open (Pending/Placed/empty) is skipped.
+            _ts_lower = (tab_status or "").strip().lower()
+            canonical = None
+            if _ts_lower in ("won", "settled - winner", "winner"):
+                canonical = "Won"
+            elif _ts_lower in ("lost", "settled - loser", "loser"):
+                canonical = "Lost"
+            elif _ts_lower in ("refunded", "void", "voided",
+                                "partially refunded", "part refund",
+                                "cancelled", "canceled"):
+                canonical = "Refunded"
+            elif _ts_lower in ("cashed out", "cashedout", "cash out"):
+                canonical = "Cashed Out"
+            elif _ts_lower in ("", "pending", "placed", "open", "in play"):
+                canonical = None  # still live — do nothing
+            else:
+                # Unknown settled-looking status. Log it so we can extend the map
+                # rather than silently dropping. We deliberately do NOT update the
+                # bet for unknown statuses — safer to require explicit opt-in.
+                logger.warning(
+                    "check-results: unknown TAB status %r for tsn=%s acct=%s — skipping",
+                    tab_status, tsn, acct_num,
+                )
+                canonical = None
+
+            if canonical is not None:
+                # Payout trusts TAB's number verbatim — handles void-adjusted
+                # reduced-odds wins correctly (TAB computes the real payout).
+                payout = tab_bet.get("payout", "$0.00")
+                if canonical == "Lost":
+                    payout = "$0.00"
+                elif canonical == "Refunded" and not payout:
+                    payout = bet.get("stake", "$0.00")  # stake-back default
+                await update_bet_status(bet["id"], canonical, payout)
                 updated_count += 1
                 updated_bets.append({
-                    "id": bet["id"], "tsn": tsn, "status": tab_status,
-                    "payout": payout, "account": acct_num,
+                    "id": bet["id"], "tsn": tsn, "status": canonical,
+                    "tab_raw_status": tab_status, "payout": payout, "account": acct_num,
                 })
 
     return {
@@ -1172,6 +1215,97 @@ async def api_csb_engine_status(job_id: str, _user: dict = Depends(_verify_app_t
     if not job:
         raise HTTPException(404, "Job not found")
     return job
+
+
+class CheckPlacedRequest(_BM):
+    """Pre-retry idempotency check. Frontend sends the bet signatures it's about to
+    retry; backend fetches recent TAB bet history for those accounts and reports which
+    signatures already match a real placed bet. Defense against the 502-cascade scenario
+    where TAB accepted the bet but the response was lost — retrying would double-place."""
+    account_numbers: list[str]
+    lookback_minutes: int = 30
+    # Each signature: { "index": int, "legs": ["player name tokens, ..."], "combined_odds": str }
+    signatures: list[dict]
+
+
+@app.post("/api/csb/check-placed")
+async def api_csb_check_placed(req: CheckPlacedRequest, _user: dict = Depends(_verify_app_token)):
+    """For each signature, find any matching TAB bet in the last N minutes across the
+    provided accounts. Matching requires all leg substrings present + combined_odds match
+    (±0.05 tolerance). Returns { matches: { <index>: { account_number, tsn, stake } } }."""
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    import asyncio as _asyncio
+
+    # Fetch TAB history per account in parallel (one real call each — TAB rate-limits)
+    async def _fetch(acct_num: str) -> list[dict]:
+        session_found = None
+        for sid, s in sessions.items():
+            if s.get("account_number") == acct_num and s.get("legacy_token"):
+                session_found = s; break
+        if not session_found:
+            logger.warning(f"check-placed: no session for {acct_num}")
+            return []
+        try:
+            tab_bets = await _asyncio.to_thread(
+                get_my_bets,
+                session_found["legacy_token"], acct_num,
+                session_found.get("proxy_url"), 50, "ALL", 1,
+            )
+            out = tab_bets.get("bets", [])
+            for b in out:
+                b["_account_number"] = acct_num
+            return out
+        except Exception as e:
+            logger.warning(f"check-placed: fetch failed for {acct_num}: {e}")
+            return []
+
+    lists = await _asyncio.gather(*(_fetch(a) for a in req.account_numbers))
+    all_bets = [b for lst in lists for b in lst]
+
+    # Filter to recent window
+    cutoff = _dt.now(_tz.utc) - _td(minutes=max(1, req.lookback_minutes))
+    def _parse_ts(s: str):
+        if not s: return None
+        try:
+            return _dt.fromisoformat(s.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    recent = [b for b in all_bets if (ts := _parse_ts(b.get("timestamp", ""))) is None or ts >= cutoff]
+
+    def _norm(s: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+    def _odds_match(a, b) -> bool:
+        try:
+            fa = float(str(a).replace("$", "").strip())
+            fb = float(str(b).replace("$", "").strip())
+            return abs(fa - fb) <= 0.05
+        except Exception:
+            return False
+
+    matches: dict = {}
+    for sig in req.signatures:
+        idx = sig.get("index")
+        sig_legs = [_norm(l) for l in sig.get("legs", []) if l]
+        sig_odds = sig.get("combined_odds")
+        if not sig_legs or not sig_odds:
+            continue
+        for bet in recent:
+            bet_legs_text = _norm(" ".join(bet.get("legs", [])))
+            # All signature leg tokens must appear in the bet's concatenated legs text
+            if not all(leg in bet_legs_text for leg in sig_legs):
+                continue
+            if not _odds_match(bet.get("odds", "0"), sig_odds):
+                continue
+            matches[str(idx)] = {
+                "account_number": bet.get("_account_number"),
+                "tsn": bet.get("tsn"),
+                "stake": bet.get("stake"),
+                "odds": bet.get("odds"),
+                "status": bet.get("status"),
+            }
+            break  # first match wins — stops rechecking this signature
+    return {"matches": matches, "checked": len(recent)}
 
 
 @app.post("/api/quick-place")
@@ -1516,15 +1650,22 @@ async def api_csb_place_one(req: CsbBet, _user: dict = Depends(_verify_app_token
         except Exception as e:
             place_result = {"success": False, "error": str(e)}
 
-        # Check if retryable error — price changed OR transient proxy/SSL failure
+        # Check if retryable error — price changed, transient proxy/SSL, or upstream 5xx.
+        # 5xx inclusion catches the exact 502-cascade scenario where TAB's gateway briefly
+        # flakes: previously bubbled up as a failure the user had to manually retry, now
+        # heals internally with exponential backoff.
         err = place_result.get("error", "")
         err_lower = err.lower()
         is_price_change = "price" in err_lower and "changed" in err_lower
         is_proxy_error = any(k in err_lower for k in ("ssl", "proxy", "boringssl", "connect", "tunnel", "curl"))
-        if not place_result.get("success") and (is_price_change or is_proxy_error) and attempt < MAX_PRICE_RETRIES:
+        is_5xx = any(code in err_lower for code in (" 502", " 503", " 504", "502 ", "503 ", "504 ", "gateway", "upstream", "timeout", "timed out"))
+        if not place_result.get("success") and (is_price_change or is_proxy_error or is_5xx) and attempt < MAX_PRICE_RETRIES:
             logger.info(f"CSB retryable error on attempt {attempt}: {err[:100]}")
             import time as _t, random as _rand
-            _t.sleep(_rand.uniform(0.5, 1.5))
+            # Exponential backoff with jitter: attempt 1 -> ~0.8s, 2 -> ~2s, 3 -> ~5s.
+            # Gives TAB's gateway time to recover instead of slamming it during an outage.
+            base = 0.5 * (3 ** (attempt - 1))
+            _t.sleep(base + _rand.uniform(0, base * 0.5))
             continue
 
         break  # Success or non-retryable error — stop

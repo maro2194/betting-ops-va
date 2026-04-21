@@ -295,8 +295,14 @@ async def sync_accounts(username: str, accounts: list[dict]):
 # ─── Bets ────────────────────────────────────────────────────────────────────
 
 async def save_bet(username: str, bet: dict) -> str:
-    """Save a placed bet to DB. Returns bet ID."""
+    """Save a placed bet to DB. Returns bet ID.
+
+    Also triggers a fire-and-forget POST to the external BetOps tracker
+    (www.betops.sh). Failures there never block or corrupt the local save —
+    they drop into the betops_outbox for background retry. See betops_sync.py.
+    """
     import json
+    import asyncio as _asyncio
     bet_id = bet.get("id") or str(_uuid.uuid4())
     async with pool.acquire() as conn:
         await conn.execute(
@@ -317,6 +323,18 @@ async def save_bet(username: str, bet: dict) -> str:
             json.dumps(bet.get("raw_response")) if bet.get("raw_response") else None,
             bet.get("source"),
         )
+
+    # Emit to BetOps tracker. Wrapped in its own try/except so any import or
+    # scheduling error can't affect the save that just succeeded above.
+    try:
+        from betops_sync import emit_to_betops
+        bet_for_emit = dict(bet)
+        bet_for_emit["id"] = bet_id
+        _asyncio.create_task(emit_to_betops(bet_for_emit, username, pool))
+    except Exception as _e:
+        import logging as _logging
+        _logging.getLogger(__name__).error("BetOps emit scheduling failed: %s", _e)
+
     return bet_id
 
 
@@ -375,9 +393,20 @@ async def get_bets(username: str, status: str = None, account_number: str = None
 
 
 async def update_bet_status(bet_id: str, status: str, payout: str = None):
-    """Update a bet's status (Won/Lost/Pending)."""
+    """Update a bet's status (Won/Lost/Pending).
+
+    On a transition to a settled status (Won/Lost/Void/etc), also forward the
+    result to BetOps via emit_grade_to_betops. Fire-and-forget: failures land
+    in betops_outbox with kind='grade' and the flush loop retries them.
+    """
     async with pool.acquire() as conn:
-        if status in ("Won", "Lost"):
+        # Snapshot the username so the BetOps grade row has an owner.
+        row = await conn.fetchrow("SELECT username FROM bets WHERE id = $1", bet_id)
+        username = row["username"] if row else ""
+
+        # Any settled status (Won/Lost/Refunded/Cashed Out) writes payout +
+        # settled_at. Anything else (e.g. raw Pending) just moves the status.
+        if status in ("Won", "Lost", "Refunded", "Cashed Out"):
             await conn.execute(
                 "UPDATE bets SET status = $1, payout = $2, settled_at = NOW() WHERE id = $3",
                 status, payout, bet_id,
@@ -387,6 +416,23 @@ async def update_bet_status(bet_id: str, status: str, payout: str = None):
                 "UPDATE bets SET status = $1 WHERE id = $2",
                 status, bet_id,
             )
+
+    try:
+        import asyncio as _asyncio
+        from betops_sync import emit_grade_to_betops
+        _asyncio.create_task(
+            emit_grade_to_betops(
+                local_bet_id=bet_id,
+                local_status=status,
+                payout=payout,
+                pool=pool,
+                local_table="bets",
+                username=username,
+            )
+        )
+    except Exception as _e:
+        import logging as _logging
+        _logging.getLogger(__name__).error("BetOps grade emit scheduling failed: %s", _e)
 
 
 async def get_all_tsns(username: str = None) -> set:

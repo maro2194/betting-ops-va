@@ -62,7 +62,13 @@ async def init_bet365_tables():
 
 
 async def save_pick_to_db(pick: dict):
-    """Save a pick entry to the database."""
+    """Save a pick entry to the database.
+
+    If the pick was actually placed (pick['placed']==True), fires an emit to the
+    external BetOps tracker. Skipped/attempted-but-failed picks are NOT emitted —
+    only real placements end up in BetOps. Fire-and-forget per the standard
+    betops_sync contract.
+    """
     async with database.pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO bet365_picks (
@@ -101,6 +107,18 @@ async def save_pick_to_db(pick: dict):
             pick.get("error"),
             pick.get("screenshot"),
         )
+
+    if pick.get("placed"):
+        try:
+            import asyncio as _asyncio
+            from betops_sync import emit_bet365_pick_to_betops
+            # bet365 picks don't carry a BotOps username directly; the pipeline
+            # is tied to the singleton bet365 login. Use "default" so email lookup
+            # falls back to the bet365 platform row in bookie_accounts.
+            _username = pick.get("username") or "default"
+            _asyncio.create_task(emit_bet365_pick_to_betops(dict(pick), _username, database.pool))
+        except Exception as _e:
+            logger.error("BetOps bet365 emit scheduling failed: %s", _e)
 
 
 async def get_picks_from_db(limit: int = 50, placed_only: bool = False) -> list[dict]:

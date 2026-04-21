@@ -168,6 +168,12 @@ export const api = {
 
   csbEngineStatus: (jobId) => request(`/api/csb/engine-status/${jobId}`),
 
+  csbCheckPlaced: (accountNumbers, signatures, lookbackMinutes = 30) =>
+    request('/api/csb/check-placed', {
+      method: 'POST',
+      body: JSON.stringify({ account_numbers: accountNumbers, signatures, lookback_minutes: lookbackMinutes }),
+    }),
+
   // ─── bet365 ────────────────────────────────────────────────────────
   bet365Status: () => request('/api/bet365/status'),
   bet365StartAll: () => request('/api/bet365/start-all', { method: 'POST' }),

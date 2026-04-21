@@ -51,6 +51,7 @@ function StatusBadge({ status }) {
   if (s === 'won')  return <span style={{ ...base, background: C.greenDim, color: C.green }}><CheckCircle size={9} /> Won</span>;
   if (s === 'mb1')  return <span style={{ ...base, background: C.blueDim,  color: C.blue  }}><RefreshCw  size={9} /> MB1</span>;
   if (s === 'lost') return <span style={{ ...base, background: C.redDim,   color: C.red   }}><XCircle    size={9} /> Lost</span>;
+  if (s === 'void') return <span style={{ ...base, background: 'var(--bg-card)', color: C.muted, border: `1px solid ${C.border}` }}><RefreshCw size={9} /> Void</span>;
   return                   <span style={{ ...base, background: C.amberDim, color: C.amber }}><Clock      size={9} /> Pending</span>;
 }
 
@@ -202,6 +203,7 @@ export default function CsbResults() {
   const [sportFilter, setSportFilter]         = useState('All');
   const [statusFilter, setStatusFilter]       = useState('');
   const [accountFilter, setAccountFilter]     = useState('All');
+  const [gameFilter, setGameFilter]           = useState('All');
   const [selectedDate, setSelectedDate]       = useState(todayStr());
   const [autoRefresh, setAutoRefresh]         = useState(false);
   const autoRefreshRef = useRef(null);
@@ -327,30 +329,115 @@ export default function CsbResults() {
     return false;
   };
 
-  const getEffectiveStatus = (bet) => {
-    const lr = legResults[bet.id] || [];
-    const hasData = (l) => l.actual !== null && l.actual !== undefined;
-    if (lr.length > 0 && bet._status === 'pending') {
-      if (lr.some(isLegLost)) {
-        const missedLegs  = lr.filter((l) => hasData(l) && !isLegHit(l));
-        const pendingLegs = lr.filter((l) => !hasData(l) && (l.result || 'pending').toLowerCase() === 'pending');
-        if (missedLegs.length === 1 && isLegMissedByOne(missedLegs[0])) {
-          // Only declare MB1 once all other legs have resolved
-          if (pendingLegs.length === 0) return 'mb1';
-          return 'pending';
-        }
-        return 'lost';
-      }
-      const legs = bet.legs || [];
-      if (lr.length >= legs.length && lr.every(isLegHit)) return 'won';
-      if (lr.length >= legs.length) {
-        const missedLegs = lr.filter((l) => hasData(l) && !isLegHit(l));
-        if (missedLegs.length === 1 && isLegMissedByOne(missedLegs[0])) return 'mb1';
-      }
+  // MB1 (Money Back if miss by 1) is a PER-LEG promo, applied only to certain
+  // markets (currently NBA Points and AFL Disposals). When the leg's actual
+  // equals line-1 on those markets, TAB pays that leg AS A WINNER. Multi
+  // implication: every leg that wins outright OR triggers MB1 counts as a hit,
+  // so a bet where all legs are hit-or-mb1hit is a winning bet (labelled 'mb1'
+  // for visibility when any leg used the promo).
+  const isMb1EligibleMarket = (legDef, legResult) => {
+    const legName = (legDef && (legDef.name || legDef.selectionName)) || (typeof legDef === 'string' ? legDef : '') || '';
+    const stat = (legResult && legResult.stat) || '';
+    const hay = `${legName} ${stat}`.toLowerCase();
+    return ['pts', 'points', 'disp', 'disposals'].some((k) => hay.includes(k));
+  };
+
+  // Returns 'hit' | 'mb1hit' | 'miss' | 'void' | 'pending' for a single leg.
+  //
+  // Asymmetry is intentional: once a player crosses their line mid-game the
+  // stat can't go backwards so we CAN call it a hit before the game ends.
+  // But being below the line mid-game does NOT mean the leg lost — the player
+  // can still catch up in later quarters. So "miss" / "mb1hit" both require
+  // TAB to have explicitly marked the leg `result = 'lost'` (i.e. game over).
+  // Without that gate, live games would light up as lost the moment results
+  // arrived with current actual < line.
+  //
+  // Void: player scratched, market withdrawn, etc. Handled per sport at the
+  // bet level — NBA drops the voided leg and prices the remaining ones; AFL
+  // treats any void as a whole-bet refund.
+  const classifyLeg = (legDef, legResult) => {
+    if (!legResult) return 'pending';
+    const r = (legResult.result || '').toLowerCase();
+    const hasData = legResult.actual !== null && legResult.actual !== undefined
+                    && legResult.line !== null && legResult.line !== undefined;
+
+    if (['void', 'voided', 'cancelled', 'canceled', 'pushed', 'push', 'refund', 'refunded']
+        .includes(r)) {
+      return 'void';
     }
-    if (lr.length > 0 && (bet._status === 'lost' || bet._status === 'settled - loser')) {
-      const missedLegs = lr.filter((l) => hasData(l) && !isLegHit(l));
-      if (missedLegs.length === 1 && isLegMissedByOne(missedLegs[0])) return 'mb1';
+
+    // Hits can lock in mid-game — stats don't go backwards.
+    if (r === 'won') return 'hit';
+    if (hasData && parseFloat(legResult.actual) >= parseFloat(legResult.line)) return 'hit';
+
+    // Misses and MB1 require TAB to have called the leg lost (game finished).
+    if (r === 'lost') {
+      if (hasData
+          && parseFloat(legResult.actual) === parseFloat(legResult.line) - 1
+          && isMb1EligibleMarket(legDef, legResult)) {
+        return 'mb1hit';
+      }
+      return 'miss';
+    }
+    return 'pending';
+  };
+
+  const getEffectiveStatus = (bet) => {
+    // Bet-level settled states that TAB already decided — trust them directly.
+    // These can come through check-results when TAB resulted a bet as void /
+    // refunded (e.g. a voided leg in an SGM reduced to a single that then
+    // lost, or an all-voided multi). No per-leg analysis needed.
+    if (bet._status === 'refunded' || bet._status === 'void') return 'void';
+    if (bet._status === 'cashed out') return 'won';  // TAB paid a cash-out — count as a positive outcome
+
+    const lr = legResults[bet.id] || [];
+    const legs = bet.legs || [];
+
+    // Classify each leg. legs.map over the bet's leg list so unresolved-but-
+    // expected legs (no leg_results row yet) still surface as 'pending'.
+    const classifications = legs.length > 0
+      ? legs.map((leg, i) => classifyLeg(leg, lr[i] || null))
+      : lr.map((result, i) => classifyLeg(null, result));
+
+    const hasVoid    = classifications.some((c) => c === 'void');
+    const hasPending = classifications.some((c) => c === 'pending');
+    const sport      = (bet._sport || '').toUpperCase();
+    const isAFL      = sport === 'AFL';
+
+    // AFL: any voided leg refunds the whole bet (after pending legs resolve).
+    if (hasVoid && isAFL) {
+      if (hasPending) return 'pending';
+      return 'void';
+    }
+
+    // NBA (and everything else not AFL): voided legs drop out. The remaining
+    // legs form a smaller multi priced at their product odds — if they all
+    // hit the bet wins at the reduced payout TAB calculates; if any remaining
+    // leg misses, the bet loses.
+    const active = hasVoid
+      ? classifications.filter((c) => c !== 'void')
+      : classifications;
+
+    const activePending = active.some((c) => c === 'pending');
+    const activeMiss    = active.some((c) => c === 'miss');
+    const activeMb1Hit  = active.some((c) => c === 'mb1hit');
+
+    // Edge case: every leg voided → whole bet refunds.
+    if (hasVoid && active.length === 0) return 'void';
+
+    if (bet._status === 'pending') {
+      if (activeMiss)    return activePending ? 'pending' : 'lost';
+      if (activePending) return 'pending';
+      return activeMb1Hit ? 'mb1' : 'won';
+    }
+
+    // Local record says Lost but our analysis shows all remaining legs hit-or-
+    // mb1hit → bet actually won (via MB1 or at reduced odds after a void) and
+    // TAB hadn't credited the result when we last synced.
+    if (bet._status === 'lost' || bet._status === 'settled - loser') {
+      if (active.length > 0 && !activeMiss && !activePending) {
+        return activeMb1Hit ? 'mb1' : 'won';
+      }
     }
     return bet._status;
   };
@@ -358,14 +445,51 @@ export default function CsbResults() {
   // ── Derived data ──────────────────────────────────────────────────────────
   const accountLabels = [...new Set(bets.map((b) => b.account_label).filter(Boolean))].sort();
 
+  // Extract the game(s) a bet touches. SGMs live on one game; cross-game multis
+  // can span several. Reads bet.game_id first (formats like "20260420_PHX_OKC")
+  // then falls back to team tags in leg names ("NBA OKC-Phx 10+Pts ..."). The
+  // two sources use different home/visitor orderings — canonicalize by sorting
+  // the two tags alphabetically so one bet produces one game label regardless.
+  const canonGame = (a, b) => {
+    const parts = [a.toUpperCase(), b.toUpperCase()].sort();
+    return `${parts[0]}-${parts[1]}`;
+  };
+  const extractGames = (bet) => {
+    const games = new Set();
+    const gid = bet.game_id || bet.gameId || '';
+    if (gid) {
+      const m = gid.match(/([A-Z][A-Za-z]{1,3})[_-]([A-Z][A-Za-z]{1,3})/);
+      if (m) games.add(canonGame(m[1], m[2]));
+    }
+    const legs = bet.legs || [];
+    for (const leg of legs) {
+      const name = (typeof leg === 'string' ? leg : (leg && leg.name)) || '';
+      const m = name.match(/\b([A-Z][A-Za-z]{1,3})-([A-Z][A-Za-z]{1,3})\b/);
+      if (m) games.add(canonGame(m[1], m[2]));
+    }
+    return [...games];
+  };
+
+  const gameLabels = [...new Set(bets.flatMap(extractGames))].sort();
+
   const filtered = bets.filter((b) => {
     if (sportFilter !== 'All' && b._sport !== sportFilter) return false;
     if (statusFilter && getEffectiveStatus(b) !== statusFilter) return false;
     if (accountFilter !== 'All' && b.account_label !== accountFilter) return false;
+    if (gameFilter !== 'All') {
+      const games = extractGames(b);
+      if (!games.includes(gameFilter)) return false;
+    }
     return true;
   });
 
   const totalStaked  = filtered.reduce((s, b) => s + b._stake, 0);
+  // MB1 = refund-triggering win outcome. Once all legs have resolved, "MB1"
+  // means exactly one leg missed by 1 and every other leg hit — that IS a
+  // winning bet in operator P/L terms. The bug fixed earlier was the mis-
+  // CLASSIFICATION of lost SGMs as MB1 (when a non-stat leg was also lost);
+  // the isLegMissed rewrite in getEffectiveStatus handles that. MB1 stays
+  // in wonBets for the money math.
   const wonBets      = filtered.filter((b) => { const s = getEffectiveStatus(b); return s === 'won' || s === 'mb1'; });
   const lostBets     = filtered.filter((b) => getEffectiveStatus(b) === 'lost');
   const pendingBets  = filtered.filter((b) => getEffectiveStatus(b) === 'pending');
@@ -447,6 +571,7 @@ export default function CsbResults() {
           <Pill active={statusFilter === 'mb1'}     onClick={() => setStatusFilter('mb1')}     activeColor={C.blue}  activeBg={C.blueDim}>MB1</Pill>
           <Pill active={statusFilter === 'lost'}    onClick={() => setStatusFilter('lost')}    activeColor={C.red}   activeBg={C.redDim}>Lost</Pill>
           <Pill active={statusFilter === 'pending'} onClick={() => setStatusFilter('pending')} activeColor={C.amber} activeBg={C.amberDim}>Pending</Pill>
+          <Pill active={statusFilter === 'void'}    onClick={() => setStatusFilter('void')}    activeColor={C.muted} activeBg={'var(--bg-card)'}>Void</Pill>
         </div>
 
         {accountLabels.length > 1 && (
@@ -457,6 +582,19 @@ export default function CsbResults() {
               <Pill active={accountFilter === 'All'} onClick={() => setAccountFilter('All')}>All</Pill>
               {accountLabels.map((a) => (
                 <Pill key={a} active={accountFilter === a} onClick={() => setAccountFilter(a)}>{a}</Pill>
+              ))}
+            </div>
+          </>
+        )}
+
+        {gameLabels.length > 0 && (
+          <>
+            {filterSep}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 9, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: 2 }}>Game</span>
+              <Pill active={gameFilter === 'All'} onClick={() => setGameFilter('All')}>All</Pill>
+              {gameLabels.map((g) => (
+                <Pill key={g} active={gameFilter === g} onClick={() => setGameFilter(g)}>{g}</Pill>
               ))}
             </div>
           </>
@@ -593,8 +731,9 @@ export default function CsbResults() {
               const isWon     = effectiveStatus === 'won';
               const isLost    = effectiveStatus === 'lost';
               const isMb1     = effectiveStatus === 'mb1';
+              const isVoid    = effectiveStatus === 'void';
               const isPending = effectiveStatus === 'pending';
-              const borderColor = isWon ? C.green : isMb1 ? C.blue : isLost ? C.red : C.amber;
+              const borderColor = isWon ? C.green : isMb1 ? C.blue : isLost ? C.red : isVoid ? C.muted : C.amber;
               const matchName = bet.match || bet.event_name || bet.event || '';
               const placedTime = bet.placed_at
                 ? new Date(bet.placed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -665,13 +804,14 @@ export default function CsbResults() {
                       <MetaItem label="Stake" value={`$${bet._stake.toFixed(2)}`} />
                       <MetaItem label="Odds" value={bet._odds.toFixed(2)} />
                       <MetaItem
-                        label={isWon || isMb1 ? 'Profit' : isLost ? 'Loss' : 'To Win'}
+                        label={isWon || isMb1 ? 'Profit' : isLost ? 'Loss' : isVoid ? 'Refund' : 'To Win'}
                         value={
                           isWon || isMb1 ? `+$${profit.toFixed(2)}`
                           : isLost       ? `-$${bet._stake.toFixed(2)}`
+                          : isVoid       ? `$${bet._stake.toFixed(2)}`
                           : `$${potReturn.toFixed(2)}`
                         }
-                        color={isWon || isMb1 ? C.green : isLost ? C.red : C.amber}
+                        color={isWon || isMb1 ? C.green : isLost ? C.red : isVoid ? C.muted : C.amber}
                       />
                       <StatusBadge status={effectiveStatus} />
                     </div>

@@ -83,6 +83,40 @@ function shuffle(arr) {
   return a;
 }
 
+// Classify placement error: retryable (transient network/server) vs terminal (structural).
+// Allowlist approach — only retry on keywords we *know* are transient. Everything else
+// defaults terminal, so a TAB copy change ("Under minimum" vs "below minimum") can't
+// accidentally reopen the retry loop on a structural failure.
+const RETRYABLE_KEYWORDS = [
+  'failed to fetch', 'networkerror', 'network error',
+  'timeout', 'timed out', 'econnreset', 'aborted',
+  '502', '503', '504', 'gateway', 'upstream',
+  'tunnel', 'proxy', 'ssl', 'boringssl', 'connect',
+  'temporarily unavailable', 'service unavailable',
+];
+function isRetryableError(message) {
+  if (!message) return true; // unknown empty error — let it retry once
+  const m = String(message).toLowerCase();
+  return RETRYABLE_KEYWORDS.some((kw) => m.includes(kw));
+}
+
+// Subset of retryable errors that indicate TAB-side upstream trouble (as opposed to
+// e.g. local ssl/proxy). Used by the per-account circuit breaker to decide when to
+// pause an account on a 5xx storm rather than slamming TAB harder.
+const FIVE_XX_KEYWORDS = ['502', '503', '504', 'gateway', 'upstream', 'service unavailable'];
+function is5xxError(message) {
+  if (!message) return false;
+  const m = String(message).toLowerCase();
+  return FIVE_XX_KEYWORDS.some((kw) => m.includes(kw));
+}
+
+// Circuit breaker tuning. Per account: after this many consecutive 5xx errors, pause
+// the account's placement loop for the cooldown. Gives TAB's gateway room to recover
+// instead of the frontend hammering it through an outage (which is what the original
+// Shadow 502 cascade looked like).
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+const CIRCUIT_BREAKER_COOLDOWN_MS = 60000;
+
 /* ─── Status Components ─── */
 function StatusIcon({ status }) {
   if (status === 'placed') return <CheckCircle size={16} style={{ color: 'var(--success)' }} />;
@@ -161,6 +195,20 @@ export default function CsbV4() {
 
   const [v4Log, setV4Log] = useState([]);
   const abortRef = useRef(false);
+
+  // Timestamp of last successful handleResolveAll completion. Used to skip the
+  // pre-place recheck when allocation-time odds are still fresh (< window).
+  const lastResolveTsRef = useRef(0);
+  const RECHECK_SKIP_WINDOW_MS = 45000;
+
+  // Ref indirection so the auto-retry useEffect can call the latest
+  // handleRetryFailed without capturing a stale closure.
+  const handleRetryFailedRef = useRef(null);
+
+  // Auto-retry: when Execute finishes with retryable failures, fire one retry pass.
+  const [autoRetryEnabled, setAutoRetryEnabled] = useState(() => localStorage.getItem('v4_autoRetry') !== 'false');
+  useEffect(() => { localStorage.setItem('v4_autoRetry', autoRetryEnabled); }, [autoRetryEnabled]);
+  const [autoRetryPending, setAutoRetryPending] = useState(false);
 
   const sessionEntries = Object.entries(sessions).filter(([, s]) => s.session_id);
 
@@ -281,6 +329,8 @@ export default function CsbV4() {
     setCsvText(''); setParsedBets([]); setBetStatuses({}); setSelectedBets({});
     setError(''); setV4Log([]); setAllocationMatrix(null); setPlacementResults([]);
     setAccountProgress({}); setPhase('input'); abortRef.current = false;
+    setAutoRetryPending(false);
+    lastResolveTsRef.current = 0;
   };
 
   /* ─── Account Queue ─── */
@@ -299,29 +349,52 @@ export default function CsbV4() {
     const sid = firstEnabled ? sessions[firstEnabled.id]?.session_id : null;
     if (!sid) { setError('Login to a TAB account first.'); setResolving(false); return; }
 
-    const newStatuses = { ...betStatuses };
+    const toResolve = [];
     for (let i = 0; i < parsedBets.length; i++) {
-      if (!selectedBets[i]) continue;
-      if (abortRef.current) break;
-      const bet = parsedBets[i];
-      newStatuses[i] = { status: 'resolving' };
-      setBetStatuses({ ...newStatuses });
-
-      try {
-        const res = await api.csbResolveOne(sid, { ...bet, sport: sport.sport, competition: sport.competition });
-        const combined = res.combined_odds || res.odds;
-        const minOk = !bet.min_odds || combined >= bet.min_odds;
-        newStatuses[i] = {
-          status: minOk ? 'resolved' : 'below_min',
-          combined_odds: combined,
-          matched_odds: res.matched_odds || res.leg_odds,
-          message: res.message || '',
-        };
-      } catch (err) {
-        newStatuses[i] = { status: 'failed', message: err.message };
-      }
-      setBetStatuses({ ...newStatuses });
+      if (selectedBets[i]) toResolve.push({ i, bet: parsedBets[i] });
     }
+
+    // Mark all as "resolving" upfront so the UI doesn't look stuck on the later items.
+    setBetStatuses((prev) => {
+      const next = { ...prev };
+      for (const { i } of toResolve) next[i] = { status: 'resolving' };
+      return next;
+    });
+
+    // Concurrency pool. The resolve endpoint is a read-only price check, not a bet
+    // placement, so parallel calls don't raise detection risk. 5-wide cuts 30s of
+    // serial wait to ~6s on a 26-bet queue, which is the main pre-execute bottleneck.
+    const CONCURRENCY = 5;
+    let cursor = 0;
+
+    const worker = async () => {
+      while (!abortRef.current) {
+        const idx = cursor++;
+        if (idx >= toResolve.length) return;
+        const { i, bet } = toResolve[idx];
+        let statusEntry;
+        try {
+          const res = await api.csbResolveOne(sid, { ...bet, sport: sport.sport, competition: sport.competition });
+          const combined = res.combined_odds || res.odds;
+          const minOk = !bet.min_odds || combined >= bet.min_odds;
+          statusEntry = {
+            status: minOk ? 'resolved' : 'below_min',
+            combined_odds: combined,
+            matched_odds: res.matched_odds || res.leg_odds,
+            message: res.message || '',
+          };
+        } catch (err) {
+          statusEntry = { status: 'failed', message: err.message };
+        }
+        setBetStatuses((prev) => ({ ...prev, [i]: statusEntry }));
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, toResolve.length) }, worker)
+    );
+
+    lastResolveTsRef.current = Date.now();
     setResolving(false);
     setPhase('resolved');
   };
@@ -335,11 +408,17 @@ export default function CsbV4() {
     const numAccounts = enabledAccounts.length;
     if (numAccounts === 0) { setError('Enable at least one account.'); return; }
 
-    // matrix[accountId] = [{ betIdx, stake, bet, resolvedOdds, tippedOdds, liability }]
+    // matrix[accountId] = [{ slotId, accountId, betIdx, stake, bet, resolvedOdds, tippedOdds, liability }]
+    // slotId is unique per allocation slot so retry can dedupe even when the same bet
+    // is split across multiple slots on the same account.
     const matrix = {};
     enabledAccounts.forEach((a) => { matrix[a.id] = []; });
 
     let rrIdx = 0; // round-robin pointer
+    // slotIds are prefixed with the allocation run timestamp so a rebuilt matrix can't
+    // produce IDs that collide with stale placementResults from a previous build.
+    const slotPrefix = `a${Date.now().toString(36)}`;
+    let slotCounter = 0;
 
     const selectedIdxs = parsedBets.map((_, i) => i).filter((i) => selectedBets[i]);
 
@@ -365,6 +444,7 @@ export default function CsbV4() {
         // Fits on one account — assign to next in round-robin
         const accId = enabledAccounts[rrIdx % numAccounts].id;
         matrix[accId].push({
+          slotId: `${slotPrefix}-${slotCounter++}`, accountId: accId,
           betIdx: i, stake: totalStakeForBet, bet, resolvedOdds, tippedOdds: bet.odds,
           liability: totalLiability, matched_odds: st.matched_odds,
         });
@@ -379,6 +459,7 @@ export default function CsbV4() {
           const slotStake = Math.max(5, Math.min(Math.ceil(remaining / 5) * 5, maxStakePerSlot));
           const accId = enabledAccounts[(rrIdx + splitCount) % numAccounts].id;
           matrix[accId].push({
+            slotId: `${slotPrefix}-${slotCounter++}`, accountId: accId,
             betIdx: i, stake: slotStake, bet, resolvedOdds, tippedOdds: bet.odds,
             liability: (odds - 1) * slotStake, matched_odds: st.matched_odds,
           });
@@ -436,17 +517,57 @@ export default function CsbV4() {
 
     const addLog = (msg) => setV4Log((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
 
-    // Build per-account async placement functions
+    // Pre-flight: refresh balances to confirm each enabled account has a healthy
+    // session + reachable proxy BEFORE firing real placements. An account whose
+    // balance fetch fails here is almost certainly going to 5xx on every placement,
+    // so we skip it entirely rather than grinding through its queue producing losses.
+    const preflightAccountIds = enabledAccounts
+      .map((a) => a.id)
+      .filter((id) => (allocationMatrix[id] || []).length > 0 && sessions[id]?.session_id);
+
+    const healthy = new Set(preflightAccountIds);
+    if (preflightAccountIds.length > 0) {
+      addLog('Pre-flight: checking account health...');
+      const results = await Promise.all(preflightAccountIds.map(async (id) => {
+        try {
+          const s = sessions[id];
+          const res = await api.getBalance(s.session_id);
+          const raw = res.account_balance || res.balance;
+          return { id, ok: raw != null };
+        } catch (e) {
+          return { id, ok: false, err: e?.message || 'unknown' };
+        }
+      }));
+      results.forEach(({ id, ok, err }) => {
+        const lbl = getAccountLabel(id);
+        if (!ok) {
+          healthy.delete(id);
+          addLog(`⚠ ${lbl}: pre-flight failed${err ? ` (${err})` : ''} — account skipped for this run`);
+        }
+      });
+      if (healthy.size === 0) {
+        addLog('✗ All enabled accounts failed pre-flight. Check sessions/proxies and retry.');
+        setPhase('done');
+        return;
+      }
+    }
+
+    // Build per-account async placement functions (healthy accounts only)
     const accountTasks = enabledAccounts.map((acc) => {
       const queue = allocationMatrix[acc.id] || [];
       if (queue.length === 0) return null;
       const sid = sessions[acc.id]?.session_id;
       if (!sid) return null;
+      if (!healthy.has(acc.id)) return null;
       const label = getAccountLabel(acc.id);
 
       return async () => {
         addLog(`▶ ${label}: placing ${queue.length} bets — $${queue.reduce((s, q) => s + q.stake, 0).toFixed(0)} total`);
         setAccountProgress((prev) => ({ ...prev, [acc.id]: { currentIdx: 0, total: queue.length, placing: true, currentBetLabel: '' } }));
+
+        // Per-account circuit breaker state: consecutive 5xx count + whether we're
+        // currently in the cooldown window. Reset on any successful placement.
+        let consecutive5xx = 0;
 
         let betCount = 0;
         for (let qi = 0; qi < queue.length; qi++) {
@@ -456,7 +577,8 @@ export default function CsbV4() {
           }
 
           const item = queue[qi];
-          const legs = item.bet.bet.split('/').map((l) => l.trim()).join(' / ');
+          const bet = item.bet;
+          const legs = bet.bet.split('/').map((l) => l.trim()).join(' / ');
           const shortLegs = legs.length > 60 ? legs.substring(0, 57) + '...' : legs;
 
           setAccountProgress((prev) => ({
@@ -464,29 +586,88 @@ export default function CsbV4() {
             [acc.id]: { ...prev[acc.id], currentIdx: qi, currentBetLabel: shortLegs },
           }));
 
-          // Pre-placement log
-          addLog(`${label}: [${qi + 1}/${queue.length}] placing Bet #${item.betIdx + 1} — $${item.stake} @ ${item.resolvedOdds?.toFixed(2)} — ${shortLegs}`);
+          // Live recheck: re-resolve odds and Kelly-scale the stake right before placement.
+          // Skipped when allocation-time odds are <45s old (rare for meaningful drift on
+          // pre-game markets) — saves ~1–3s per bet. Always runs if drift is disabled? No:
+          // the toggle controls both the stake math AND the extra round-trip.
+          let freshOdds = item.resolvedOdds;
+          let recheckOk = false;
+          const recheckFresh = Date.now() - lastResolveTsRef.current < RECHECK_SKIP_WINDOW_MS;
+          if (oddsDriftEnabled && !recheckFresh) {
+            try {
+              const rres = await api.csbResolveOne(sid, { ...bet, sport: sport.sport, competition: sport.competition });
+              const c = rres.combined_odds || rres.odds;
+              const parsed = c != null && c !== '' ? parseFloat(c) : NaN;
+              // Sanity bounds: a valid TAB decimal price is > 1.01 and sub-1000; anything
+              // else (0, negative, NaN, absurdly high) is a bad response, not drift.
+              if (Number.isFinite(parsed) && parsed > 1.01 && parsed < 1000) {
+                freshOdds = parsed;
+                recheckOk = true;
+              } else {
+                addLog(`${label}: \u26A0 Bet #${item.betIdx + 1} recheck returned invalid odds (${c ?? 'null'}); using allocation odds`);
+              }
+            } catch (e) {
+              addLog(`${label}: \u26A0 Bet #${item.betIdx + 1} recheck failed (${e?.message || 'unknown'}); using allocation odds`);
+            }
+          }
+
+          let placeStake = item.stake;
+          // Only reprice when we actually have fresh odds AND drift is enabled.
+          // When recheckOk is false, we placed at item.stake at item.resolvedOdds as before —
+          // visible via the ⚠ log above, so the operator knows this slot wasn't shielded.
+          if (oddsDriftEnabled && recheckOk && bet.odds && bet.min_odds) {
+            if (freshOdds <= bet.min_odds) {
+              addLog(`${label}: \u2717 Bet #${item.betIdx + 1} skipped — odds ${freshOdds.toFixed(2)} below min ${bet.min_odds}`);
+              setPlacementResults((prev) => [...prev, {
+                slotId: item.slotId, betIdx: item.betIdx, accountId: acc.id, accountLabel: label,
+                stake: 0, tippedOdds: item.tippedOdds, resolvedOdds: freshOdds, placedOdds: null,
+                status: 'skipped', message: `Odds ${freshOdds.toFixed(2)} below minimum ${bet.min_odds}`,
+                legs: bet.bet, game_id: bet.game_id,
+              }]);
+              setBetStatuses((prev) => ({ ...prev, [item.betIdx]: { ...prev[item.betIdx], status: 'below_min', combined_odds: freshOdds } }));
+              betCount++;
+              continue;
+            }
+            const origWhole = getStakeForBet(bet, item.resolvedOdds);
+            const freshWhole = getStakeForBet(bet, freshOdds);
+            if (origWhole > 0 && freshWhole > 0) {
+              const scaled = roundToTab(item.stake * (freshWhole / origWhole));
+              placeStake = Math.min(item.stake, scaled);
+            }
+          }
+
+          // $5 split slots (from buildAllocationMatrix splitting large stakes into $5
+          // increments) fall below TAB's $10 minimum — skip rather than fire a guaranteed fail.
+          if (placeStake < 10) {
+            addLog(`${label}: \u2717 Bet #${item.betIdx + 1} skipped — stake $${placeStake} below $10 min`);
+            betCount++;
+            continue;
+          }
+
+          const repricedTag = placeStake < item.stake ? ` (repriced from $${item.stake})` : '';
+          addLog(`${label}: [${qi + 1}/${queue.length}] placing Bet #${item.betIdx + 1} — $${placeStake} @ ${freshOdds?.toFixed(2)} — ${shortLegs}${repricedTag}`);
 
           // Update bets table — mark as "placing" for this bet
           setBetStatuses((prev) => ({ ...prev, [item.betIdx]: { ...prev[item.betIdx], status: 'placing' } }));
 
           try {
             const res = await api.csbPlaceOne(sid, {
-              ...item.bet,
-              stake: item.stake,
+              ...bet,
+              stake: placeStake,
               sport: sport.sport,
               competition: sport.competition,
             });
 
-            const placedOdds = res.combined_odds || res.odds || item.resolvedOdds;
+            const placedOdds = res.combined_odds || res.odds || freshOdds;
             const status = res.success ? 'placed' : 'failed';
             const errMsg = res.error || res.message || '';
 
             setPlacementResults((prev) => [...prev, {
+              slotId: item.slotId,
               betIdx: item.betIdx, accountId: acc.id, accountLabel: label,
-              stake: res.stake || item.stake, tippedOdds: item.tippedOdds, resolvedOdds: item.resolvedOdds,
+              stake: res.stake || placeStake, tippedOdds: item.tippedOdds, resolvedOdds: freshOdds,
               placedOdds, status, message: errMsg,
-              legs: item.bet.bet, game_id: item.bet.game_id,
+              legs: bet.bet, game_id: bet.game_id,
             }]);
 
             // Update main bet status
@@ -502,19 +683,44 @@ export default function CsbV4() {
 
             const icon = status === 'placed' ? '\u2713' : '\u2717';
             const oddsStr = placedOdds ? parseFloat(placedOdds).toFixed(2) : '?';
-            addLog(`${label}: ${icon} Bet #${item.betIdx + 1} — $${res.stake || item.stake} @ ${oddsStr} — ${status}${errMsg ? ` — ${errMsg}` : ''}`);
+            addLog(`${label}: ${icon} Bet #${item.betIdx + 1} — $${res.stake || placeStake} @ ${oddsStr} — ${status}${errMsg ? ` — ${errMsg}` : ''}`);
+
+            // Circuit-breaker bookkeeping on the success branch.
+            if (status === 'placed') {
+              consecutive5xx = 0;
+            } else if (is5xxError(errMsg)) {
+              consecutive5xx += 1;
+            }
           } catch (err) {
             setPlacementResults((prev) => [...prev, {
+              slotId: item.slotId,
               betIdx: item.betIdx, accountId: acc.id, accountLabel: label,
-              stake: item.stake, tippedOdds: item.tippedOdds, resolvedOdds: item.resolvedOdds,
+              stake: placeStake, tippedOdds: item.tippedOdds, resolvedOdds: freshOdds,
               placedOdds: null, status: 'failed', message: err.message,
-              legs: item.bet.bet, game_id: item.bet.game_id,
+              legs: bet.bet, game_id: bet.game_id,
             }]);
             setBetStatuses((prev) => ({
               ...prev,
               [item.betIdx]: { ...prev[item.betIdx], status: 'failed', message: err.message },
             }));
             addLog(`${label}: \u2717 Bet ${item.betIdx + 1} — FAILED: ${err.message}`);
+
+            // Network exceptions (fetch throws) count against the circuit breaker too —
+            // they indicate the same upstream-trouble class as explicit 5xx responses.
+            if (is5xxError(err?.message) || /failed to fetch|network/i.test(err?.message || '')) {
+              consecutive5xx += 1;
+            }
+          }
+
+          // Circuit breaker: if we've hit the threshold, pause this account before the
+          // next placement. The parallel account workers keep running — only THIS account
+          // pauses. Gives the upstream time to recover without hammering it.
+          if (consecutive5xx >= CIRCUIT_BREAKER_THRESHOLD && !abortRef.current) {
+            const cooldownSec = (CIRCUIT_BREAKER_COOLDOWN_MS / 1000).toFixed(0);
+            addLog(`${label}: ⏸ circuit breaker tripped (${consecutive5xx} upstream failures) — pausing ${cooldownSec}s`);
+            await new Promise((r) => setTimeout(r, CIRCUIT_BREAKER_COOLDOWN_MS));
+            consecutive5xx = 0;
+            addLog(`${label}: ▶ resuming after cooldown`);
           }
 
           betCount++;
@@ -549,38 +755,171 @@ export default function CsbV4() {
     await Promise.all(accountTasks.map((fn) => fn()));
     addLog('All accounts finished.');
     setPhase('done');
+    // Signal the auto-retry effect. Whether it actually fires is decided there
+    // based on retryableFailedCount + autoRetryEnabled — so the flag can be set
+    // unconditionally here.
+    if (autoRetryEnabled) setAutoRetryPending(true);
   };
 
-  /* ─── Retry Failed ─── */
+  /* ─── Retry Failed ───
+   * Safe retry:
+   *   1. Drop terminal failures (missing market, below-min, insufficient funds) — retrying
+   *      won't change the outcome and historically caused the same bet to loop 4× in a row.
+   *   2. Dedupe retryable failures by slotId so a split-across-slots bet isn't queued twice
+   *      onto the same account (the old `find(q.betIdx === fr.betIdx)` path did exactly that).
+   *   3. Re-resolve live odds and recompute a Kelly-scaled stake, capped at the original slot
+   *      stake — protects against over-staking when odds drift further between main run and retry.
+   *   4. Track live balance locally (initial − already-placed) and skip any slot that would
+   *      exceed it, so we don't fire guaranteed-failure "Insufficient funds" placements.
+   */
   const handleRetryFailed = async () => {
     if (!allocationMatrix) return;
-    // Build a new matrix with only the failed bets per account
-    const failedResults = placementResults.filter((r) => r.status === 'failed');
-    if (failedResults.length === 0) return;
+    const addLog = (msg) => setV4Log((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
 
-    const retryMatrix = {};
-    for (const fr of failedResults) {
-      const accId = fr.accountId;
-      if (!retryMatrix[accId]) retryMatrix[accId] = [];
-      // Find the original allocation item
-      const origQueue = allocationMatrix[accId] || [];
-      const origItem = origQueue.find((q) => q.betIdx === fr.betIdx);
-      if (origItem) retryMatrix[accId].push(origItem);
+    const allFailed = placementResults.filter((r) => r.status === 'failed');
+    if (allFailed.length === 0) return;
+
+    const terminal = [];
+    const retryableRaw = [];
+    for (const fr of allFailed) {
+      if (isRetryableError(fr.message)) retryableRaw.push(fr);
+      else terminal.push(fr);
     }
 
-    // Shuffle each retry queue
+    // Dedupe retryable failures by slotId (one retry per original slot)
+    const seenSlots = new Set();
+    const slotsToRetry = [];
+    for (const fr of retryableRaw) {
+      const key = fr.slotId || `${fr.betIdx}:${fr.accountId}:${fr.stake}`;
+      if (seenSlots.has(key)) continue;
+      seenSlots.add(key);
+      const origQueue = allocationMatrix[fr.accountId] || [];
+      const origItem = fr.slotId
+        ? origQueue.find((q) => q.slotId === fr.slotId)
+        : origQueue.find((q) => q.betIdx === fr.betIdx && q.stake === fr.stake);
+      if (origItem) slotsToRetry.push(origItem);
+    }
+
+    if (terminal.length > 0) {
+      addLog(`═══ ${terminal.length} terminal failures NOT retried ═══`);
+      terminal.forEach((fr) => {
+        addLog(`  ✗ Bet #${fr.betIdx + 1} on ${fr.accountLabel}: ${fr.message || 'unknown error'}`);
+      });
+    }
+
+    if (slotsToRetry.length === 0) {
+      addLog('No retryable failures remain.');
+      setPhase('done');
+      return;
+    }
+
+    // Group retry slots by account + shuffle for anti-detection
+    const retryMatrix = {};
+    for (const item of slotsToRetry) {
+      if (!retryMatrix[item.accountId]) retryMatrix[item.accountId] = [];
+      retryMatrix[item.accountId].push(item);
+    }
     for (const accId of Object.keys(retryMatrix)) {
       retryMatrix[accId] = shuffle(retryMatrix[accId]);
     }
 
-    // Remove old failed results so they get replaced
-    setPlacementResults((prev) => prev.filter((r) => r.status !== 'failed'));
-    setAllocationMatrix(retryMatrix);
+    // Remove ONLY the retryable failed results so they can be replaced.
+    // Terminal failures stay in placementResults with their original error.
+    const retrySlotIds = new Set(slotsToRetry.map((s) => s.slotId).filter(Boolean));
+    setPlacementResults((prev) => prev.filter((r) => {
+      if (r.status !== 'failed') return true;
+      if (r.slotId && retrySlotIds.has(r.slotId)) return false;
+      if (!r.slotId && isRetryableError(r.message)) return false;
+      return true;
+    }));
+
+    // Refresh balances before retry — the snapshot from page load may be minutes/hours
+    // old, and during that window other activity (another browser tab, manual bets) could
+    // have changed the available funds. Non-blocking: if it fails we fall back to stale.
+    addLog('Refreshing account balances before retry...');
+    try { await fetchBalances(); } catch (_) { /* keep stale values */ }
+
+    // Idempotency check against TAB's actual bet history. If a slot's placement
+    // succeeded at TAB but the response to us was lost (502 cascade, dropped proxy
+    // connection), retrying would double-place. Before firing any retry, ask the
+    // backend to look each signature up in TAB's ledger for the relevant accounts.
+    // Anything that already exists there is silently reclassified as 'placed' and
+    // removed from the retry queue — this is the single biggest safety net for the
+    // "$1,100 of duplicate stakes" scenario.
+    const retrySigs = slotsToRetry.map((s, idx) => {
+      const legTokens = s.bet.bet.split('/').map((l) => l.trim().split(/\s+/)[0]).filter(Boolean);
+      return {
+        index: idx,
+        legs: legTokens,
+        combined_odds: String(s.resolvedOdds ?? s.tippedOdds ?? ''),
+      };
+    });
+    const retryAccountNumbers = Array.from(new Set(slotsToRetry.map((s) => s.accountId)));
+    let alreadyPlacedByIdx = {};
+    if (retryAccountNumbers.length > 0 && retrySigs.length > 0) {
+      addLog('Checking TAB history for bets that already went through...');
+      try {
+        const chk = await api.csbCheckPlaced(retryAccountNumbers, retrySigs, 30);
+        alreadyPlacedByIdx = chk.matches || {};
+      } catch (e) {
+        addLog(`⚠ Idempotency check failed (${e?.message || 'unknown'}); proceeding without it`);
+      }
+    }
+
+    // Promote any already-placed slots straight into placementResults and drop them
+    // from the retry set. They keep their original slotId so downstream counts line up.
+    const filteredSlotsToRetry = [];
+    for (let i = 0; i < slotsToRetry.length; i++) {
+      const match = alreadyPlacedByIdx[String(i)];
+      if (match) {
+        const s = slotsToRetry[i];
+        const label = getAccountLabel(s.accountId);
+        const stakeN = parseFloat(String(match.stake || '').replace(/[$,]/g, '')) || s.stake;
+        const oddsN = parseFloat(String(match.odds || '')) || s.resolvedOdds;
+        setPlacementResults((prev) => [...prev, {
+          slotId: s.slotId, betIdx: s.betIdx, accountId: s.accountId, accountLabel: label,
+          stake: stakeN, tippedOdds: s.tippedOdds, resolvedOdds: s.resolvedOdds,
+          placedOdds: oddsN, status: 'placed', message: `recovered via TAB history (tsn ${match.tsn || '?'})`,
+          legs: s.bet.bet, game_id: s.bet.game_id,
+        }]);
+        setBetStatuses((prev) => ({
+          ...prev,
+          [s.betIdx]: { ...prev[s.betIdx], status: 'placed', combined_odds: oddsN, message: 'recovered via TAB history' },
+        }));
+        addLog(`↩ recovered Bet #${s.betIdx + 1} on ${label} — already placed at TAB (tsn ${match.tsn || '?'}); skipping retry`);
+      } else {
+        filteredSlotsToRetry.push(slotsToRetry[i]);
+      }
+    }
+
+    // If every slot was already placed at TAB, we're done — no retry needed.
+    if (filteredSlotsToRetry.length === 0) {
+      addLog('All retry candidates were recovered from TAB history. Nothing to retry.');
+      setPhase('done');
+      return;
+    }
+
+    // Rebuild per-account retry matrix from the surviving slots.
+    for (const accId of Object.keys(retryMatrix)) retryMatrix[accId] = [];
+    for (const item of filteredSlotsToRetry) {
+      if (!retryMatrix[item.accountId]) retryMatrix[item.accountId] = [];
+      retryMatrix[item.accountId].push(item);
+    }
+    for (const accId of Object.keys(retryMatrix)) {
+      retryMatrix[accId] = shuffle(retryMatrix[accId]);
+    }
+
+    // Seed live balance tracking: initial − already-successfully-placed
+    const placedPerAccount = {};
+    for (const r of placementResults) {
+      if (r.status === 'placed') {
+        placedPerAccount[r.accountId] = (placedPerAccount[r.accountId] || 0) + (r.stake || 0);
+      }
+    }
+
     setPhase('placing');
     abortRef.current = false;
-
-    const addLog = (msg) => setV4Log((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-    addLog(`═══ RETRYING ${failedResults.length} FAILED BETS ═══`);
+    addLog(`═══ RETRYING ${slotsToRetry.length} FAILED BETS ═══`);
 
     const accountTasks = enabledAccounts.map((acc) => {
       const queue = retryMatrix[acc.id] || [];
@@ -588,43 +927,143 @@ export default function CsbV4() {
       const sid = sessions[acc.id]?.session_id;
       if (!sid) return null;
       const label = getAccountLabel(acc.id);
+      const initBal = accountBalances[acc.id];
+      let liveBalance = (initBal != null)
+        ? initBal - (placedPerAccount[acc.id] || 0)
+        : null;
 
       return async () => {
-        addLog(`▶ ${label}: retrying ${queue.length} bets`);
+        const balTag = liveBalance != null ? ` (bal ~$${liveBalance.toFixed(0)})` : '';
+        addLog(`▶ ${label}: retrying ${queue.length} bets${balTag}`);
         setAccountProgress((prev) => ({ ...prev, [acc.id]: { currentIdx: 0, total: queue.length, placing: true, currentBetLabel: '' } }));
 
+        // Circuit breaker — same semantics as main execute. Resets on every placed bet.
+        let consecutive5xx = 0;
+
         for (let qi = 0; qi < queue.length; qi++) {
-          if (abortRef.current) break;
+          if (abortRef.current) { addLog(`⏹ ${label}: aborted at bet ${qi + 1}/${queue.length}`); break; }
           const item = queue[qi];
-          const legs = item.bet.bet.split('/').map((l) => l.trim()).join(' / ');
+          const bet = item.bet;
+          const legs = bet.bet.split('/').map((l) => l.trim()).join(' / ');
           const shortLegs = legs.length > 60 ? legs.substring(0, 57) + '...' : legs;
 
-          setAccountProgress((prev) => ({ ...prev, [acc.id]: { ...prev[acc.id], currentIdx: qi, currentBetLabel: shortLegs } }));
-          addLog(`${label}: [${qi + 1}/${queue.length}] retrying Bet #${item.betIdx + 1} — $${item.stake} @ ${item.resolvedOdds?.toFixed(2)} — ${shortLegs}`);
+          setAccountProgress((prev) => ({
+            ...prev,
+            [acc.id]: { ...prev[acc.id], currentIdx: qi, currentBetLabel: shortLegs },
+          }));
+
+          // Step 1: re-resolve for fresh odds. Skipped when allocation-time odds are
+          // still fresh (<45s) — typical for an auto-retry fired immediately after Execute.
+          let freshOdds = item.resolvedOdds;
+          let recheckOk = false;
+          const recheckFresh = Date.now() - lastResolveTsRef.current < RECHECK_SKIP_WINDOW_MS;
+          if (oddsDriftEnabled && !recheckFresh) {
+            try {
+              const rres = await api.csbResolveOne(sid, { ...bet, sport: sport.sport, competition: sport.competition });
+              const c = rres.combined_odds || rres.odds;
+              const parsed = c != null && c !== '' ? parseFloat(c) : NaN;
+              if (Number.isFinite(parsed) && parsed > 1.01 && parsed < 1000) {
+                freshOdds = parsed;
+                recheckOk = true;
+              } else {
+                addLog(`${label}: \u26A0 Bet #${item.betIdx + 1} recheck returned invalid odds (${c ?? 'null'}); using allocation odds`);
+              }
+            } catch (e) {
+              addLog(`${label}: \u26A0 Bet #${item.betIdx + 1} recheck failed (${e?.message || 'unknown'}); using allocation odds`);
+            }
+          }
+          if (abortRef.current) { addLog(`⏹ ${label}: aborted at bet ${qi + 1}/${queue.length}`); break; }
+
+          // Step 2: Kelly-scale the slot stake based on fresh odds, capped at original.
+          // Only reprices when recheck succeeded — stale-odds fallback keeps item.stake.
+          let retryStake = item.stake;
+          if (oddsDriftEnabled && recheckOk && bet.odds && bet.min_odds) {
+            if (freshOdds <= bet.min_odds) {
+              addLog(`${label}: \u2717 Bet #${item.betIdx + 1} skipped — odds ${freshOdds.toFixed(2)} below min ${bet.min_odds}`);
+              setPlacementResults((prev) => [...prev, {
+                slotId: item.slotId, betIdx: item.betIdx, accountId: acc.id, accountLabel: label,
+                stake: 0, tippedOdds: item.tippedOdds, resolvedOdds: freshOdds, placedOdds: null,
+                status: 'skipped', message: `Odds ${freshOdds.toFixed(2)} below minimum ${bet.min_odds}`,
+                legs: bet.bet, game_id: bet.game_id,
+              }]);
+              setBetStatuses((prev) => ({ ...prev, [item.betIdx]: { ...prev[item.betIdx], status: 'below_min', combined_odds: freshOdds } }));
+              continue;
+            }
+            const origWhole = getStakeForBet(bet, item.resolvedOdds);
+            const freshWhole = getStakeForBet(bet, freshOdds);
+            if (origWhole > 0 && freshWhole > 0) {
+              const scaled = roundToTab(item.stake * (freshWhole / origWhole));
+              retryStake = Math.min(item.stake, scaled);
+            }
+          }
+
+          if (retryStake < 10) {
+            addLog(`${label}: \u2717 Bet #${item.betIdx + 1} skipped — stake $${retryStake} below $10 min`);
+            continue;
+          }
+
+          // Step 3: balance check
+          if (liveBalance != null && retryStake > liveBalance) {
+            addLog(`${label}: \u2717 Bet #${item.betIdx + 1} skipped — est balance $${liveBalance.toFixed(0)} < stake $${retryStake}`);
+            setPlacementResults((prev) => [...prev, {
+              slotId: item.slotId, betIdx: item.betIdx, accountId: acc.id, accountLabel: label,
+              stake: retryStake, tippedOdds: item.tippedOdds, resolvedOdds: freshOdds, placedOdds: null,
+              status: 'skipped', message: 'Insufficient balance for retry',
+              legs: bet.bet, game_id: bet.game_id,
+            }]);
+            continue;
+          }
+
+          const repricedTag = retryStake < item.stake ? ` (repriced from $${item.stake})` : '';
+          addLog(`${label}: [${qi + 1}/${queue.length}] retrying Bet #${item.betIdx + 1} — $${retryStake} @ ${freshOdds?.toFixed(2)} — ${shortLegs}${repricedTag}`);
           setBetStatuses((prev) => ({ ...prev, [item.betIdx]: { ...prev[item.betIdx], status: 'placing' } }));
 
           try {
-            const res = await api.csbPlaceOne(sid, { ...item.bet, stake: item.stake, sport: sport.sport, competition: sport.competition });
-            const placedOdds = res.combined_odds || res.odds || item.resolvedOdds;
+            const res = await api.csbPlaceOne(sid, { ...bet, stake: retryStake, sport: sport.sport, competition: sport.competition });
+            const placedOdds = res.combined_odds || res.odds || freshOdds;
             const status = res.success ? 'placed' : 'failed';
             const errMsg = res.error || res.message || '';
 
             setPlacementResults((prev) => [...prev, {
-              betIdx: item.betIdx, accountId: acc.id, accountLabel: label,
-              stake: res.stake || item.stake, tippedOdds: item.tippedOdds, resolvedOdds: item.resolvedOdds,
-              placedOdds, status, message: errMsg, legs: item.bet.bet, game_id: item.bet.game_id,
+              slotId: item.slotId, betIdx: item.betIdx, accountId: acc.id, accountLabel: label,
+              stake: res.stake || retryStake, tippedOdds: item.tippedOdds, resolvedOdds: freshOdds,
+              placedOdds, status, message: errMsg, legs: bet.bet, game_id: bet.game_id,
             }]);
-            setBetStatuses((prev) => ({ ...prev, [item.betIdx]: { ...prev[item.betIdx], status: status === 'placed' ? 'placed' : 'failed', combined_odds: placedOdds, message: errMsg } }));
+            setBetStatuses((prev) => ({
+              ...prev,
+              [item.betIdx]: { ...prev[item.betIdx], status: status === 'placed' ? 'placed' : 'failed', combined_odds: placedOdds, message: errMsg },
+            }));
+
+            if (status === 'placed' && liveBalance != null) {
+              liveBalance -= (res.stake || retryStake);
+            }
+
             const icon = status === 'placed' ? '\u2713' : '\u2717';
-            addLog(`${label}: ${icon} Bet #${item.betIdx + 1} — $${res.stake || item.stake} @ ${placedOdds ? parseFloat(placedOdds).toFixed(2) : '?'} — ${status}${errMsg ? ` — ${errMsg}` : ''}`);
+            addLog(`${label}: ${icon} Bet #${item.betIdx + 1} — $${res.stake || retryStake} @ ${placedOdds ? parseFloat(placedOdds).toFixed(2) : '?'} — ${status}${errMsg ? ` — ${errMsg}` : ''}`);
+
+            if (status === 'placed') consecutive5xx = 0;
+            else if (is5xxError(errMsg)) consecutive5xx += 1;
           } catch (err) {
             setPlacementResults((prev) => [...prev, {
-              betIdx: item.betIdx, accountId: acc.id, accountLabel: label,
-              stake: item.stake, tippedOdds: item.tippedOdds, resolvedOdds: item.resolvedOdds,
-              placedOdds: null, status: 'failed', message: err.message, legs: item.bet.bet, game_id: item.bet.game_id,
+              slotId: item.slotId, betIdx: item.betIdx, accountId: acc.id, accountLabel: label,
+              stake: retryStake, tippedOdds: item.tippedOdds, resolvedOdds: freshOdds,
+              placedOdds: null, status: 'failed', message: err.message, legs: bet.bet, game_id: bet.game_id,
             }]);
             setBetStatuses((prev) => ({ ...prev, [item.betIdx]: { ...prev[item.betIdx], status: 'failed', message: err.message } }));
             addLog(`${label}: \u2717 Bet #${item.betIdx + 1} — FAILED: ${err.message}`);
+
+            if (is5xxError(err?.message) || /failed to fetch|network/i.test(err?.message || '')) {
+              consecutive5xx += 1;
+            }
+          }
+
+          // Circuit breaker — pause this account after a run of upstream failures.
+          if (consecutive5xx >= CIRCUIT_BREAKER_THRESHOLD && !abortRef.current) {
+            const cooldownSec = (CIRCUIT_BREAKER_COOLDOWN_MS / 1000).toFixed(0);
+            addLog(`${label}: ⏸ circuit breaker tripped (${consecutive5xx} upstream failures) — pausing ${cooldownSec}s`);
+            await new Promise((r) => setTimeout(r, CIRCUIT_BREAKER_COOLDOWN_MS));
+            consecutive5xx = 0;
+            addLog(`${label}: ▶ resuming after cooldown`);
           }
 
           if (qi < queue.length - 1 && !abortRef.current) {
@@ -640,6 +1079,9 @@ export default function CsbV4() {
 
     if (accountTasks.length === 0) { addLog('No failed bets to retry.'); setPhase('done'); return; }
     await Promise.all(accountTasks.map((fn) => fn()));
+    // Mark that fresh resolves just ran so any *follow-up* action (user clicks Retry
+    // again manually) can still leverage the freshness window.
+    lastResolveTsRef.current = Date.now();
     addLog('Retry finished.');
     setPhase('done');
   };
@@ -647,7 +1089,25 @@ export default function CsbV4() {
   /* ─── Derived counts ─── */
   const placedCount = placementResults.filter((r) => r.status === 'placed').length;
   const failedPlacementCount = placementResults.filter((r) => r.status === 'failed').length;
+  const retryableFailedCount = placementResults.filter((r) => r.status === 'failed' && isRetryableError(r.message)).length;
+  const terminalFailedCount = failedPlacementCount - retryableFailedCount;
   const skippedCount = placementResults.filter((r) => r.status === 'skipped').length;
+
+  // Keep the ref pointing at the latest handleRetryFailed so the auto-retry effect
+  // doesn't fire a stale closure (which would read pre-run placementResults).
+  useEffect(() => { handleRetryFailedRef.current = handleRetryFailed; });
+
+  // Auto-retry trigger: when Execute completes with retryable failures, fire one
+  // retry pass after a short delay (lets React flush the final state updates).
+  useEffect(() => {
+    if (!autoRetryPending || phase !== 'done') return;
+    if (retryableFailedCount === 0) { setAutoRetryPending(false); return; }
+    const t = setTimeout(() => {
+      setAutoRetryPending(false);
+      handleRetryFailedRef.current?.();
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [autoRetryPending, phase, retryableFailedCount]);
   const totalAllocated = allocationMatrix ? Object.values(allocationMatrix).reduce((s, q) => s + q.length, 0) : 0;
 
   /* ═══════════════════════════════════════════════════════════════
@@ -784,6 +1244,13 @@ export default function CsbV4() {
                   </label>
                 </div>
                 <div>
+                  <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>Auto-Retry</label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={autoRetryEnabled} onChange={() => setAutoRetryEnabled((v) => !v)} />
+                    Auto-retry failures <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>One pass after Execute finishes</span>
+                  </label>
+                </div>
+                <div>
                   <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>Liability Cap</label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>$</span>
@@ -892,8 +1359,18 @@ export default function CsbV4() {
               </button>
             )}
             {phase === 'done' && failedPlacementCount > 0 && (
-              <button onClick={handleRetryFailed} className="btn btn-primary" style={{ background: 'var(--warning)', borderColor: 'var(--warning)' }}>
-                <RotateCcw size={16} /> Retry {failedPlacementCount} Failed
+              <button
+                onClick={handleRetryFailed}
+                disabled={retryableFailedCount === 0}
+                title={terminalFailedCount > 0 ? `${terminalFailedCount} terminal failure(s) will be skipped` : ''}
+                className="btn btn-primary"
+                style={{
+                  background: retryableFailedCount > 0 ? 'var(--warning)' : 'var(--bg-card)',
+                  borderColor: 'var(--warning)',
+                  opacity: retryableFailedCount > 0 ? 1 : 0.5,
+                }}
+              >
+                <RotateCcw size={16} /> Retry {retryableFailedCount} Failed{terminalFailedCount > 0 ? ` (${terminalFailedCount} terminal)` : ''}
               </button>
             )}
             <button onClick={handleReset} className="btn btn-secondary" disabled={phase === 'placing'}>
