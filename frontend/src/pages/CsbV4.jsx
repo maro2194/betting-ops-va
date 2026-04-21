@@ -117,6 +117,13 @@ function is5xxError(message) {
 const CIRCUIT_BREAKER_THRESHOLD = 3;
 const CIRCUIT_BREAKER_COOLDOWN_MS = 60000;
 
+// Pre-flight balance check tuning. A single TLS/proxy blip shouldn't knock an entire
+// account out of the run (Shadow 2026-04-20: WRONG_VERSION_NUMBER on one packet caused
+// JV258 TRL to be skipped entirely, leaving JV260 HM to absorb a $3.6K queue on a $682
+// balance). Retry transient failures a few times before declaring unhealthy.
+const PREFLIGHT_MAX_ATTEMPTS = 3;
+const PREFLIGHT_RETRY_DELAY_MS = 1500;
+
 /* ─── Status Components ─── */
 function StatusIcon({ status }) {
   if (status === 'placed') return <CheckCircle size={16} style={{ color: 'var(--success)' }} />;
@@ -529,26 +536,46 @@ export default function CsbV4() {
     if (preflightAccountIds.length > 0) {
       addLog('Pre-flight: checking account health...');
       const results = await Promise.all(preflightAccountIds.map(async (id) => {
-        try {
-          const s = sessions[id];
-          const res = await api.getBalance(s.session_id);
-          const raw = res.account_balance || res.balance;
-          return { id, ok: raw != null };
-        } catch (e) {
-          return { id, ok: false, err: e?.message || 'unknown' };
-        }
-      }));
-      results.forEach(({ id, ok, err }) => {
+        const s = sessions[id];
         const lbl = getAccountLabel(id);
-        if (!ok) {
-          healthy.delete(id);
-          addLog(`⚠ ${lbl}: pre-flight failed${err ? ` (${err})` : ''} — account skipped for this run`);
+        let lastErr = null;
+        for (let attempt = 1; attempt <= PREFLIGHT_MAX_ATTEMPTS; attempt++) {
+          try {
+            const res = await api.getBalance(s.session_id);
+            const raw = res.account_balance || res.balance;
+            if (raw != null) return { id, ok: true };
+            lastErr = 'balance endpoint returned no value';
+          } catch (e) {
+            lastErr = e?.message || 'unknown';
+            // Permanent errors (auth, session dead) — no point retrying.
+            if (!isRetryableError(lastErr)) break;
+          }
+          if (attempt < PREFLIGHT_MAX_ATTEMPTS) {
+            addLog(`  ${lbl}: pre-flight attempt ${attempt}/${PREFLIGHT_MAX_ATTEMPTS} failed (${lastErr}) — retrying...`);
+            await new Promise((r) => setTimeout(r, PREFLIGHT_RETRY_DELAY_MS * attempt));
+          }
         }
+        return { id, ok: false, err: lastErr };
+      }));
+      const unhealthy = results.filter((r) => !r.ok);
+      unhealthy.forEach(({ id, err }) => {
+        const lbl = getAccountLabel(id);
+        healthy.delete(id);
+        const droppedQueue = allocationMatrix[id] || [];
+        const droppedStake = droppedQueue.reduce((s, q) => s + (q.stake || 0), 0);
+        addLog(`⚠ ${lbl}: pre-flight failed after ${PREFLIGHT_MAX_ATTEMPTS} attempts${err ? ` (${err})` : ''} — dropping ${droppedQueue.length} bets / $${droppedStake.toFixed(0)} stake`);
       });
       if (healthy.size === 0) {
         addLog('✗ All enabled accounts failed pre-flight. Check sessions/proxies and retry.');
         setPhase('done');
         return;
+      }
+      if (unhealthy.length > 0 && healthy.size > 0) {
+        const droppedTotal = unhealthy.reduce((sum, r) => {
+          const q = allocationMatrix[r.id] || [];
+          return sum + q.reduce((s, it) => s + (it.stake || 0), 0);
+        }, 0);
+        addLog(`⚠ ${unhealthy.length} account(s) skipped, ${healthy.size} account(s) proceeding — $${droppedTotal.toFixed(0)} of allocation NOT placed. Fix sessions and re-run to cover the gap.`);
       }
     }
 
