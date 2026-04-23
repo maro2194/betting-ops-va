@@ -727,15 +727,39 @@ async def _get_espn_box_score(client: httpx.AsyncClient, event_id: str) -> list[
     return all_players
 
 
+async def _find_nba_game_by_team(client: httpx.AsyncClient, team_code: str) -> Optional[dict]:
+    """Find an NBA game on ESPN by a single team abbreviation (fallback when teams string is empty)."""
+    espn_abbr = NBA_TEAM_CODES.get(team_code.lower(), team_code.upper())
+    from datetime import date, timedelta
+    for offset in [0, -1, 1]:
+        d = date.today() + timedelta(days=offset)
+        date_str = d.strftime("%Y%m%d")
+        data = await _espn_get(client, f"{ESPN_NBA_BASE}/scoreboard?dates={date_str}")
+        for event in data.get("events", []):
+            comp = event.get("competitions", [{}])[0]
+            teams = comp.get("competitors", [])
+            if len(teams) < 2:
+                continue
+            abbr_h = teams[0].get("team", {}).get("abbreviation", "")
+            abbr_a = teams[1].get("team", {}).get("abbreviation", "")
+            if espn_abbr in (abbr_h, abbr_a):
+                return {"event_id": event.get("id"), "status": comp.get("status", {})}
+    return None
+
+
 async def check_nba_leg(client: httpx.AsyncClient, parsed: dict) -> dict:
     """Check result for a single NBA leg using ESPN."""
     result = {**parsed, "actual": None, "result": "pending", "note": ""}
 
     try:
-        game = await _find_nba_game_espn(client, parsed["teams"])
+        game = None
+        if parsed["teams"]:
+            game = await _find_nba_game_espn(client, parsed["teams"])
+        if not game and parsed.get("team"):
+            game = await _find_nba_game_by_team(client, parsed["team"])
 
         if not game:
-            result["note"] = f"Game not found for {parsed['teams']}"
+            result["note"] = f"Game not found for {parsed['teams'] or parsed.get('team', '?')}"
             return result
 
         event_id = game["event_id"]

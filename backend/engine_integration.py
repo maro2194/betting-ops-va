@@ -201,6 +201,10 @@ async def place_bet(account: Account, bet: Bet, stake: float, live_odds: float) 
         break  # Success or non-price error
 
     if place_result and place_result.get("success"):
+        ticket = place_result.get("ticket_number")
+        if not ticket:
+            logger.error("Placement returned success but no ticket_number — treating as failed. Response: %s", place_result.get("details", {}))
+            return ChunkResult(success=False, error="Placement returned success but no ticket/TSN — bet not confirmed")
         # Build V1-compatible leg details for death riding
         detailed_legs = []
         game_id = bet.game_id or ""
@@ -212,8 +216,8 @@ async def place_bet(account: Account, bet: Bet, stake: float, live_odds: float) 
             success=True,
             confirmed_amount=stake,
             actual_odds=float(combined_odds) if combined_odds else live_odds,
-            bet_id=place_result.get("ticket_number", ""),
-            tsn=place_result.get("ticket_number", ""),
+            bet_id=ticket,
+            tsn=ticket,
             legs=detailed_legs,
         )
     else:

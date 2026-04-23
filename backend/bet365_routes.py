@@ -302,6 +302,29 @@ async def place_megaboost(req: MegaBoostRequest):
     )
     result["username"] = username
     result["balance"] = login_result.get("balance")
+
+    import uuid, time as _time
+    asyncio.create_task(save_pick_to_db({
+        "id": str(uuid.uuid4()),
+        "timestamp": _time.time(),
+        "source": "bet365_megaboost",
+        "bookie": "Bet365",
+        "sport": req.sport,
+        "player": req.match_team,
+        "stat": "megaboost",
+        "raw": f"[megaboost] {req.sport} {req.match_team}",
+        "parsed": True,
+        "attempted": True,
+        "placed": result.get("success", False),
+        "stake": req.stake,
+        "odds": result.get("boosted_odds") or result.get("odds", 0),
+        "actual_odds": str(result.get("boosted_odds") or result.get("odds", "")),
+        "username": username,
+        "line": 0,
+        "side": "",
+        "units": 1,
+        "error": result.get("error"),
+    }))
     return result
 
 
@@ -399,6 +422,7 @@ async def place_megaboost_all(req: MegaBoostAllRequest):
     _megaboost_jobs[job_id] = {"status": "running", "result": None}
 
     async def run_job():
+        import uuid, time as _time
         try:
             result = await bet365_megaboost_all(
                 sport=req.sport,
@@ -407,6 +431,28 @@ async def place_megaboost_all(req: MegaBoostAllRequest):
                 boost_index=req.boost_index,
                 accounts=req.accounts,
             )
+            for r in result.get("results", []):
+                await save_pick_to_db({
+                    "id": str(uuid.uuid4()),
+                    "timestamp": _time.time(),
+                    "source": "bet365_megaboost",
+                    "bookie": "Bet365",
+                    "sport": req.sport,
+                    "player": req.match_team,
+                    "stat": "megaboost",
+                    "raw": f"[megaboost] {req.sport} {req.match_team}",
+                    "parsed": True,
+                    "attempted": True,
+                    "placed": r.get("success", False),
+                    "stake": req.stake,
+                    "odds": r.get("boosted_odds") or r.get("odds", 0),
+                    "actual_odds": str(r.get("boosted_odds") or r.get("odds", "")),
+                    "username": r.get("username", ""),
+                    "line": 0,
+                    "side": "",
+                    "units": 1,
+                    "error": r.get("error"),
+                })
             _megaboost_jobs[job_id] = {"status": "done", "result": result}
         except Exception as e:
             _megaboost_jobs[job_id] = {"status": "error", "result": {"error": str(e)}}
@@ -422,6 +468,51 @@ async def megaboost_all_status(job_id: str):
     if not job:
         raise HTTPException(404, "Job not found")
     return job
+
+
+class ManualTrackRequest(BaseModel):
+    username: str
+    sport: str
+    match_team: str
+    stake: float
+    odds: float
+    placed_at: Optional[str] = None  # ISO string, defaults to now
+
+
+@router.post("/megaboost/track")
+async def manual_track_megaboost(bets: list[ManualTrackRequest]):
+    """Manually backfill megaboost placements into bet365_picks + BetOps.
+
+    Accepts a list so you can submit multiple bets (e.g. one per account) in one call.
+    """
+    import uuid, time as _time
+    saved = []
+    for req in bets:
+        import dateutil.parser as _dp
+        ts = _dp.parse(req.placed_at).timestamp() if req.placed_at else _time.time()
+        pick = {
+            "id": str(uuid.uuid4()),
+            "timestamp": ts,
+            "source": "bet365_megaboost",
+            "bookie": "Bet365",
+            "sport": req.sport,
+            "player": req.match_team,
+            "stat": "megaboost",
+            "raw": f"[megaboost-backfill] {req.sport} {req.match_team}",
+            "parsed": True,
+            "attempted": True,
+            "placed": True,
+            "stake": req.stake,
+            "odds": req.odds,
+            "actual_odds": str(req.odds),
+            "username": req.username,
+            "line": 0,
+            "side": "",
+            "units": 1,
+        }
+        await save_pick_to_db(pick)
+        saved.append({"id": pick["id"], "username": req.username})
+    return {"tracked": len(saved), "bets": saved}
 
 
 @router.post("/start-all")

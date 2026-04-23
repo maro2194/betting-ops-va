@@ -38,7 +38,7 @@ BETOPS_TIMEOUT = 10.0
 # Bonus-bet detection is deliberately omitted for this first pass per operator instruction.
 PROMO_SOURCE_TAGS = {
     "racing_promo", "racing_alloc_promo", "sb_promo", "amused_promo",
-    "bet365_megaboost", "tab_promo", "promo",
+    "bet365_megaboost", "tab_promo", "tab_tokens", "promo",
 }
 
 # Default bookmaker for the TAB save_bet path (everything routed through save_bet is TAB).
