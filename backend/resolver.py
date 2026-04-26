@@ -30,6 +30,7 @@ TEAM_ALIASES = {
     "FRE": ["Fremantle", "Fremantle Dockers", "Dockers"],
     "PA": ["Port Adelaide", "Port Adelaide Power", "Power"],
     "WB": ["Western Bulldogs", "Bulldogs", "Footscray"],
+    "WBD": ["Western Bulldogs", "Bulldogs", "Footscray"],
     "ADL": ["Adelaide", "Adelaide Crows", "Crows"],
     "GC": ["Gold Coast", "Gold Coast Suns", "Suns"],
     # NBA
@@ -123,29 +124,65 @@ def _parse_leg_description(desc: str) -> dict:
     """
     Parse leg like 'Billy Frampton 15+ Disposals' into:
     {player: 'Billy Frampton', line: '14.5', market: 'Disposals'}
+
+    Also handles team handicap/spread legs like:
+    'WBD +35.5 Alt Spread' -> {team_line: True, team: 'WBD', line_value: '+35.5', ...}
     """
+    stripped = desc.strip()
+
+    # Team handicap/spread: "WBD +35.5 Alt Spread", "Sydney -5.5 Alt Spread", "Bulldogs +16.5"
+    spread_match = re.match(
+        r'^(.+?)\s+([+-]\d+\.?\d*)\s*(Alt\s+Spread|Alt\s+Line|Spread|Line)?$',
+        stripped, re.IGNORECASE,
+    )
+    if spread_match:
+        team_part = spread_match.group(1).strip()
+        line_val = spread_match.group(2)
+        # Check if team_part is a known team alias or full team name
+        team_upper = team_part.upper()
+        is_team = team_upper in TEAM_ALIASES
+        if not is_team:
+            # Check if it matches any alias value (e.g. "Bulldogs", "Sydney")
+            team_lower = team_part.lower()
+            for abbr, aliases in TEAM_ALIASES.items():
+                if any(a.lower() == team_lower for a in aliases):
+                    is_team = True
+                    team_upper = abbr
+                    break
+        if is_team:
+            return {
+                "team_line": True,
+                "team": team_upper,
+                "team_name": team_part,
+                "line_value": line_val,
+                "player": "",
+                "line": None,
+                "market": None,
+                "raw": stripped,
+            }
+
     # Pattern: "Player Name N+ Market" e.g. "Billy Frampton 15+ Disposals"
-    match = re.match(r'^(.+?)\s+(\d+)\+\s+(.+)$', desc.strip())
+    match = re.match(r'^(.+?)\s+(\d+)\+\s+(.+)$', stripped)
     if match:
         player = match.group(1).strip()
         threshold = int(match.group(2))
         market = match.group(3).strip()
         # TAB uses X.5 lines (e.g. 15+ = Over 14.5)
         line = f"{threshold - 0.5}"
-        return {"player": player, "line": line, "market": market, "raw": desc.strip()}
+        return {"player": player, "line": line, "market": market, "raw": stripped}
 
     # Pattern: "Player Name Over/Under N.5 Market"
-    match = re.match(r'^(.+?)\s+(Over|Under)\s+([\d.]+)\s+(.+)$', desc.strip(), re.IGNORECASE)
+    match = re.match(r'^(.+?)\s+(Over|Under)\s+([\d.]+)\s+(.+)$', stripped, re.IGNORECASE)
     if match:
         return {
             "player": match.group(1).strip(),
             "line": match.group(3),
             "market": match.group(4).strip(),
-            "raw": desc.strip(),
+            "raw": stripped,
         }
 
     # Fallback: just use the whole thing as player name
-    return {"player": desc.strip(), "line": None, "market": None, "raw": desc.strip()}
+    return {"player": stripped, "line": None, "market": None, "raw": stripped}
 
 
 def _normalize(s: str) -> str:
@@ -360,6 +397,55 @@ def _match_proposition(leg: dict, propositions: list) -> Optional[dict]:
     return best
 
 
+def _match_team_line(leg: dict, propositions: list) -> Optional[dict]:
+    """
+    Match a team handicap/spread leg against TAB line/handicap/Pick Your Own Line markets.
+    Leg format: {team_line: True, team: 'WBD', line_value: '+35.5'}
+    """
+    team_abbr = leg.get("team", "")
+    line_val = leg.get("line_value", "")
+    if not team_abbr or not line_val:
+        return None
+
+    aliases = TEAM_ALIASES.get(team_abbr.upper(), [leg.get("team_name", team_abbr)])
+    aliases_lower = [a.lower() for a in aliases]
+
+    line_keywords = ("line", "handicap", "pick your own", "spread")
+
+    best = None
+    best_score = 0
+
+    for prop in propositions:
+        mkt_name = prop.get("marketName", prop.get("market", "")).lower()
+        if not any(k in mkt_name for k in line_keywords):
+            continue
+
+        sel_name = prop.get("selectionName", prop.get("name", ""))
+        sel_lower = sel_name.lower()
+
+        # Check team name match
+        team_matched = any(a in sel_lower for a in aliases_lower)
+        if not team_matched:
+            continue
+
+        # Check line value match ("+35.5" in proposition name)
+        if line_val not in sel_name and line_val not in sel_lower:
+            continue
+
+        score = 10
+        # Prefer "Pick Your Own Line" over generic "Line" markets
+        if "pick your own" in mkt_name:
+            score += 5
+        if "handicap" in mkt_name:
+            score += 2
+
+        if score > best_score:
+            best_score = score
+            best = prop
+
+    return best
+
+
 def resolve_and_price(
     token: str,
     proxy_url: str,
@@ -470,13 +556,16 @@ def resolve_and_price(
 
         for leg_desc in leg_descriptions:
             leg = _parse_leg_description(leg_desc)
-            prop = _match_proposition(leg, all_props)
+            if leg.get("team_line"):
+                prop = _match_team_line(leg, all_props)
+            else:
+                prop = _match_proposition(leg, all_props)
 
             leg_result = {
                 "description": leg["raw"],
-                "player": leg["player"],
+                "player": leg.get("player", leg.get("team_name", "")),
                 "market": leg.get("market"),
-                "line": leg.get("line"),
+                "line": leg.get("line") or leg.get("line_value"),
                 "matched": prop is not None,
             }
 
@@ -525,6 +614,7 @@ def resolve_and_price(
 import time as _time
 
 _sport_props_cache = {}
+_matches_cache = {}
 _CACHE_TTL = 300  # 5 minutes — TAB opens player markets gradually, stale cache causes false failures
 
 
@@ -634,6 +724,7 @@ def _get_all_sport_props(token, proxy_url, sport, competition, force_refresh=Fal
         logger.info(f"Force-refreshing props for {cache_key}")
 
     matches = get_matches(token, proxy_url, sport, competition)
+    _matches_cache[f"{sport}:{competition}"] = {"matches": matches, "ts": now}
     fetch_fn = _fetch_match_regular_props if use_regular else _fetch_match_props
     logger.info(f"Fetching {'regular' if use_regular else 'SGM'} props for {len(matches)} {competition} matches in parallel...")
 
@@ -685,8 +776,14 @@ def resolve_csb_bet(
         leg_descriptions = [l.strip() for l in bet_description.split("/")]
 
         if bet_type.upper() == "SGM" and game_id:
-            # SGM: resolve within a single match
-            matches = get_matches(token, proxy_url, sport, competition)
+            # SGM: resolve within a single match (use cached matches if available)
+            mcache_key = f"{sport}:{competition}"
+            mcached = _matches_cache.get(mcache_key)
+            if mcached and _time.time() - mcached["ts"] < _CACHE_TTL:
+                matches = mcached["matches"]
+            else:
+                matches = get_matches(token, proxy_url, sport, competition)
+                _matches_cache[mcache_key] = {"matches": matches, "ts": _time.time()}
             match = _find_match(matches, game_id)
             if not match:
                 result["error"] = f"Match not found: {game_id}"
@@ -708,7 +805,10 @@ def resolve_csb_bet(
         failed_leg = None
         for leg_desc in leg_descriptions:
             leg = _parse_leg_description(leg_desc)
-            prop = _match_proposition(leg, all_props)
+            if leg.get("team_line"):
+                prop = _match_team_line(leg, all_props)
+            else:
+                prop = _match_proposition(leg, all_props)
             if prop:
                 odds_val = prop.get("returnWin", 0)
                 resolved_props.append({
@@ -735,7 +835,10 @@ def resolve_csb_bet(
                     failed_leg = None
                     for leg_desc in leg_descriptions:
                         leg = _parse_leg_description(leg_desc)
-                        prop = _match_proposition(leg, all_props)
+                        if leg.get("team_line"):
+                            prop = _match_team_line(leg, all_props)
+                        else:
+                            prop = _match_proposition(leg, all_props)
                         if prop:
                             odds_val = prop.get("returnWin", 0)
                             resolved_props.append({

@@ -90,10 +90,23 @@ async def init_db():
             END $$;
         """)
         await conn.execute("""
+            DO $$ BEGIN
+                ALTER TABLE bets ADD COLUMN IF NOT EXISTS match_name TEXT;
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
+        """)
+        await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_bets_username ON bets(username)
         """)
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status)
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS tab_token_groups (
+                username TEXT PRIMARY KEY,
+                groups JSONB NOT NULL DEFAULT '{}'
+            )
         """)
 
     logger.info("Database initialized")
@@ -186,6 +199,7 @@ async def load_all_tab_sessions() -> dict:
                 "proxy_url": r["proxy_url"],
                 "profile_dir": "",
                 "logged_in_at": r["logged_in_at"],
+                "token_exp": r["token_exp"],
             }
         return result
 
@@ -307,8 +321,8 @@ async def save_bet(username: str, bet: dict) -> str:
     async with pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO bets (id, username, account_number, account_label, tsn, bet_type,
-                   legs, combined_odds, stake, status, payout, raw_response, source)
-               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12::jsonb, $13)""",
+                   legs, combined_odds, stake, status, payout, raw_response, source, match_name)
+               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12::jsonb, $13, $14)""",
             bet_id,
             username,
             bet["account_number"],
@@ -322,6 +336,7 @@ async def save_bet(username: str, bet: dict) -> str:
             bet.get("payout"),
             json.dumps(bet.get("raw_response")) if bet.get("raw_response") else None,
             bet.get("source"),
+            bet.get("match_name"),
         )
 
     # Emit to BetOps tracker. Wrapped in its own try/except so any import or
@@ -465,3 +480,28 @@ async def get_pending_bets(username: str = None) -> list[dict]:
             bet["legs"] = json.loads(bet["legs"])
         bets.append(bet)
     return bets
+
+
+# ─── Tab Token Groups ──────────────────────────────────────────────────────
+
+async def save_tab_groups(username: str, groups: dict):
+    import json
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO tab_token_groups (username, groups)
+               VALUES ($1, $2::jsonb)
+               ON CONFLICT (username) DO UPDATE SET groups = EXCLUDED.groups""",
+            username, json.dumps(groups),
+        )
+
+
+async def load_tab_groups(username: str) -> dict:
+    import json
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT groups FROM tab_token_groups WHERE username = $1", username,
+        )
+        if row and row["groups"]:
+            g = row["groups"]
+            return json.loads(g) if isinstance(g, str) else dict(g)
+        return {}

@@ -285,7 +285,11 @@ export default function Megaboost() {
       }
 
       timers.forEach(clearTimeout);
-      addStep(`Done! ${data.succeeded}/${data.total} placed successfully.`);
+      if (data.log) {
+        data.log.forEach(line => addStep(line));
+      } else {
+        addStep(`Done! ${data.succeeded}/${data.total} placed successfully.`);
+      }
       setResults(data);
     } catch (e) {
       timers.forEach(clearTimeout);

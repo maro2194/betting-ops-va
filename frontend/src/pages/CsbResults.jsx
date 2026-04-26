@@ -456,16 +456,42 @@ export default function CsbResults() {
   };
   const extractGames = (bet) => {
     const games = new Set();
-    const gid = bet.game_id || bet.gameId || '';
-    if (gid) {
-      const m = gid.match(/([A-Z][A-Za-z]{1,3})[_-]([A-Z][A-Za-z]{1,3})/);
-      if (m) games.add(canonGame(m[1], m[2]));
+    // 1. match_name from DB (most reliable — set at save time)
+    const mn = bet.match_name || bet.match || bet.event_name || bet.event || '';
+    if (mn) {
+      const vs = mn.match(/^(.+?)\s+(?:v|vs)\s+(.+?)$/i);
+      if (vs) {
+        games.add(canonGame(vs[1].trim(), vs[2].trim()));
+      } else {
+        const code = mn.match(/([A-Z][A-Za-z]{1,3})[_-]([A-Z][A-Za-z]{1,3})/);
+        if (code) games.add(canonGame(code[1], code[2]));
+      }
     }
-    const legs = bet.legs || [];
-    for (const leg of legs) {
-      const name = (typeof leg === 'string' ? leg : (leg && leg.name)) || '';
-      const m = name.match(/\b([A-Z][A-Za-z]{1,3})-([A-Z][A-Za-z]{1,3})\b/);
-      if (m) games.add(canonGame(m[1], m[2]));
+    // 2. game_id field (formats like "20260420_PHX_OKC")
+    if (games.size === 0) {
+      const gid = bet.game_id || bet.gameId || '';
+      if (gid) {
+        const m = gid.match(/([A-Z][A-Za-z]{1,3})[_-]([A-Z][A-Za-z]{1,3})/);
+        if (m) games.add(canonGame(m[1], m[2]));
+      }
+    }
+    // 3. Leg name patterns "XXX-YYY" (e.g. "NBA Por-SAS 10+Pts ...")
+    if (games.size === 0) {
+      for (const leg of (bet.legs || [])) {
+        const name = (typeof leg === 'string' ? leg : (leg && leg.name)) || '';
+        const m = name.match(/\b([A-Z][A-Za-z]{1,3})-([A-Z][A-Za-z]{1,3})\b/);
+        if (m) { games.add(canonGame(m[1], m[2])); break; }
+      }
+    }
+    // 4. Fallback: extract team codes from parens (POR), (SAS) and store for cross-matching
+    if (games.size === 0) {
+      const codes = new Set();
+      for (const leg of (bet.legs || [])) {
+        const name = (typeof leg === 'string' ? leg : (leg && leg.name)) || '';
+        const m = name.match(/\(([A-Z]{2,4})\)/);
+        if (m) codes.add(m[1].toUpperCase());
+      }
+      if (codes.size > 0) bet._teamCodes = [...codes];
     }
     return [...games];
   };
@@ -478,7 +504,12 @@ export default function CsbResults() {
     if (accountFilter !== 'All' && b.account_label !== accountFilter) return false;
     if (gameFilter !== 'All') {
       const games = extractGames(b);
-      if (!games.includes(gameFilter)) return false;
+      if (!games.includes(gameFilter)) {
+        // Cross-match: if bet has team codes from parens, check if any appear in the selected game label
+        const codes = b._teamCodes || [];
+        const filterUpper = gameFilter.toUpperCase();
+        if (!codes.some(c => filterUpper.includes(c))) return false;
+      }
     }
     return true;
   });

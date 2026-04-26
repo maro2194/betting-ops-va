@@ -25,6 +25,17 @@ BETSLIP_URL = "https://webapi.tab.com.au/v1/tab-betting-service/accounts/{accoun
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 
+# Module-level cache for SGM market data — shared across all calls within the same worker process.
+# Key: "{match_name}:{sport}:{competition}", Value: (timestamp, markets_list)
+_markets_cache: dict[str, tuple[float, list]] = {}
+MARKETS_CACHE_MAX = 100
+MARKETS_CACHE_TTL = 60  # seconds
+
+
+def clear_markets_cache() -> None:
+    """Clear the SGM markets cache. Call between batch runs to force fresh fetches."""
+    _markets_cache.clear()
+
 
 def _bearer_headers(token: str) -> dict:
     return {
@@ -157,7 +168,21 @@ def find_match(matches: list[dict], match_name: str) -> dict | None:
 
 
 def get_sgm_markets(token: str, match: dict, sport: str, competition: str, proxy_url: str | None = None) -> list[dict]:
-    """Get all markets for a match. Uses public _links.markets endpoint (no auth needed)."""
+    """Get all markets for a match. Uses public _links.markets endpoint (no auth needed).
+    Results are cached for MARKETS_CACHE_TTL seconds to avoid redundant fetches per batch."""
+    match_name = match.get("name", "?")
+    cache_key = f"{match_name}:{sport}:{competition}"
+    now = time.time()
+
+    if cache_key in _markets_cache:
+        cached_time, cached_markets = _markets_cache[cache_key]
+        if now - cached_time < MARKETS_CACHE_TTL:
+            logger.debug("Cache hit for markets: %s (%d markets)", match_name, len(cached_markets))
+            return cached_markets
+
+    if len(_markets_cache) >= MARKETS_CACHE_MAX:
+        _markets_cache.clear()
+
     s = _make_session(proxy_url)
     try:
         # Primary: use match _links.markets (public, reliable)
@@ -166,7 +191,8 @@ def get_sgm_markets(token: str, match: dict, sport: str, competition: str, proxy
             resp = _request_with_retry(s.get, markets_url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=15, params={"jurisdiction": "QLD"})
             if resp.status_code == 200:
                 markets = resp.json().get("markets", [])
-                logger.info("Got %d markets for %s", len(markets), match.get("name", "?"))
+                logger.info("Got %d markets for %s", len(markets), match_name)
+                _markets_cache[cache_key] = (now, markets)
                 return markets
 
         # Fallback: bff-sports SGM endpoint
@@ -175,9 +201,12 @@ def get_sgm_markets(token: str, match: dict, sport: str, competition: str, proxy
         resp = _request_with_retry(s.get, url, headers=_bearer_headers(token), timeout=15)
         if resp.status_code == 200:
             data = resp.json()
-            return data.get("markets", data.get("categories", []))
+            markets = data.get("markets", data.get("categories", []))
+            logger.info("Got %d markets for %s (fallback)", len(markets), match_name)
+            _markets_cache[cache_key] = (now, markets)
+            return markets
 
-        logger.warning("get_sgm_markets failed for %s: %d", match.get("name"), resp.status_code)
+        logger.warning("get_sgm_markets failed for %s: %d", match_name, resp.status_code)
         return []
     except Exception as e:
         logger.error("get_sgm_markets error: %s", e)
@@ -378,16 +407,30 @@ def resolve_proposition(leg_desc: str, markets: list, match: dict, tryscorer_tea
                 if last_name in prop_clean:
                     return {"proposition_id": int(prop.get("id", prop.get("numberId"))), "name": prop.get("name", ""), "odds": float(prop.get("returnWin", 0)), "market": market.get("betOption", ""), "status": prop.get("bettingStatus", "Unknown"), "leg_description": leg_desc}
 
-    # Line: "Bulldogs +16.5"
-    line_match = re.match(r'^(.+?)\s*([+-]\d+\.?\d*)$', leg_desc.strip())
+    # Line: "Bulldogs +16.5", "Nth Qld +13.5 1st Half Pick Your Own Line"
+    # Strip descriptive suffixes so the regex can find the line value, then
+    # gate markets by 1st-half when the original desc said so.
+    is_line_first_half = "1st half" in desc_lower or "first half" in desc_lower
+    line_clean = desc_lower
+    for suffix in ("1st half pick your own line", "first half pick your own line",
+                   "pick your own line", "1st half", "first half", "pyol"):
+        line_clean = line_clean.replace(suffix, "")
+    line_clean = " ".join(line_clean.split()).strip()
+    line_match = re.match(r'^(.+?)\s*([+-]\d+\.?\d*)$', line_clean)
     if line_match:
-        team, line_val = line_match.group(1).strip().lower(), line_match.group(2)
+        team, line_val = line_match.group(1).strip(), line_match.group(2)
         for market in markets:
-            if any(k in market.get("betOption", "").lower() for k in ("line", "handicap", "pick your own")):
-                for prop in market.get("propositions", []):
-                    pn = prop.get("name", "").lower()
-                    if team in pn and line_val in pn:
-                        return {"proposition_id": int(prop.get("id", prop.get("numberId"))), "name": prop.get("name", ""), "odds": float(prop.get("returnWin", 0)), "market": market.get("betOption", ""), "status": prop.get("bettingStatus", "Unknown"), "leg_description": leg_desc}
+            bo = market.get("betOption", "").lower()
+            if not any(k in bo for k in ("line", "handicap", "pick your own")):
+                continue
+            if is_line_first_half and "1st half" not in bo and "first half" not in bo:
+                continue
+            if not is_line_first_half and ("1st half" in bo or "first half" in bo):
+                continue
+            for prop in market.get("propositions", []):
+                pn = prop.get("name", "").lower()
+                if team in pn and line_val in pn:
+                    return {"proposition_id": int(prop.get("id", prop.get("numberId"))), "name": prop.get("name", ""), "odds": float(prop.get("returnWin", 0)), "market": market.get("betOption", ""), "status": prop.get("bettingStatus", "Unknown"), "leg_description": leg_desc}
 
     # Total: "Under 54.5", "Over 40.5 Pick Your Own Total", "Over 18.5 1st Half Pick Your Own Total"
     total_match = re.match(r'^(under|over)\s+(\d+\.?\d*)', desc_lower)
@@ -571,8 +614,9 @@ def parse_bets_csv(csv_content: str) -> list[dict]:
     Returns list of {group, match, legs, sport, competition}.
     """
     lines = csv_content.strip().split("\n")
-    # Auto-add header if first line looks like data (starts with a group letter, not a column name)
-    if lines and not any(h in lines[0].lower() for h in ["account", "group", "match", "tryscorer", "leg1"]):
+    # Auto-add header if first line looks like data (check first column, not whole line)
+    first_col = lines[0].split(",")[0].strip().lower() if lines else ""
+    if lines and first_col not in ("account", "group", "match", "tryscorer", "leg1"):
         # Detect format: if 8 columns assume tryscorer format, else explicit legs
         cols = lines[0].split(",")
         if len(cols) >= 8:

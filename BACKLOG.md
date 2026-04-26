@@ -1,12 +1,25 @@
 # BotOps Backlog
 
-Last updated: 2026-04-18
+Last updated: 2026-04-25
 
 ## Legend
 - 🔴 **CRITICAL** — blocking production use
 - 🟠 **HIGH** — significant value, do soon
 - 🟡 **MEDIUM** — nice to have, do when time allows
 - 🟢 **LOW** — polish / future
+
+---
+
+## 📋 TODAY BACKLOG (2026-04-25) — Backend Performance
+
+| # | Fix | Effort | Impact |
+|---|-----|--------|--------|
+| ✅ | ~~Wrap sync `betting.py` calls with `asyncio.to_thread()` in `main.py` (40+ blocking calls)~~ | Done | **Massive** — unblocks all concurrency, stops one user blocking another |
+| ✅ | ~~Cache match markets per execution batch in `tab_tokens.py` (fetching same 126 markets 11x per match)~~ | Done | 10x fewer TAB API calls per SGM Saver run |
+| ✅ | ~~Bump uvicorn workers from 2 → 4 (8 cores available)~~ | Done | Quick win for parallelism |
+| ✅ | ~~Cache JWT `exp` in session dict (avoid re-decoding on every `_get_session()` call)~~ | Done | Eliminates redundant JWT decode per request |
+| ✅ | ~~Connection pooling for `curl_cffi` sessions (new TLS handshake on every call)~~ | Done | Saves ~200ms per TAB API call |
+| ✅ | ~~DB-backed job storage for scan-boosts/megaboost-all~~ | Done | Fixed "Job not found" across workers |
 
 ---
 

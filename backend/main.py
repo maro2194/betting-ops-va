@@ -28,6 +28,7 @@ from database import (
     init_db, close_db, get_accounts, upsert_account, delete_account, sync_accounts,
     save_app_session, get_app_session, delete_app_session, load_all_app_sessions,
     save_tab_session, load_all_tab_sessions, delete_tab_session,
+    save_tab_groups, load_tab_groups,
     save_bet, get_bets, update_bet_status, get_pending_bets, get_all_tsns,
 )
 
@@ -37,6 +38,7 @@ from models import (
     PlaceBetRequest, PlaceMultiRequest, PlaceBetResponse,
     BetHistoryResponse, SGMMarketResponse,
 )
+from bet365_routes import _save_job, _get_job
 
 # Load .env — try same directory first, then parent
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
@@ -65,8 +67,16 @@ async def startup():
     from multi_database import init_multi_db
     await init_multi_db()
     # Init bet365 tables
-    from bet365_routes import init_bet365_tables, save_pick_to_db
+    from bet365_routes import init_bet365_tables, save_pick_to_db, _save_job, _get_job
     await init_bet365_tables()
+    # Prune old background jobs (>7 days)
+    try:
+        async with database.pool.acquire() as conn:
+            pruned = await conn.execute("DELETE FROM bg_jobs WHERE created_at < NOW() - INTERVAL '7 days'")
+            if "DELETE 0" not in pruned:
+                logger.info("Pruned old bg_jobs: %s", pruned)
+    except Exception:
+        pass
     # Init BetOps outbox table + start the background retry loop. save_bet fires
     # emit_to_betops on every confirmed placement; anything that fails to reach
     # www.betops.sh falls into betops_outbox and this loop flushes it.
@@ -129,6 +139,7 @@ APP_USERS = {
     "diji": {"password_hash": "0489c36a7155b8b671acbab078697dd365e1da635343fa63fee1415b7af516e8", "name": "Diji"},
     "shadow": {"password_hash": "224e690ddf7786edfd76b8cc372fffad88be3c5694268e1e439fa9740080bd18", "name": "Shadow"},
     "smd": {"password_hash": "758dcca888a1f019019cde2f3f127107590de40e344a1b2dd0dc566baad9d009", "name": "SMD"},
+    "shadowxmaro": {"password_hash": "224e690ddf7786edfd76b8cc372fffad88be3c5694268e1e439fa9740080bd18", "name": "ShadowXMaro"},
 }
 
 # Active app auth tokens: token -> {username, name, created_at}
@@ -199,16 +210,32 @@ login_locks: dict[str, asyncio.Lock] = {}
 PROFILE_BASE_DIR = os.path.join(os.path.dirname(__file__), "profiles")
 
 
-def _get_session(session_id: str) -> dict:
-    """Get session or raise 401."""
+async def _get_session_async(session_id: str) -> dict:
+    """Get session from memory or DB fallback (multi-worker safe)."""
     if session_id not in sessions:
-        raise HTTPException(status_code=401, detail="Invalid session. Please login again.")
+        from database import load_all_tab_sessions
+        db_sessions = await load_all_tab_sessions()
+        if session_id in db_sessions:
+            sessions[session_id] = db_sessions[session_id]
+            claims = decode_token_claims(db_sessions[session_id].get("token", ""))
+            sessions[session_id]["token_exp"] = claims.get("exp", 0)
+        else:
+            raise HTTPException(status_code=404, detail="Invalid session. Please login again.")
     s = sessions[session_id]
-    # Check token expiry
-    claims = decode_token_claims(s["token"])
-    exp = claims.get("exp", 0)
-    if exp and time.time() > exp - 300:  # 5 min buffer
-        raise HTTPException(status_code=401, detail="Token expired. Please login again.")
+    exp = s.get("token_exp", 0)
+    if exp and time.time() > exp - 300:
+        raise HTTPException(status_code=404, detail="Token expired. Please login again.")
+    return s
+
+
+def _get_session(session_id: str) -> dict:
+    """Get session or raise 401 (sync version, no DB fallback)."""
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Invalid session. Please login again.")
+    s = sessions[session_id]
+    exp = s.get("token_exp", 0)
+    if exp and time.time() > exp - 300:
+        raise HTTPException(status_code=404, detail="Token expired. Please login again.")
     return s
 
 
@@ -235,10 +262,10 @@ async def api_login(req: LoginRequest, _user: dict = Depends(_verify_app_token))
             if s["email"] == email:
                 claims = decode_token_claims(s["token"])
                 exp = claims.get("exp", 0)
-                if exp and time.time() < exp - 600:  # Still valid for >10 min
+                if exp and time.time() < exp - 600 and s.get("legacy_token"):  # Still valid for >10 min and has legacy token
                     logger.info(f"Reusing existing session for {email}")
                     try:
-                        bal = get_balance(s["token"], s["customer_id"], s["proxy_url"])
+                        bal = await asyncio.to_thread(get_balance, s["token"], s["customer_id"], s["proxy_url"])
                         return LoginResponse(
                             session_id=sid,
                             account_number=s["account_number"],
@@ -264,7 +291,7 @@ async def api_login(req: LoginRequest, _user: dict = Depends(_verify_app_token))
         # Resolve real account number and balance via account-list endpoint
         customer_id = result["customer_id"]
         try:
-            acct_info = get_account_info(result["token"], customer_id, proxy_url)
+            acct_info = await asyncio.to_thread(get_account_info, result["token"], customer_id, proxy_url)
             real_account_number = acct_info["account_number"]
             balance_str = acct_info["account_balance"]
             logger.info(f"Resolved account: customer_id={customer_id} → account_number={real_account_number}, balance={balance_str}")
@@ -273,15 +300,21 @@ async def api_login(req: LoginRequest, _user: dict = Depends(_verify_app_token))
             real_account_number = req.account_number or customer_id
             balance_str = "N/A"
 
-        # Get legacy TabcorpAuth token for betting + history
+        # Get legacy TabcorpAuth token for betting + history (retry once on failure)
         account_number = req.account_number or real_account_number
         legacy_token = ""
-        try:
-            legacy_result = legacy_authenticate(account_number, password, proxy_url)
-            legacy_token = legacy_result["legacy_token"]
-            logger.info(f"Legacy auth successful for account {account_number}")
-        except Exception as e:
-            logger.warning(f"Legacy auth failed (betting/history will not work): {e}")
+        for _attempt in range(2):
+            try:
+                legacy_result = await asyncio.to_thread(legacy_authenticate, account_number, password, proxy_url)
+                legacy_token = legacy_result["legacy_token"]
+                logger.info(f"Legacy auth successful for account {account_number}")
+                break
+            except Exception as e:
+                if _attempt == 0:
+                    logger.warning(f"Legacy auth attempt 1 failed, retrying: {e}")
+                    await asyncio.sleep(1)
+                else:
+                    logger.warning(f"Legacy auth failed after retry (betting/history will not work): {e}")
 
         # Create session
         session_id = str(uuid.uuid4())
@@ -331,9 +364,9 @@ async def api_login(req: LoginRequest, _user: dict = Depends(_verify_app_token))
 @app.get("/api/balance")
 async def api_balance(session_id: str, _user: dict = Depends(_verify_app_token)) -> BalanceResponse:
     """Get current account balance."""
-    s = _get_session(session_id)
+    s = await _get_session_async(session_id)
     try:
-        bal = get_balance(s["token"], s["customer_id"], s["proxy_url"])
+        bal = await asyncio.to_thread(get_balance, s["token"], s["customer_id"], s["proxy_url"])
         return BalanceResponse(
             account_balance=bal["account_balance"],
             withdrawal_balance=bal["withdrawal_balance"],
@@ -347,9 +380,9 @@ async def api_balance(session_id: str, _user: dict = Depends(_verify_app_token))
 @app.get("/api/matches")
 async def api_matches(session_id: str, sport: str = "AFL Football", competition: str = "AFL", _user: dict = Depends(_verify_app_token)):
     """Get upcoming matches."""
-    s = _get_session(session_id)
+    s = await _get_session_async(session_id)
     try:
-        matches = get_matches(s["token"], s["proxy_url"], sport, competition)
+        matches = await asyncio.to_thread(get_matches, s["token"], s["proxy_url"], sport, competition)
         return {"matches": matches}
     except Exception as e:
         raise HTTPException(500, f"Failed to fetch matches: {str(e)}")
@@ -361,9 +394,9 @@ async def api_matches(session_id: str, sport: str = "AFL Football", competition:
 async def api_sgm_markets(match_id: str, session_id: str,
                           sport: str = "AFL Football", competition: str = "AFL", _user: dict = Depends(_verify_app_token)):
     """Get SGM propositions for a match. Falls back to regular markets if SGM is empty."""
-    s = _get_session(session_id)
+    s = await _get_session_async(session_id)
     try:
-        data = get_sgm_propositions(s["token"], match_id, s["proxy_url"], sport, competition)
+        data = await asyncio.to_thread(get_sgm_propositions, s["token"], match_id, s["proxy_url"], sport, competition)
         # Check if SGM has actual propositions
         has_sgm = False
         if data.get("data"):
@@ -379,7 +412,7 @@ async def api_sgm_markets(match_id: str, session_id: str,
 
         # SGM empty — fetch regular match markets and convert to same format
         logger.info(f"SGM empty for {match_id}, falling back to regular markets")
-        match_data = get_match_markets(s["token"], match_id, s["proxy_url"], sport, competition)
+        match_data = await asyncio.to_thread(get_match_markets, s["token"], match_id, s["proxy_url"], sport, competition)
         regular_markets = match_data.get("markets", [])
         if not regular_markets:
             return data  # Return empty SGM response
@@ -420,10 +453,10 @@ async def api_sgm_markets(match_id: str, session_id: str,
 @app.post("/api/price-check")
 async def api_price_check(req: PriceCheckRequest, _user: dict = Depends(_verify_app_token)) -> PriceCheckResponse:
     """Get combined odds for a set of propositions."""
-    s = _get_session(req.session_id)
+    s = await _get_session_async(req.session_id)
     props = [{"propositionId": p.proposition_id, "odds": p.odds} for p in req.propositions]
     try:
-        result = price_check(s["token"], props, req.stake, req.bet_type, s["proxy_url"])
+        result = await asyncio.to_thread(lambda: price_check(s["token"], props, req.stake, req.bet_type, s["proxy_url"]))
         return PriceCheckResponse(
             combined_odds=result.get("combined_odds", "0"),
             propositions=props,
@@ -437,14 +470,16 @@ async def api_price_check(req: PriceCheckRequest, _user: dict = Depends(_verify_
 @app.post("/api/place-sgm", response_model=PlaceBetResponse)
 async def api_place_sgm(req: PlaceBetRequest, _user: dict = Depends(_verify_app_token)):
     """Place an SGM bet."""
-    s = _get_session(req.session_id)
+    s = await _get_session_async(req.session_id)
     if not s.get("legacy_token"):
         raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
     props = [{"propositionId": p.proposition_id, "odds": p.odds} for p in req.propositions]
     try:
-        result = place_sgm_bet(
-            s["legacy_token"], s["account_number"], props,
-            req.combined_odds, req.stake, s["proxy_url"],
+        result = await asyncio.to_thread(
+            lambda: place_sgm_bet(
+                s["legacy_token"], s["account_number"], props,
+                req.combined_odds, req.stake, s["proxy_url"],
+            )
         )
         # Save to our DB if successful
         if result.get("success"):
@@ -466,7 +501,7 @@ async def api_place_sgm(req: PlaceBetRequest, _user: dict = Depends(_verify_app_
                 try:
                     import time as _time
                     _time.sleep(1)  # Give TAB a moment to register the bet
-                    tab_history = get_my_bets(s["legacy_token"], s["account_number"], s["proxy_url"], count=5)
+                    tab_history = await asyncio.to_thread(get_my_bets, s["legacy_token"], s["account_number"], s["proxy_url"], 5)
                     for tb in tab_history.get("bets", []):
                         if tb.get("tsn") == tsn:
                             tab_legs = tb.get("legs", [])
@@ -498,12 +533,14 @@ async def api_place_sgm(req: PlaceBetRequest, _user: dict = Depends(_verify_app_
 @app.post("/api/place-multi", response_model=PlaceBetResponse)
 async def api_place_multi(req: PlaceMultiRequest, _user: dict = Depends(_verify_app_token)):
     """Place a cross-game multi bet."""
-    s = _get_session(req.session_id)
+    s = await _get_session_async(req.session_id)
     if not s.get("legacy_token"):
         raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
     try:
-        result = place_multi_bet(
-            s["legacy_token"], s["account_number"], req.legs, req.stake, s["proxy_url"],
+        result = await asyncio.to_thread(
+            lambda: place_multi_bet(
+                s["legacy_token"], s["account_number"], req.legs, req.stake, s["proxy_url"],
+            )
         )
         if result.get("success"):
             acct_label = s.get("email", "")
@@ -531,7 +568,7 @@ async def api_place_multi(req: PlaceMultiRequest, _user: dict = Depends(_verify_
                 try:
                     import time as _time
                     _time.sleep(1)  # Give TAB a moment to register the bet
-                    tab_history = get_my_bets(s["legacy_token"], s["account_number"], s["proxy_url"], count=5)
+                    tab_history = await asyncio.to_thread(get_my_bets, s["legacy_token"], s["account_number"], s["proxy_url"], 5)
                     for tb in tab_history.get("bets", []):
                         if tb.get("tsn") == tsn:
                             tab_legs = tb.get("legs", [])
@@ -789,9 +826,11 @@ async def api_check_results(session_id: str = None, _user: dict = Depends(_verif
         # Fetch TAB bets for this account — paginate up to 5 pages (500 bets) to find older ones
         tab_by_tsn = {}
         try:
-            tab_bets = get_my_bets(
-                session_found["legacy_token"], acct_num,
-                session_found["proxy_url"], count=100, status="ALL", max_pages=5
+            tab_bets = await asyncio.to_thread(
+                lambda: get_my_bets(
+                    session_found["legacy_token"], acct_num,
+                    session_found["proxy_url"], count=100, status="ALL", max_pages=5
+                )
             )
             for tb in tab_bets.get("bets", []):
                 if tb.get("tsn"):
@@ -803,10 +842,12 @@ async def api_check_results(session_id: str = None, _user: dict = Depends(_verif
             if "401" in error_msg and session_found.get("password") and session_found.get("account_number"):
                 try:
                     logger.info(f"Legacy token expired for {acct_num}, re-authenticating...")
-                    legacy_result = legacy_authenticate(
-                        session_found["account_number"],
-                        session_found["password"],
-                        session_found.get("proxy_url"),
+                    legacy_result = await asyncio.to_thread(
+                        lambda: legacy_authenticate(
+                            session_found["account_number"],
+                            session_found["password"],
+                            session_found.get("proxy_url"),
+                        )
                     )
                     new_token = legacy_result.get("legacy_token", "")
                     if new_token:
@@ -815,9 +856,11 @@ async def api_check_results(session_id: str = None, _user: dict = Depends(_verif
                             sessions[session_sid]["legacy_token"] = new_token
                         logger.info(f"Re-authenticated legacy token for {acct_num}")
                         # Retry the fetch
-                        tab_bets = get_my_bets(
-                            new_token, acct_num,
-                            session_found["proxy_url"], count=100, status="ALL", max_pages=5
+                        tab_bets = await asyncio.to_thread(
+                            lambda: get_my_bets(
+                                new_token, acct_num,
+                                session_found["proxy_url"], count=100, status="ALL", max_pages=5
+                            )
                         )
                         for tb in tab_bets.get("bets", []):
                             if tb.get("tsn"):
@@ -1045,7 +1088,7 @@ async def api_active_sessions(_user: dict = Depends(_verify_app_token)):
 @app.get("/api/session")
 async def api_session(session_id: str, _user: dict = Depends(_verify_app_token)):
     """Get current session info (no sensitive data)."""
-    s = _get_session(session_id)
+    s = await _get_session_async(session_id)
     claims = decode_token_claims(s["token"])
     exp = claims.get("exp", 0)
     return {
@@ -1089,7 +1132,7 @@ class QuickBetRequest(_BM):
 @app.post("/api/quick-resolve")
 async def api_quick_resolve(req: QuickBetRequest, _user: dict = Depends(_verify_app_token)):
     """Resolve CSV bet rows to TAB propositions and price check."""
-    s = _get_session(req.session_id)
+    s = await _get_session_async(req.session_id)
     results = []
 
     for row in req.bets:
@@ -1123,7 +1166,6 @@ class EngineRunRequest(_BaseModel):
 
 
 # In-memory job store for async engine runs
-_engine_jobs: dict[str, dict] = {}
 
 
 @app.post("/api/csb/execute-engine")
@@ -1151,7 +1193,7 @@ async def api_csb_execute_engine(req: EngineRunRequest, _user: dict = Depends(_v
         raise HTTPException(400, f"No matching accounts found. Sent: {req.account_ids}. Available: {[a.get('account_number') or a.get('label') for a in user_accounts]}")
 
     job_id = str(uuid.uuid4())[:8]
-    _engine_jobs[job_id] = {"status": "running", "result": None}
+    await _save_job(job_id, "csb_engine", "running")
 
     logger.info("Engine job %s: %d bets, %d accounts, sport=%s, unit=$%.0f",
                 job_id, len(req.bets), len(account_infos), req.sport, req.unit_size)
@@ -1174,9 +1216,7 @@ async def api_csb_execute_engine(req: EngineRunRequest, _user: dict = Depends(_v
             skipped = sum(1 for e in all_entries if e.get("result") is None or (e.get("result") and getattr(e["result"], "skipped", False)))
             total_staked = sum(e["result"].confirmed_amount for e in all_entries if e.get("result") and e["result"].success)
 
-            _engine_jobs[job_id] = {
-                "status": "done",
-                "result": {
+            await _save_job(job_id, "csb_engine", "done", {
                     "placed": placed,
                     "failed": failed,
                     "skipped": skipped,
@@ -1198,11 +1238,10 @@ async def api_csb_execute_engine(req: EngineRunRequest, _user: dict = Depends(_v
                         }
                         for e in all_entries
                     ],
-                },
-            }
+            })
         except Exception as e:
             logger.error("Engine job %s error: %s", job_id, e, exc_info=True)
-            _engine_jobs[job_id] = {"status": "error", "result": {"error": str(e)}}
+            await _save_job(job_id, "csb_engine", "error", {"error": str(e)})
 
     asyncio.create_task(_run())
     return {"job_id": job_id, "status": "running"}
@@ -1211,7 +1250,7 @@ async def api_csb_execute_engine(req: EngineRunRequest, _user: dict = Depends(_v
 @app.get("/api/csb/engine-status/{job_id}")
 async def api_csb_engine_status(job_id: str, _user: dict = Depends(_verify_app_token)):
     """Poll engine job status."""
-    job = _engine_jobs.get(job_id)
+    job = await _get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
     return job
@@ -1313,7 +1352,7 @@ async def api_quick_place(req: QuickBetRequest, _user: dict = Depends(_verify_ap
     """Resolve, validate, and place all qualifying bets with human-like delays."""
     import random as _random
 
-    s = _get_session(req.session_id)
+    s = await _get_session_async(req.session_id)
     results = []
 
     for i, row in enumerate(req.bets):
@@ -1352,13 +1391,15 @@ async def api_quick_place(req: QuickBetRequest, _user: dict = Depends(_verify_ap
         # Place if resolved and meets minimum
         if resolved["resolved"] and resolved["meets_minimum"] and resolved["combined_odds"]:
             try:
-                place_result = place_sgm_bet(
-                    legacy_token=s["legacy_token"],
-                    account_number=s["account_number"],
-                    propositions=resolved["propositions"],
-                    combined_odds=resolved["combined_odds"],
-                    stake=stake,
-                    proxy_url=s["proxy_url"],
+                place_result = await asyncio.to_thread(
+                    lambda: place_sgm_bet(
+                        legacy_token=s["legacy_token"],
+                        account_number=s["account_number"],
+                        propositions=resolved["propositions"],
+                        combined_odds=resolved["combined_odds"],
+                        stake=stake,
+                        proxy_url=s["proxy_url"],
+                    )
                 )
                 resolved["placed"] = place_result.get("success", False)
                 resolved["ticket_number"] = place_result.get("ticket_number")
@@ -1386,6 +1427,7 @@ async def api_quick_place(req: QuickBetRequest, _user: dict = Depends(_verify_ap
                         "status": "Pending",
                         "raw_response": place_result.get("details"),
                         "source": "csb",
+                        "match_name": row.game_id,
                     })
             except Exception as e:
                 resolved["placed"] = False
@@ -1426,7 +1468,7 @@ class CsbWarmupRequest(_BM):
 async def api_csb_warmup(req: CsbWarmupRequest, _user: dict = Depends(_verify_app_token)):
     """Pre-fetch all SGM propositions for given sports so resolution is instant."""
     import time as _t
-    s = _get_session(req.session_id)
+    s = await _get_session_async(req.session_id)
     results = []
     for sp in req.sports:
         sport = sp.get("sport", "AFL Football")
@@ -1458,7 +1500,7 @@ async def api_csb_warmup(req: CsbWarmupRequest, _user: dict = Depends(_verify_ap
 async def api_csb_props(session_id: str, sport: str = "AFL Football", competition: str = "AFL",
                         _user: dict = Depends(_verify_app_token)):
     """Export all cached/fetched props for a sport — player names, markets, prop IDs, odds."""
-    s = _get_session(session_id)
+    s = await _get_session_async(session_id)
     props = _get_all_sport_props(s["token"], s["proxy_url"], sport, competition, use_regular=True)
     export = []
     for p in props:
@@ -1480,7 +1522,7 @@ async def api_disposals(match_id: str, session_id: str = None, sport: str = "AFL
     s = None
     if session_id:
         try:
-            s = _get_session(session_id)
+            s = await _get_session_async(session_id)
         except Exception:
             pass
     if not s:
@@ -1491,14 +1533,14 @@ async def api_disposals(match_id: str, session_id: str = None, sport: str = "AFL
                 s = sess
                 break
     if not s:
-        raise HTTPException(401, "No valid TAB session. Please login on the Dashboard.")
+        raise HTTPException(404, "No valid TAB session. Please login on the Dashboard.")
 
     # Try match_id as-is first; if it's a short ID, look up the full match name
     match_name_url = match_id.replace(" ", "%20")
     if not "%" in match_name_url and " " not in match_id:
         # Short ID like NMlvCrl0 — look up full name
         try:
-            all_matches = get_matches(s["token"], s["proxy_url"], sport, competition)
+            all_matches = await asyncio.to_thread(get_matches, s["token"], s["proxy_url"], sport, competition)
             for m in all_matches:
                 if m["match_id"] == match_id:
                     match_name_url = m.get("match_name_url", match_id)
@@ -1508,7 +1550,7 @@ async def api_disposals(match_id: str, session_id: str = None, sport: str = "AFL
 
     # Get regular match markets (has all player props)
     try:
-        data = get_match_markets(s["token"], match_name_url, s["proxy_url"], sport, competition)
+        data = await asyncio.to_thread(get_match_markets, s["token"], match_name_url, s["proxy_url"], sport, competition)
     except Exception as e:
         raise HTTPException(500, f"Failed to fetch match markets: {e}")
 
@@ -1539,7 +1581,7 @@ async def api_disposals(match_id: str, session_id: str = None, sport: str = "AFL
 @app.post("/api/csb-resolve-one")
 async def api_csb_resolve_one(req: CsbBet, _user: dict = Depends(_verify_app_token)):
     """Resolve a single CSB bet (SGM or Multi) against TAB markets."""
-    s = _get_session(req.session_id)
+    s = await _get_session_async(req.session_id)
     resolved = resolve_csb_bet(
         token=s["token"],
         proxy_url=s["proxy_url"],
@@ -1587,7 +1629,7 @@ def _kelly_drift_stake(original_stake: float, units: float, tipped_odds: float,
 async def api_csb_place_one(req: CsbBet, _user: dict = Depends(_verify_app_token)):
     """Resolve and place a single CSB bet. Auto-reprices on 'Price has changed' (up to 3 attempts).
     If props are already cached from a recent warmup/resolve, uses cached data (fast path ~2s vs ~12s)."""
-    s = _get_session(req.session_id)
+    s = await _get_session_async(req.session_id)
     if not s.get("legacy_token"):
         raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
 
@@ -1631,21 +1673,25 @@ async def api_csb_place_one(req: CsbBet, _user: dict = Depends(_verify_app_token
 
         try:
             if req.bet_type.upper() == "SGM":
-                place_result = place_sgm_bet(
-                    legacy_token=s["legacy_token"],
-                    account_number=s["account_number"],
-                    propositions=resolved["propositions"],
-                    combined_odds=resolved["combined_odds"],
-                    stake=str(current_stake),
-                    proxy_url=s["proxy_url"],
+                place_result = await asyncio.to_thread(
+                    lambda: place_sgm_bet(
+                        legacy_token=s["legacy_token"],
+                        account_number=s["account_number"],
+                        propositions=resolved["propositions"],
+                        combined_odds=resolved["combined_odds"],
+                        stake=str(current_stake),
+                        proxy_url=s["proxy_url"],
+                    )
                 )
             else:
-                place_result = place_multi_bet(
-                    legacy_token=s["legacy_token"],
-                    account_number=s["account_number"],
-                    legs=[{"propositionId": p["propositionId"], "odds": p["odds"]} for p in resolved["propositions"]],
-                    stake=str(current_stake),
-                    proxy_url=s["proxy_url"],
+                place_result = await asyncio.to_thread(
+                    lambda: place_multi_bet(
+                        legacy_token=s["legacy_token"],
+                        account_number=s["account_number"],
+                        legs=[{"propositionId": p["propositionId"], "odds": p["odds"]} for p in resolved["propositions"]],
+                        stake=str(current_stake),
+                        proxy_url=s["proxy_url"],
+                    )
                 )
         except Exception as e:
             place_result = {"success": False, "error": str(e)}
@@ -1690,7 +1736,7 @@ async def api_csb_place_one(req: CsbBet, _user: dict = Depends(_verify_app_token
             try:
                 import time as _t
                 _t.sleep(1)
-                tab_history = get_my_bets(s["legacy_token"], s["account_number"], s["proxy_url"], count=5)
+                tab_history = await asyncio.to_thread(get_my_bets, s["legacy_token"], s["account_number"], s["proxy_url"], 5)
                 for tb in tab_history.get("bets", []):
                     if tb.get("tsn") == tsn:
                         tab_legs = tb.get("legs", [])
@@ -1718,6 +1764,7 @@ async def api_csb_place_one(req: CsbBet, _user: dict = Depends(_verify_app_token
             "status": "Pending",
             "raw_response": details,
             "source": "expload",
+            "match_name": resolved.get("match_name"),
         })
 
     return {
@@ -1812,7 +1859,7 @@ async def api_paste_token(req: PasteTokenRequest, user: dict = Depends(_verify_a
     balance = None
     account_number = req.account_number or customer_id
     try:
-        acct_info = get_account_info(token, customer_id, proxy)
+        acct_info = await asyncio.to_thread(get_account_info, token, customer_id, proxy)
         account_number = acct_info["account_number"]
         balance = acct_info["account_balance"]
     except Exception as e:
@@ -1820,7 +1867,7 @@ async def api_paste_token(req: PasteTokenRequest, user: dict = Depends(_verify_a
         # Try without proxy
         if proxy:
             try:
-                acct_info = get_account_info(token, customer_id, None)
+                acct_info = await asyncio.to_thread(get_account_info, token, customer_id, None)
                 account_number = acct_info["account_number"]
                 balance = acct_info["account_balance"]
             except Exception as e2:
@@ -2082,11 +2129,11 @@ async def api_place_json(req: JsonBet, _user: dict = Depends(_verify_app_token))
     """Resolve and place a single bet from JSON format."""
     import random as _random
 
-    s = _get_session(req.session_id)
+    s = await _get_session_async(req.session_id)
     if not s.get("legacy_token"):
         raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
 
-    resolved = _resolve_json_bet(s["token"], s["legacy_token"], s["proxy_url"], req)
+    resolved = await asyncio.to_thread(lambda: _resolve_json_bet(s["token"], s["legacy_token"], s["proxy_url"], req))
 
     if not resolved["resolved"]:
         return {"success": False, "resolved": resolved}
@@ -2105,21 +2152,25 @@ async def api_place_json(req: JsonBet, _user: dict = Depends(_verify_app_token))
     # Place the bet
     try:
         if req.is_same_event_multi:
-            place_result = place_sgm_bet(
-                legacy_token=s["legacy_token"],
-                account_number=s["account_number"],
-                propositions=resolved["propositions"],
-                combined_odds=resolved["combined_odds"],
-                stake=stake_str,
-                proxy_url=s["proxy_url"],
+            place_result = await asyncio.to_thread(
+                lambda: place_sgm_bet(
+                    legacy_token=s["legacy_token"],
+                    account_number=s["account_number"],
+                    propositions=resolved["propositions"],
+                    combined_odds=resolved["combined_odds"],
+                    stake=stake_str,
+                    proxy_url=s["proxy_url"],
+                )
             )
         else:
-            place_result = place_multi_bet(
-                legacy_token=s["legacy_token"],
-                account_number=s["account_number"],
-                legs=[{"propositionId": l["propositionId"], "odds": l["odds"]} for l in resolved["propositions"]],
-                stake=stake_str,
-                proxy_url=s["proxy_url"],
+            place_result = await asyncio.to_thread(
+                lambda: place_multi_bet(
+                    legacy_token=s["legacy_token"],
+                    account_number=s["account_number"],
+                    legs=[{"propositionId": l["propositionId"], "odds": l["odds"]} for l in resolved["propositions"]],
+                    stake=stake_str,
+                    proxy_url=s["proxy_url"],
+                )
             )
 
         # Save to DB
@@ -2140,7 +2191,7 @@ async def api_place_json(req: JsonBet, _user: dict = Depends(_verify_app_token))
                 try:
                     import time as _time
                     _time.sleep(1)
-                    tab_history = get_my_bets(s["legacy_token"], s["account_number"], s["proxy_url"], count=5)
+                    tab_history = await asyncio.to_thread(get_my_bets, s["legacy_token"], s["account_number"], s["proxy_url"], 5)
                     for tb in tab_history.get("bets", []):
                         if tb.get("tsn") == tsn:
                             tab_legs = tb.get("legs", [])
@@ -2168,6 +2219,7 @@ async def api_place_json(req: JsonBet, _user: dict = Depends(_verify_app_token))
                 "status": "Pending",
                 "raw_response": details,
                 "source": "expload",
+                "match_name": resolved.get("match_name"),
             })
 
         return {
@@ -2188,7 +2240,7 @@ async def api_place_json_batch(req: JsonBetBatch, _user: dict = Depends(_verify_
     """Resolve and place multiple bets from JSON with human-like delays."""
     import random as _random
 
-    s = _get_session(req.session_id)
+    s = await _get_session_async(req.session_id)
     if not s.get("legacy_token"):
         raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
 
@@ -2206,7 +2258,7 @@ async def api_place_json_batch(req: JsonBetBatch, _user: dict = Depends(_verify_
                 await asyncio.sleep(delay)
 
         bet.session_id = req.session_id
-        resolved = _resolve_json_bet(s["token"], s["legacy_token"], s["proxy_url"], bet)
+        resolved = await asyncio.to_thread(lambda: _resolve_json_bet(s["token"], s["legacy_token"], s["proxy_url"], bet))
 
         if not resolved["resolved"]:
             results.append({"index": i, "success": False, "resolved": resolved})
@@ -2214,21 +2266,25 @@ async def api_place_json_batch(req: JsonBetBatch, _user: dict = Depends(_verify_
 
         try:
             if bet.is_same_event_multi:
-                place_result = place_sgm_bet(
-                    legacy_token=s["legacy_token"],
-                    account_number=s["account_number"],
-                    propositions=resolved["propositions"],
-                    combined_odds=resolved["combined_odds"],
-                    stake=str(bet.stake),
-                    proxy_url=s["proxy_url"],
+                place_result = await asyncio.to_thread(
+                    lambda: place_sgm_bet(
+                        legacy_token=s["legacy_token"],
+                        account_number=s["account_number"],
+                        propositions=resolved["propositions"],
+                        combined_odds=resolved["combined_odds"],
+                        stake=str(bet.stake),
+                        proxy_url=s["proxy_url"],
+                    )
                 )
             else:
-                place_result = place_multi_bet(
-                    legacy_token=s["legacy_token"],
-                    account_number=s["account_number"],
-                    legs=[{"propositionId": l["propositionId"], "odds": l["odds"]} for l in resolved["propositions"]],
-                    stake=str(bet.stake),
-                    proxy_url=s["proxy_url"],
+                place_result = await asyncio.to_thread(
+                    lambda: place_multi_bet(
+                        legacy_token=s["legacy_token"],
+                        account_number=s["account_number"],
+                        legs=[{"propositionId": l["propositionId"], "odds": l["odds"]} for l in resolved["propositions"]],
+                        stake=str(bet.stake),
+                        proxy_url=s["proxy_url"],
+                    )
                 )
 
             # Save to DB
@@ -2249,7 +2305,7 @@ async def api_place_json_batch(req: JsonBetBatch, _user: dict = Depends(_verify_
                     try:
                         import time as _time
                         _time.sleep(1)
-                        tab_history = get_my_bets(s["legacy_token"], s["account_number"], s["proxy_url"], count=5)
+                        tab_history = await asyncio.to_thread(get_my_bets, s["legacy_token"], s["account_number"], s["proxy_url"], 5)
                         for tb in tab_history.get("bets", []):
                             if tb.get("tsn") == tsn:
                                 tab_legs = tb.get("legs", [])
@@ -2277,6 +2333,7 @@ async def api_place_json_batch(req: JsonBetBatch, _user: dict = Depends(_verify_
                     "status": "Pending",
                     "raw_response": details,
                     "source": "csv_paste",
+                    "match_name": resolved.get("match_name"),
                 })
 
             results.append({
@@ -2339,13 +2396,13 @@ async def purge_expired_sessions(_user: dict = Depends(_verify_app_token)):
 
 import tab_tokens as _tt
 
-# In-memory group assignments: account_number -> group letter
-_tab_token_groups: dict[str, str] = {}
+# Group assignments loaded from DB per-request (multi-worker safe)
 
 
 @app.get("/api/tab-tokens/accounts")
 async def tab_tokens_accounts(_user: dict = Depends(_verify_app_token)):
     """List TAB sessions belonging to this user, with saver token status."""
+    _tab_token_groups = await load_tab_groups(_user["username"])
     # Build label + ownership map from DB accounts (match by account_number OR email)
     db_accounts = []
     label_map = {}
@@ -2399,6 +2456,7 @@ async def tab_tokens_accounts(_user: dict = Depends(_verify_app_token)):
 @app.post("/api/tab-tokens/fetch-savers")
 async def tab_tokens_fetch_savers(_user: dict = Depends(_verify_app_token)):
     """Fetch SGM saver tokens for this user's authenticated sessions."""
+    _tab_token_groups = await load_tab_groups(_user["username"])
     user_accts = set()
     user_emails = set()
     try:
@@ -2436,8 +2494,10 @@ async def tab_tokens_fetch_savers(_user: dict = Depends(_verify_app_token)):
 @app.put("/api/tab-tokens/groups")
 async def tab_tokens_set_groups(body: dict, _user: dict = Depends(_verify_app_token)):
     """Set group assignments. Body: {"groups": {"account_number": "A", ...}}"""
-    _tab_token_groups.update(body.get("groups", {}))
-    return {"ok": True, "groups": _tab_token_groups}
+    existing = await load_tab_groups(_user["username"])
+    existing.update(body.get("groups", {}))
+    await save_tab_groups(_user["username"], existing)
+    return {"ok": True, "groups": existing}
 
 
 @app.post("/api/tab-tokens/parse-csv")
@@ -2446,7 +2506,6 @@ async def tab_tokens_parse_csv(body: dict, _user: dict = Depends(_verify_app_tok
     return {"count": len(b := _tt.parse_bets_csv(body.get("csv_content", ""))), "bets": b}
 
 
-_tt_jobs: dict[str, dict] = {}
 
 @app.post("/api/tab-tokens/execute")
 async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token)):
@@ -2456,7 +2515,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
     """
     csv_content = body.get("csv_content", "")
     dry_run = body.get("dry_run", True)
-    enabled_accounts = body.get("enabled_accounts")
+    enabled_accounts = [str(a) for a in body.get("enabled_accounts")] if body.get("enabled_accounts") else None
     bets = _tt.parse_bets_csv(csv_content)
     if not bets:
         return {"error": "No valid bets", "total": 0, "results": []}
@@ -2476,6 +2535,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
         pass
 
     # Group sessions (deduplicate by account_number)
+    _tab_token_groups = await load_tab_groups(_user["username"])
     group_sessions: dict[str, list[dict]] = {}
     seen_accts = set()
     for sid, s in sessions.items():
@@ -2521,7 +2581,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
 
             ck = f"{bet['sport']}:{bet['competition']}"
             if ck not in matches_cache:
-                matches_cache[ck] = _tt.get_matches(targets[0]["token"], bet["sport"], bet["competition"], targets[0].get("proxy_url"))
+                matches_cache[ck] = await asyncio.to_thread(lambda _t=targets[0]: _tt.get_matches(_t["token"], bet["sport"], bet["competition"], _t.get("proxy_url")))
 
             match = _tt.find_match(matches_cache[ck], bet["match"])
             if not match:
@@ -2536,7 +2596,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                 token, legacy, acct, proxy = s.get("token", ""), s.get("legacy_token", ""), s.get("account_number", ""), s.get("proxy_url", "")
                 acct_label = acct_labels.get(acct) or acct_labels.get((s.get("email") or "").lower()) or acct
 
-                markets = _tt.get_sgm_markets(token, match, bet["sport"], bet["competition"], proxy)
+                markets = await asyncio.to_thread(lambda: _tt.get_sgm_markets(token, match, bet["sport"], bet["competition"], proxy))
                 props = []
                 tryscorer_team = None
                 for leg in bet["legs"]:
@@ -2562,7 +2622,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                                     "error": "Leg(s) below $1.10 min", "dry_run": is_dry})
                     continue
 
-                pricing = _tt.get_sgm_price(token, acct, props, proxy, legacy_token=legacy)
+                pricing = await asyncio.to_thread(lambda: _tt.get_sgm_price(token, acct, props, proxy, legacy_token=legacy))
                 if pricing.get("error") or not pricing.get("combined_odds"):
                     results.append({"account": acct, "account_label": acct_label, "email": s.get("email"), "group": bet["group"],
                                     "match": bet["match"], "legs": bet["legs"], "stake": 0, "odds": None,
@@ -2583,7 +2643,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                                     "error": f"Combined odds {co_f:.2f} < $2.00", "dry_run": is_dry})
                     continue
 
-                svs = _tt.get_sgm_savers(token, acct, proxy, legacy_token=legacy)
+                svs = await asyncio.to_thread(lambda: _tt.get_sgm_savers(token, acct, proxy, legacy_token=legacy))
                 bet_match_lower = bet["match"].lower()
                 matching = [sv for sv in svs if (
                     bet_match_lower in sv.get("match", "").lower() or
@@ -2616,7 +2676,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
 
                     saver_token_group_id = matching[0].get("token_group_id") if matching else None
                     _log(f"{acct_label}: placing ${stake:.0f} @ {co_f:.2f} — {', '.join(l['name'] for l in resolved_legs[:2])}...")
-                    pr = _tt.place_sgm_with_saver(legacy, acct, props, stake, co, deco, leg_deco, proxy, token_group_id=saver_token_group_id)
+                    pr = await asyncio.to_thread(lambda: _tt.place_sgm_with_saver(legacy, acct, props, stake, co, deco, leg_deco, proxy, token_group_id=saver_token_group_id))
                     leg_names = [p["name"] for p in props]
                     if pr.get("success"):
                         _log(f"{acct_label}: ✓ placed — TSN {pr.get('tsn', '?')}")
@@ -2638,10 +2698,11 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                                 "legs": [{"name": n} for n in leg_names], "combined_odds": co,
                                 "stake": str(stake), "status": "Pending",
                                 "raw_response": pr.get("details"), "source": "tab_tokens",
+                                "match_name": bet["match"],
                             })
                         except Exception as e:
                             logger.warning("Failed to save tab_tokens bet to DB: %s", e)
-                    time.sleep(2)
+                    await asyncio.sleep(2)
 
         ok = sum(1 for r in results if r.get("success"))
         return {"total": len(results), "success": ok, "failed": len(results) - ok,
@@ -2653,21 +2714,23 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
     if dry_run:
         return await _resolve_and_place(bets, group_sessions, True, _user["username"])
 
-    # Live placement: run async in background, return job_id
+    # Live placement: run async in background, return job_id (DB-backed for multi-worker)
     job_id = str(uuid.uuid4())[:8]
-    _tt_jobs[job_id] = {"status": "running", "result": None, "log": []}
+    _tt_log: list[str] = []
+    await _save_job(job_id, "tab_tokens", "running")
     username = _user["username"]
 
     async def _run():
         try:
-            _tt_jobs[job_id]["log"].append(f"Starting placement of {len(bets)} bets...")
+            _tt_log.append(f"Starting placement of {len(bets)} bets...")
             result = await _resolve_and_place(bets, group_sessions, False, username,
-                                              progress_cb=lambda msg: _tt_jobs[job_id]["log"].append(msg))
-            _tt_jobs[job_id] = {"status": "complete", "result": result,
-                                "log": _tt_jobs[job_id]["log"] + [f"Done: {result['success']}/{result['total']} placed"]}
+                                              progress_cb=lambda msg: _tt_log.append(msg))
+            _tt_log.append(f"Done: {result['success']}/{result['total']} placed")
+            await _save_job(job_id, "tab_tokens", "complete", {**result, "log": _tt_log})
         except Exception as e:
             logger.error("Tab tokens job %s error: %s", job_id, e, exc_info=True)
-            _tt_jobs[job_id] = {"status": "error", "result": {"error": str(e)}, "log": _tt_jobs[job_id]["log"] + [f"Error: {e}"]}
+            _tt_log.append(f"Error: {e}")
+            await _save_job(job_id, "tab_tokens", "error", {"error": str(e), "log": _tt_log})
 
     asyncio.create_task(_run())
     return {"job_id": job_id, "status": "running"}
@@ -2676,7 +2739,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
 @app.get("/api/tab-tokens/job-status/{job_id}")
 async def tab_tokens_job_status(job_id: str, _user: dict = Depends(_verify_app_token)):
     """Poll for tab-tokens placement job results."""
-    job = _tt_jobs.get(job_id)
+    job = await _get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
     return job

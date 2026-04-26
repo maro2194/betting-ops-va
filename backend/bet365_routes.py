@@ -58,7 +58,40 @@ async def init_bet365_tables():
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_bet365_picks_ts ON bet365_picks(timestamp DESC)
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS bg_jobs (
+                job_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                result JSONB,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_bg_jobs_created ON bg_jobs(created_at)
+        """)
     logger.info("bet365 tables initialized")
+
+
+async def _save_job(job_id: str, kind: str, status: str, result: dict | None = None):
+    async with database.pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO bg_jobs (job_id, kind, status, result)
+               VALUES ($1, $2, $3, $4::jsonb)
+               ON CONFLICT (job_id) DO UPDATE SET status = $3, result = $4::jsonb""",
+            job_id, kind, status, json.dumps(result) if result is not None else None,
+        )
+
+
+async def _get_job(job_id: str) -> dict | None:
+    async with database.pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT status, result FROM bg_jobs WHERE job_id = $1", job_id)
+        if not row:
+            return None
+        result = row["result"]
+        if isinstance(result, str):
+            result = json.loads(result)
+        return {"status": row["status"], "result": result}
 
 
 async def save_pick_to_db(pick: dict):
@@ -93,16 +126,16 @@ async def save_pick_to_db(pick: dict):
             pick.get("sport", ""),
             pick.get("player", ""),
             pick.get("stat", ""),
-            pick.get("line", 0),
+            float(pick.get("line", 0) or 0),
             pick.get("side", ""),
-            pick.get("odds", 0),
-            pick.get("units", 0),
+            float(pick.get("odds", 0) or 0),
+            float(pick.get("units", 0) or 0),
             pick.get("skipped", False),
             pick.get("skip_reason"),
             pick.get("attempted", False),
             pick.get("placed", False),
             pick.get("actual_odds"),
-            pick.get("stake", 0),
+            float(pick.get("stake", 0) or 0),
             pick.get("potential_return"),
             pick.get("error"),
             pick.get("screenshot"),
@@ -333,13 +366,10 @@ class ScanBoostsRequest(BaseModel):
     match_team: str = ""
 
 
-_scan_jobs: dict[str, dict] = {}
-
-
 @router.post("/scan-boosts")
 async def scan_boosts(req: ScanBoostsRequest):
     """Start boost scan as async job. Returns job_id to poll."""
-    import uuid
+    import uuid as _uuid
     from token_farm_client import bet365_login, bet365_megaboost, bet365_scan_boosts
 
     username = os.environ.get("BET365_USERNAME", "")
@@ -347,14 +377,14 @@ async def scan_boosts(req: ScanBoostsRequest):
     if not username:
         raise HTTPException(400, "No bet365 username configured")
 
-    job_id = str(uuid.uuid4())[:8]
-    _scan_jobs[job_id] = {"status": "running", "result": None}
+    job_id = str(_uuid.uuid4())[:8]
+    await _save_job(job_id, "scan_boosts", "running")
 
     async def run_scan():
         try:
             login_result = await bet365_login(username, password)
             if not login_result.get("success"):
-                _scan_jobs[job_id] = {"status": "done", "result": {"success": False, "error": f"Login failed: {login_result.get('error')}", "boosts": []}}
+                await _save_job(job_id, "scan_boosts", "done", {"success": False, "error": f"Login failed: {login_result.get('error')}", "boosts": []})
                 return
 
             session_id = login_result["session_id"]
@@ -383,9 +413,9 @@ async def scan_boosts(req: ScanBoostsRequest):
 
             result["balance"] = login_result.get("balance")
             result["session_id"] = session_id
-            _scan_jobs[job_id] = {"status": "done", "result": result}
+            await _save_job(job_id, "scan_boosts", "done", result)
         except Exception as e:
-            _scan_jobs[job_id] = {"status": "done", "result": {"success": False, "error": str(e), "boosts": []}}
+            await _save_job(job_id, "scan_boosts", "done", {"success": False, "error": str(e), "boosts": []})
 
     asyncio.create_task(run_scan())
     return {"job_id": job_id, "status": "running"}
@@ -394,7 +424,7 @@ async def scan_boosts(req: ScanBoostsRequest):
 @router.get("/scan-boosts/status/{job_id}")
 async def scan_boosts_status(job_id: str):
     """Poll for scan-boosts job result."""
-    job = _scan_jobs.get(job_id)
+    job = await _get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
     return job
@@ -408,18 +438,14 @@ class MegaBoostAllRequest(BaseModel):
     accounts: list[str] | None = None  # Optional filter: list of usernames (None = all)
 
 
-# In-memory job store for async megaboost placement
-_megaboost_jobs: dict[str, dict] = {}
-
-
 @router.post("/megaboost-all")
 async def place_megaboost_all(req: MegaBoostAllRequest):
     """Start megaboost placement as async job. Returns job_id to poll for results."""
-    import uuid
+    import uuid as _uuid
     from token_farm_client import bet365_megaboost_all
 
-    job_id = str(uuid.uuid4())[:8]
-    _megaboost_jobs[job_id] = {"status": "running", "result": None}
+    job_id = str(_uuid.uuid4())[:8]
+    await _save_job(job_id, "megaboost_all", "running")
 
     async def run_job():
         import uuid, time as _time
@@ -431,7 +457,14 @@ async def place_megaboost_all(req: MegaBoostAllRequest):
                 boost_index=req.boost_index,
                 accounts=req.accounts,
             )
+            log = []
             for r in result.get("results", []):
+                uname = r.get("username", "?")
+                if r.get("success"):
+                    odds_str = r.get("boosted_odds") or r.get("odds", "?")
+                    log.append(f"{uname}: Placed ${req.stake} @ {odds_str}")
+                else:
+                    log.append(f"{uname}: FAILED — {r.get('error', 'unknown')}")
                 await save_pick_to_db({
                     "id": str(uuid.uuid4()),
                     "timestamp": _time.time(),
@@ -445,7 +478,7 @@ async def place_megaboost_all(req: MegaBoostAllRequest):
                     "attempted": True,
                     "placed": r.get("success", False),
                     "stake": req.stake,
-                    "odds": r.get("boosted_odds") or r.get("odds", 0),
+                    "odds": float(r.get("boosted_odds") or r.get("odds", 0) or 0),
                     "actual_odds": str(r.get("boosted_odds") or r.get("odds", "")),
                     "username": r.get("username", ""),
                     "line": 0,
@@ -453,9 +486,13 @@ async def place_megaboost_all(req: MegaBoostAllRequest):
                     "units": 1,
                     "error": r.get("error"),
                 })
-            _megaboost_jobs[job_id] = {"status": "done", "result": result}
+            placed = sum(1 for r in result.get("results", []) if r.get("success"))
+            total = len(result.get("results", []))
+            log.append(f"Done: {placed}/{total} placed successfully")
+            result["log"] = log
+            await _save_job(job_id, "megaboost_all", "done", result)
         except Exception as e:
-            _megaboost_jobs[job_id] = {"status": "error", "result": {"error": str(e)}}
+            await _save_job(job_id, "megaboost_all", "error", {"error": str(e)})
 
     asyncio.create_task(run_job())
     return {"job_id": job_id, "status": "running"}
@@ -464,7 +501,7 @@ async def place_megaboost_all(req: MegaBoostAllRequest):
 @router.get("/megaboost-all/status/{job_id}")
 async def megaboost_all_status(job_id: str):
     """Poll for megaboost-all job result."""
-    job = _megaboost_jobs.get(job_id)
+    job = await _get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
     return job
