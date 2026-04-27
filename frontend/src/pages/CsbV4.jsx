@@ -93,6 +93,11 @@ const RETRYABLE_KEYWORDS = [
   '502', '503', '504', 'gateway', 'upstream',
   'tunnel', 'proxy', 'ssl', 'boringssl', 'connect',
   'temporarily unavailable', 'service unavailable',
+  // TAB resolver hiccups — backend retries these once already, but we keep
+  // them retryable here so a still-failing placement gets a second chance
+  // from the placement loop rather than being marked terminal.
+  'price check returned no odds', 'no odds',
+  'no propositions found',
 ];
 function isRetryableError(message) {
   if (!message) return true; // unknown empty error — let it retry once
@@ -427,6 +432,25 @@ export default function CsbV4() {
     const slotPrefix = `a${Date.now().toString(36)}`;
     let slotCounter = 0;
 
+    // Running balance per account, decremented as we allocate. Null balances
+    // (failed fetch) are treated as Infinity so a stale balance lookup never
+    // blocks the whole allocation — they're flagged in the log so user knows.
+    const runningBal = {};
+    const unknownBalanceAccs = [];
+    enabledAccounts.forEach((a) => {
+      const b = accountBalances[a.id];
+      if (b == null) {
+        runningBal[a.id] = Infinity;
+        unknownBalanceAccs.push(getAccountLabel(a.id));
+      } else {
+        runningBal[a.id] = b;
+      }
+    });
+
+    // Skip/cap-bypass messages collected during allocation, surfaced in the log.
+    const skippedMsgs = [];
+    const capBypassMsgs = [];
+
     const selectedIdxs = parsedBets.map((_, i) => i).filter((i) => selectedBets[i]);
 
     for (const i of selectedIdxs) {
@@ -447,34 +471,97 @@ export default function CsbV4() {
       const odds = resolvedOdds || bet.odds || 2;
       const totalLiability = (odds - 1) * totalStakeForBet;
 
+      // Decide desired slot stakes — single slot if it fits the cap, otherwise
+      // even-split across the minimum slots needed to stay under cap.
+      let desiredStakes;
       if (totalLiability <= cap || numAccounts === 1) {
-        // Fits on one account — assign to next in round-robin
-        const accId = enabledAccounts[rrIdx % numAccounts].id;
-        matrix[accId].push({
-          slotId: `${slotPrefix}-${slotCounter++}`, accountId: accId,
-          betIdx: i, stake: totalStakeForBet, bet, resolvedOdds, tippedOdds: bet.odds,
-          liability: totalLiability, matched_odds: st.matched_odds,
-        });
-        rrIdx++;
+        desiredStakes = [totalStakeForBet];
       } else {
-        // Needs splitting — use $5 increments so we can actually fit within the cap
         const maxStakePerSlot = Math.max(5, Math.floor((cap / (odds - 1)) / 5) * 5);
+        let slotsToUse = Math.max(2, Math.ceil(totalStakeForBet / maxStakePerSlot));
+        const slotsCeiling = Math.max(2, numAccounts * 5);
+        let evenStake;
+        let safety = 50;
+        while (safety-- > 0) {
+          evenStake = Math.max(5, Math.round((totalStakeForBet / slotsToUse) / 5) * 5);
+          if (evenStake <= maxStakePerSlot || slotsToUse >= slotsCeiling) break;
+          slotsToUse++;
+        }
+        desiredStakes = [];
+        let placed = 0;
+        for (let s = 0; s < slotsToUse - 1; s++) {
+          desiredStakes.push(evenStake);
+          placed += evenStake;
+        }
+        let lastStake = Math.max(5, Math.round((totalStakeForBet - placed) / 5) * 5);
+        if (lastStake > maxStakePerSlot) lastStake = maxStakePerSlot;
+        desiredStakes.push(lastStake);
+      }
 
-        let remaining = totalStakeForBet;
-        let splitCount = 0;
-        while (remaining > 0) {
-          const slotStake = Math.max(5, Math.min(Math.ceil(remaining / 5) * 5, maxStakePerSlot));
-          const accId = enabledAccounts[(rrIdx + splitCount) % numAccounts].id;
+      // Pass 1 — assign each desired slot to the next round-robin account that
+      // has the running balance to cover it. Stake & cap are both respected.
+      let unplaced = 0;
+      for (const desiredStake of desiredStakes) {
+        let pickIdx = -1;
+        for (let k = 0; k < numAccounts; k++) {
+          const idx = (rrIdx + k) % numAccounts;
+          if (runningBal[enabledAccounts[idx].id] >= desiredStake) { pickIdx = idx; break; }
+        }
+        if (pickIdx >= 0) {
+          const accId = enabledAccounts[pickIdx].id;
           matrix[accId].push({
             slotId: `${slotPrefix}-${slotCounter++}`, accountId: accId,
+            betIdx: i, stake: desiredStake, bet, resolvedOdds, tippedOdds: bet.odds,
+            liability: (odds - 1) * desiredStake, matched_odds: st.matched_odds,
+          });
+          runningBal[accId] -= desiredStake;
+          rrIdx = pickIdx + 1;
+        } else {
+          unplaced += desiredStake;
+        }
+      }
+
+      // Pass 2 (fallback) — distribute unplaced stake across all candidates
+      // with remaining balance as evenly as possible (rather than greedy-filling
+      // the richest first). Each iteration computes a per-account "even share"
+      // rounded up to $5 and takes min(share, balance, remaining) from each
+      // candidate. Continues until either fully placed or no candidate has $5+.
+      // The cap may be bypassed when a single slot's liability exceeds it —
+      // that's the explicit override Shadow asked for so allocation can't
+      // deadlock when only one account has balance left.
+      let bypassedThisBet = false;
+      while (unplaced > 0) {
+        const candidates = enabledAccounts
+          .map((a) => a.id)
+          .filter((id) => runningBal[id] >= 5);
+        if (candidates.length === 0) break;
+        const evenShare = Math.max(5, Math.ceil((unplaced / candidates.length) / 5) * 5);
+        let progress = false;
+        for (const id of candidates) {
+          if (unplaced <= 0) break;
+          const capLeft = Number.isFinite(runningBal[id])
+            ? Math.floor(runningBal[id] / 5) * 5
+            : Math.floor(unplaced / 5) * 5;
+          const slotStake = Math.min(evenShare, capLeft, unplaced);
+          if (slotStake < 5) continue;
+          if ((odds - 1) * slotStake > cap) bypassedThisBet = true;
+          matrix[id].push({
+            slotId: `${slotPrefix}-${slotCounter++}`, accountId: id,
             betIdx: i, stake: slotStake, bet, resolvedOdds, tippedOdds: bet.odds,
             liability: (odds - 1) * slotStake, matched_odds: st.matched_odds,
           });
-          remaining -= slotStake;
-          splitCount++;
-          if (splitCount > numAccounts * 5) break; // safety
+          runningBal[id] -= slotStake;
+          unplaced -= slotStake;
+          progress = true;
         }
-        rrIdx += splitCount;
+        if (!progress) break;
+      }
+
+      if (unplaced > 0) {
+        skippedMsgs.push(`Bet #${i + 1} — $${unplaced.toFixed(0)} of $${totalStakeForBet.toFixed(0)} unallocated (insufficient balance across all enabled accounts)`);
+      }
+      if (bypassedThisBet) {
+        capBypassMsgs.push(`Bet #${i + 1} — liability cap exceeded on at least one slot to fully allocate`);
       }
     }
 
@@ -509,6 +596,17 @@ export default function CsbV4() {
     }
     addLog(`───────────────────────`);
     addLog(`Total: ${totalBetsAllocated} placements across ${enabledAccounts.filter((a) => (matrix[a.id] || []).length > 0).length} accounts — $${totalStakeAllocated.toFixed(0)} total stake`);
+    if (unknownBalanceAccs.length > 0) {
+      addLog(`⚠ Balance unknown for ${unknownBalanceAccs.length} account(s): ${unknownBalanceAccs.join(', ')} — treated as unlimited. Refresh balances and rebuild for accurate sizing.`);
+    }
+    if (capBypassMsgs.length > 0) {
+      addLog(`⚠ Liability cap bypassed on ${capBypassMsgs.length} bet(s) — only one account had remaining balance:`);
+      capBypassMsgs.forEach((m) => addLog(`  • ${m}`));
+    }
+    if (skippedMsgs.length > 0) {
+      addLog(`⚠ ${skippedMsgs.length} stake chunk(s) unallocated due to balance constraints:`);
+      skippedMsgs.forEach((m) => addLog(`  • ${m}`));
+    }
     addLog('Ready to execute. Click "3. Execute" to start parallel placement.');
   };
 
@@ -1136,6 +1234,9 @@ export default function CsbV4() {
     return () => clearTimeout(t);
   }, [autoRetryPending, phase, retryableFailedCount]);
   const totalAllocated = allocationMatrix ? Object.values(allocationMatrix).reduce((s, q) => s + q.length, 0) : 0;
+  const totalAllocatedStake = allocationMatrix
+    ? Object.values(allocationMatrix).reduce((s, q) => s + q.reduce((a, x) => a + (x.stake || 0), 0), 0)
+    : 0;
 
   /* ═══════════════════════════════════════════════════════════════
    *  RENDER
@@ -1209,7 +1310,22 @@ export default function CsbV4() {
             <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Bets: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{parsedBets.length}</span></div>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Selected: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{selectedCount}</span></div>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Total Stake: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>${totalStake.toFixed(2)}</span></div>
-            {allocationMatrix && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Allocated: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{totalAllocated} placements</span></div>}
+            {allocationMatrix && (
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                Allocated: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{totalAllocated} placements</span>
+                <span style={{ color: 'var(--text-muted)', margin: '0 6px' }}>·</span>
+                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>${totalAllocatedStake.toFixed(2)}</span>
+                {Math.abs(totalAllocatedStake - totalStake) >= 0.01 && (
+                  <span style={{
+                    marginLeft: 6,
+                    color: totalAllocatedStake < totalStake ? 'var(--warning)' : 'var(--success)',
+                    fontWeight: 600,
+                  }}>
+                    ({totalAllocatedStake >= totalStake ? '+' : '−'}${Math.abs(totalAllocatedStake - totalStake).toFixed(2)} vs tipped)
+                  </span>
+                )}
+              </div>
+            )}
             {placedCount > 0 && <div style={{ fontSize: 13 }}>Placed: <span style={{ color: 'var(--success)', fontWeight: 600 }}>{placedCount}</span></div>}
             {failedPlacementCount > 0 && <div style={{ fontSize: 13 }}>Failed: <span style={{ color: 'var(--danger)', fontWeight: 600 }}>{failedPlacementCount}</span></div>}
             {skippedCount > 0 && <div style={{ fontSize: 13 }}>Skipped: <span style={{ color: 'var(--warning)', fontWeight: 600 }}>{skippedCount}</span></div>}

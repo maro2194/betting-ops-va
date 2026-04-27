@@ -239,6 +239,46 @@ def _get_session(session_id: str) -> dict:
     return s
 
 
+async def _ensure_legacy_token(s: dict, session_id: str | None = None) -> None:
+    """Lazy-fetch the TabcorpAuth legacy token if missing.
+
+    Login can complete with an empty legacy_token when both initial
+    legacy_authenticate attempts fail (e.g. transient proxy/Akamai blip).
+    Without this helper, every betting/history endpoint then bails with
+    "Legacy token not available" until the user manually re-logs in.
+
+    Tries to fetch a fresh token using the cached account+password. On
+    success, mutates s in place and persists when session_id is given.
+    Raises HTTPException only if recovery fails — the user gets one
+    auto-recovery shot before being told to re-login.
+    """
+    if s.get("legacy_token"):
+        return
+    pwd = s.get("password")
+    acct = s.get("account_number")
+    if not pwd or not acct:
+        raise HTTPException(400, "Legacy token not available and credentials missing. Re-login to enable betting.")
+    try:
+        legacy_result = await asyncio.to_thread(
+            legacy_authenticate, acct, pwd, s.get("proxy_url"),
+        )
+        token = legacy_result.get("legacy_token", "") if legacy_result else ""
+        if not token:
+            raise HTTPException(400, "Legacy token not available — auth returned empty token. Re-login to enable betting.")
+        s["legacy_token"] = token
+        if session_id:
+            try:
+                await save_tab_session(session_id, s)
+            except Exception as persist_err:
+                logger.warning(f"Failed to persist refreshed legacy token for {acct}: {persist_err}")
+        logger.info(f"Lazy-fetched legacy token for account {acct}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Lazy legacy_authenticate failed for {acct}: {e}")
+        raise HTTPException(400, f"Legacy token not available: {type(e).__name__}: {e}. Re-login to enable betting.")
+
+
 # ─── Login ───────────────────────────────────────────────────────────────────
 
 @app.post("/api/login", response_model=LoginResponse)
@@ -471,8 +511,7 @@ async def api_price_check(req: PriceCheckRequest, _user: dict = Depends(_verify_
 async def api_place_sgm(req: PlaceBetRequest, _user: dict = Depends(_verify_app_token)):
     """Place an SGM bet."""
     s = await _get_session_async(req.session_id)
-    if not s.get("legacy_token"):
-        raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
+    await _ensure_legacy_token(s, req.session_id)
     props = [{"propositionId": p.proposition_id, "odds": p.odds} for p in req.propositions]
     try:
         result = await asyncio.to_thread(
@@ -534,8 +573,7 @@ async def api_place_sgm(req: PlaceBetRequest, _user: dict = Depends(_verify_app_
 async def api_place_multi(req: PlaceMultiRequest, _user: dict = Depends(_verify_app_token)):
     """Place a cross-game multi bet."""
     s = await _get_session_async(req.session_id)
-    if not s.get("legacy_token"):
-        raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
+    await _ensure_legacy_token(s, req.session_id)
     try:
         result = await asyncio.to_thread(
             lambda: place_multi_bet(
@@ -1630,8 +1668,7 @@ async def api_csb_place_one(req: CsbBet, _user: dict = Depends(_verify_app_token
     """Resolve and place a single CSB bet. Auto-reprices on 'Price has changed' (up to 3 attempts).
     If props are already cached from a recent warmup/resolve, uses cached data (fast path ~2s vs ~12s)."""
     s = await _get_session_async(req.session_id)
-    if not s.get("legacy_token"):
-        raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
+    await _ensure_legacy_token(s, req.session_id)
 
     MAX_PRICE_RETRIES = 3
     resolved = None
@@ -2130,8 +2167,7 @@ async def api_place_json(req: JsonBet, _user: dict = Depends(_verify_app_token))
     import random as _random
 
     s = await _get_session_async(req.session_id)
-    if not s.get("legacy_token"):
-        raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
+    await _ensure_legacy_token(s, req.session_id)
 
     resolved = await asyncio.to_thread(lambda: _resolve_json_bet(s["token"], s["legacy_token"], s["proxy_url"], req))
 
@@ -2241,8 +2277,7 @@ async def api_place_json_batch(req: JsonBetBatch, _user: dict = Depends(_verify_
     import random as _random
 
     s = await _get_session_async(req.session_id)
-    if not s.get("legacy_token"):
-        raise HTTPException(400, "Legacy token not available. Re-login to enable betting.")
+    await _ensure_legacy_token(s, req.session_id)
 
     results = []
     for i, bet in enumerate(req.bets):

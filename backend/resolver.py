@@ -797,8 +797,19 @@ def resolve_csb_bet(
             all_props = _get_all_sport_props(token, proxy_url, sport, competition, use_regular=True)
 
         if not all_props:
-            result["error"] = "No propositions found"
-            return result
+            # Empty all_props is usually a transient scraper/cache hiccup
+            # rather than a real "TAB has zero markets" condition. Force a
+            # fresh fetch once before bailing so the user doesn't see the
+            # error for a momentary blip.
+            if bet_type.upper() != "SGM":
+                logger.info(f"No propositions on first fetch for {sport}/{competition} — force-refreshing")
+                all_props = _get_all_sport_props(
+                    token, proxy_url, sport, competition,
+                    force_refresh=True, use_regular=True,
+                )
+            if not all_props:
+                result["error"] = "No propositions found"
+                return result
 
         resolved_props = []
         matched_odds = []
@@ -861,10 +872,17 @@ def resolve_csb_bet(
         result["resolved"] = True
 
         if bet_type.upper() == "SGM" and game_id:
-            # SGM: use TAB pricing service for combined odds
+            # SGM: use TAB pricing service for combined odds. Retry once on
+            # empty response — TAB's pricing service has a brief re-pricing
+            # window where it returns no odds, then resolves on a single retry.
             props_for_price = [{"propositionId": p["propositionId"], "odds": p["odds"]} for p in resolved_props]
             price_result = price_check(token, props_for_price, stake, "SAME_GAME_MULTI", proxy_url)
             combined = price_result.get("combined_odds")
+            if not combined:
+                logger.info(f"Price check returned no odds on first attempt — retrying once")
+                _time.sleep(0.5)
+                price_result = price_check(token, props_for_price, stake, "SAME_GAME_MULTI", proxy_url)
+                combined = price_result.get("combined_odds")
             if combined:
                 result["combined_odds"] = combined
                 result["meets_minimum"] = float(combined) >= min_odds

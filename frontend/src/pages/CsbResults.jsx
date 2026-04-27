@@ -336,10 +336,25 @@ export default function CsbResults() {
   // so a bet where all legs are hit-or-mb1hit is a winning bet (labelled 'mb1'
   // for visibility when any leg used the promo).
   const isMb1EligibleMarket = (legDef, legResult) => {
-    const legName = (legDef && (legDef.name || legDef.selectionName)) || (typeof legDef === 'string' ? legDef : '') || '';
-    const stat = (legResult && legResult.stat) || '';
-    const hay = `${legName} ${stat}`.toLowerCase();
-    return ['pts', 'points', 'disp', 'disposals'].some((k) => hay.includes(k));
+    // TAB's MB1 promo only applies to NBA Points and AFL Disposals — not to
+    // 3-pointers, blocks, rebounds, combo stats (Pts+Reb+Ast), etc. Previous
+    // logic used substring `includes('pts')` which falsely matched "Pts+Reb",
+    // "3Pts", "Pts Scored Q1", and similar non-eligible markets.
+    //
+    // Prefer the parsed canonical stat key when present — that's an exact
+    // match against the leg-results pipeline's normalised stat name. Fall back
+    // to a tight whole-word check on the leg name only when stat is missing.
+    const stat = (legResult && legResult.stat || '').toLowerCase();
+    if (stat) return stat === 'pts' || stat === 'disposals';
+
+    const legName = (legDef && (legDef.name || legDef.selectionName))
+                    || (typeof legDef === 'string' ? legDef : '')
+                    || '';
+    // Reject combo markets outright (e.g. "30+ Pts+Reb+Ast").
+    if (/\+\s*\w+\s*\+/.test(legName)) return false;
+    if (/pts\s*\+|disposals\s*\+|disps\s*\+/i.test(legName)) return false;
+    // Whole-word match on the eligible stat names — "3Pts" / "Pts+" won't match.
+    return /\b(points?|disposals?)\b/i.test(legName);
   };
 
   // Returns 'hit' | 'mb1hit' | 'miss' | 'void' | 'pending' for a single leg.
@@ -392,12 +407,21 @@ export default function CsbResults() {
 
     const lr = legResults[bet.id] || [];
     const legs = bet.legs || [];
+    // When TAB has already settled the bet, any legs we couldn't classify
+    // locally (still 'pending' after settlement) almost certainly correspond
+    // to voided/scratched markets — TAB drops them and prices the rest.
+    // Treat them as 'void' so the bet-level analysis below works the same way
+    // as if our leg parser had detected the void itself (DNP, scratch, etc.).
+    const tabSettled = ['won', 'lost', 'settled - winner', 'settled - loser'].includes(bet._status);
 
     // Classify each leg. legs.map over the bet's leg list so unresolved-but-
     // expected legs (no leg_results row yet) still surface as 'pending'.
-    const classifications = legs.length > 0
+    const rawClassifications = legs.length > 0
       ? legs.map((leg, i) => classifyLeg(leg, lr[i] || null))
       : lr.map((result, i) => classifyLeg(null, result));
+    const classifications = tabSettled
+      ? rawClassifications.map((c) => (c === 'pending' ? 'void' : c))
+      : rawClassifications;
 
     const hasVoid    = classifications.some((c) => c === 'void');
     const hasPending = classifications.some((c) => c === 'pending');
@@ -839,7 +863,7 @@ export default function CsbResults() {
                         value={
                           isWon || isMb1 ? `+$${profit.toFixed(2)}`
                           : isLost       ? `-$${bet._stake.toFixed(2)}`
-                          : isVoid       ? `$${bet._stake.toFixed(2)}`
+                          : isVoid       ? `$${(bet._payout > 0 ? Math.min(bet._payout, bet._stake) : bet._stake).toFixed(2)}`
                           : `$${potReturn.toFixed(2)}`
                         }
                         color={isWon || isMb1 ? C.green : isLost ? C.red : isVoid ? C.muted : C.amber}

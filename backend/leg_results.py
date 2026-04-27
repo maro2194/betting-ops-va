@@ -79,11 +79,17 @@ NBA_STAT_MAP = {
     "blk": "blk",
     "blocks": "blk",
     "block": "blk",
+    "3": "fg3m",
+    "3s": "fg3m",
     "3pm": "fg3m",
+    "3pt": "fg3m",
+    "3pts": "fg3m",
     "3pointers": "fg3m",
     "3-pointers": "fg3m",
+    "threepointers": "fg3m",
     "threes": "fg3m",
     "fg3m": "fg3m",
+    "blks": "blk",
     "pts+reb+ast": "pts_reb_ast",
     "pts+ast": "pts_ast",
     "pts+reb": "pts_reb",
@@ -106,8 +112,10 @@ def parse_leg_name(name: str) -> Optional[dict]:
     if not name or not isinstance(name, str):
         return None
 
-    # Normalise whitespace
-    name = name.strip()
+    # Normalise whitespace and strip apostrophes (both ASCII and curly) — TAB
+    # market names like "10+ 3's" would otherwise fail the [A-Za-z0-9+\-]+ regex
+    # and silently drop from the results table.
+    name = name.strip().replace("’", "").replace("'", "")
 
     # Pattern: SPORT TEAMS LINE+STAT PLAYER_NAME (TEAM)
     # e.g. "AFL Brs-Col 15Disps Harry Perryman (COL)"
@@ -169,7 +177,7 @@ def parse_leg_name(name: str) -> Optional[dict]:
                 r'\((?P<team>[A-Z0-9]+)\)\s*'
                 r'[—\-]+\s*'
                 r'(?P<line>\d+(?:\.\d+)?)\+?\s*'
-                r'(?P<stat_raw>[A-Za-z\s]+?)$',
+                r'(?P<stat_raw>[A-Za-z0-9\s]+?)$',
                 re.IGNORECASE,
             )
             m_v2 = pattern_v2.match(name)
@@ -195,7 +203,7 @@ def parse_leg_name(name: str) -> Optional[dict]:
             pattern_v2_simple = re.compile(
                 r'^(?P<player>.+?)\s+'
                 r'(?P<line>\d+(?:\.\d+)?)\+?\s*'
-                r'(?P<stat_raw>[A-Za-z\s]+?)$',
+                r'(?P<stat_raw>[A-Za-z0-9\s]+?)$',
                 re.IGNORECASE,
             )
             m_v2s = pattern_v2_simple.match(name)
@@ -504,7 +512,11 @@ async def check_afl_leg(client: httpx.AsyncClient, parsed: dict) -> dict:
         # V2 fallback: find game by player's team abbreviation
         if not game and parsed.get("team"):
             team_code = parsed["team"]
-            for rnd in [round_num, round_num - 1]:
+            # Match the 7-round window used by _find_afl_game so V2-formatted
+            # legs (no teams string) get the same lookup reach.
+            for rnd in [round_num, round_num - 1, round_num + 1, round_num - 2, round_num + 2, round_num - 3, round_num + 3]:
+                if rnd < 1:
+                    continue
                 games_data = await _squiggle_get(client, {"q": f"games;year=2026;round={rnd}"})
                 for g in games_data.get("games", []):
                     if _teams_match(g.get("hteam", ""), team_code) or _teams_match(g.get("ateam", ""), team_code):
@@ -709,19 +721,31 @@ async def _get_espn_box_score(client: httpx.AsyncClient, event_id: str) -> list[
             for athlete in stat_group.get("athletes", []):
                 name = athlete.get("athlete", {}).get("displayName", "")
                 raw_stats = athlete.get("stats", [])
+                # DNP detection — when ESPN flags didNotPlay, returns an empty
+                # stats array, or marks "DNP"/"DNP-..." in the stats column the
+                # player was inactive. Their leg should grade as void rather
+                # than sitting pending forever.
+                dnp = bool(athlete.get("didNotPlay"))
+                if not dnp:
+                    if not raw_stats:
+                        dnp = True
+                    elif any(isinstance(v, str) and v.strip().upper().startswith("DNP")
+                             for v in raw_stats):
+                        dnp = True
                 stats = {}
-                for i, label in enumerate(labels):
-                    key = stat_label_map.get(label, label.lower())
-                    if i < len(raw_stats):
-                        try:
-                            # Handle "4-11" FG format — extract made count
-                            val = raw_stats[i]
-                            if "-" in str(val) and key in ("fg", "fg3m", "ft"):
-                                val = val.split("-")[0]
-                            stats[key] = float(val)
-                        except (ValueError, TypeError):
-                            stats[key] = 0
-                all_players.append({"name": name, "stats": stats})
+                if not dnp:
+                    for i, label in enumerate(labels):
+                        key = stat_label_map.get(label, label.lower())
+                        if i < len(raw_stats):
+                            try:
+                                # Handle "4-11" FG format — extract made count
+                                val = raw_stats[i]
+                                if "-" in str(val) and key in ("fg", "fg3m", "ft"):
+                                    val = val.split("-")[0]
+                                stats[key] = float(val)
+                            except (ValueError, TypeError):
+                                stats[key] = 0
+                all_players.append({"name": name, "stats": stats, "dnp": dnp})
 
     _cache_set(cache_key, all_players)
     return all_players
@@ -731,7 +755,9 @@ async def _find_nba_game_by_team(client: httpx.AsyncClient, team_code: str) -> O
     """Find an NBA game on ESPN by a single team abbreviation (fallback when teams string is empty)."""
     espn_abbr = NBA_TEAM_CODES.get(team_code.lower(), team_code.upper())
     from datetime import date, timedelta
-    for offset in [0, -1, 1]:
+    # Widened from [0, -1, 1] — late-graded bets (2-3 days post game) were
+    # showing "Game not found" because the lookup couldn't see far enough back.
+    for offset in [0, -1, -2, -3, 1, 2]:
         d = date.today() + timedelta(days=offset)
         date_str = d.strftime("%Y%m%d")
         data = await _espn_get(client, f"{ESPN_NBA_BASE}/scoreboard?dates={date_str}")
@@ -802,6 +828,13 @@ async def check_nba_leg(client: httpx.AsyncClient, parsed: dict) -> dict:
         if not best_player or best_score < 3:
             result["note"] = f"Player '{parsed['player']}' not found in box score"
             result["result"] = "pending"
+            return result
+
+        # DNP / inactive — TAB voids the leg, so we should too instead of
+        # leaving it pending forever after game completion.
+        if best_player.get("dnp"):
+            result["result"] = "void"
+            result["note"] = f"{best_player['name']} did not play"
             return result
 
         stat_key = parsed["stat"]
