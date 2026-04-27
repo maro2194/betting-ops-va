@@ -34,6 +34,22 @@ logger = logging.getLogger(__name__)
 BETOPS_URL = os.environ.get("BETOPS_URL", "https://www.betops.sh/api/bets")
 BETOPS_TIMEOUT = 10.0
 
+# Comma-separated allowlist of BotOps usernames whose bets get forwarded to
+# BetOps. Default is just "maro" while the BetOps integration is being
+# stabilised — other users' bets are silently skipped (no outbox entry, no
+# retries, no log noise). Unset or set to "*" to allow every user.
+BETOPS_USERNAME_ALLOWLIST = {
+    u.strip().lower()
+    for u in os.environ.get("BETOPS_USERNAME_ALLOWLIST", "maro").split(",")
+    if u.strip()
+}
+
+
+def _betops_user_allowed(username: str) -> bool:
+    if "*" in BETOPS_USERNAME_ALLOWLIST:
+        return True
+    return (username or "").lower() in BETOPS_USERNAME_ALLOWLIST
+
 # Source tags in BotOps that represent promo activity. Everything else maps to non_promo.
 # Bonus-bet detection is deliberately omitted for this first pass per operator instruction.
 PROMO_SOURCE_TAGS = {
@@ -450,6 +466,8 @@ async def emit_grade_to_betops(
 
     No-op for statuses that don't map (Pending, Placed, etc). Fire-and-forget
     with outbox retry — same guarantees as Create."""
+    if not _betops_user_allowed(username):
+        return
     mapped = _map_status_for_grading(local_status)
     if not mapped:
         return
@@ -578,6 +596,8 @@ async def _persist_betops_id(pool, table: str, local_bet_id: str, betops_bet_id:
 
 async def emit_to_betops(bet: dict, username: str, pool) -> None:
     """TAB flavor — called from database.save_bet. Fire-and-forget, never raises."""
+    if not _betops_user_allowed(username):
+        return
     bet_id = bet.get("id") or ""
     try:
         account_email = await _lookup_email(username, bet.get("account_number", ""), pool)
@@ -647,6 +667,8 @@ def _racing_activity(stake_type: Optional[str]) -> str:
 
 async def emit_racing_bet_to_betops(mb: dict, username: str, pool) -> None:
     """Racing/multi-bookie flavor — called from multi_database.save_multi_bet."""
+    if not _betops_user_allowed(username):
+        return
     bet_id = mb.get("id") or ""
     try:
         platform = mb.get("platform", "")
@@ -708,6 +730,8 @@ async def emit_bet365_pick_to_betops(pick: dict, username: str, pool) -> None:
 
     Skipped picks (pipeline filtered them out before placement) don't belong in
     BetOps — they're not real bets. The caller should gate on pick['placed']."""
+    if not _betops_user_allowed(username):
+        return
     bet_id = pick.get("id") or ""
     try:
         if not pick.get("placed"):
