@@ -140,6 +140,7 @@ APP_USERS = {
     "shadow": {"password_hash": "224e690ddf7786edfd76b8cc372fffad88be3c5694268e1e439fa9740080bd18", "name": "Shadow"},
     "smd": {"password_hash": "758dcca888a1f019019cde2f3f127107590de40e344a1b2dd0dc566baad9d009", "name": "SMD"},
     "shadowxmaro": {"password_hash": "224e690ddf7786edfd76b8cc372fffad88be3c5694268e1e439fa9740080bd18", "name": "ShadowXMaro"},
+    "csb": {"password_hash": "b75bdd4bf010afa5c0448eec8c6ed8fc899413c9391d46c1d6b1846839b4e03a", "name": "CSB"},
 }
 
 # Active app auth tokens: token -> {username, name, created_at}
