@@ -240,6 +240,70 @@ def _get_session(session_id: str) -> dict:
     return s
 
 
+_PROXY_ERROR_MARKERS = (
+    "tunnel failed",
+    "curl: (56)",
+    "curl: (7)",
+    "could not resolve proxy",
+    "proxy connect",
+    "connection reset by peer",
+    "remote end closed connection",
+)
+
+
+def _is_proxy_error(msg: object) -> bool:
+    """Detect proxy-level transport failures (dead Oxylabs sticky IP, CONNECT
+    tunnel 502, etc.) — distinct from TAB API errors. These are the cases
+    where rotating to a fresh sessid is the correct recovery."""
+    if not msg:
+        return False
+    m = str(msg).lower()
+    return any(p in m for p in _PROXY_ERROR_MARKERS)
+
+
+def _rotate_oxylabs_sessid(proxy_url: str) -> str | None:
+    """Replace the Oxylabs sessid segment with a fresh 12-char hex value.
+    Returns None if the URL doesn't match Oxylabs's pattern (so we don't
+    rotate non-Oxylabs proxies)."""
+    if not proxy_url or "sessid-" not in proxy_url or "oxylabs" not in proxy_url:
+        return None
+    m = re.search(r'(sessid-)([^-]+)(-)', proxy_url)
+    if not m:
+        return None
+    new_sess = secrets.token_hex(6)
+    return proxy_url[:m.start(2)] + new_sess + proxy_url[m.end(2):]
+
+
+async def _rotate_account_proxy(s: dict, session_id: str | None = None) -> str | None:
+    """Generate a fresh Oxylabs sessid, persist to tab_accounts and
+    tab_sessions, and mutate the in-memory session dict so the rotated
+    proxy is used immediately. Returns the new URL on success, None if the
+    rotation couldn't apply (non-Oxylabs proxy etc) so the caller falls
+    through to the original error."""
+    old_proxy = s.get("proxy_url") or ""
+    new_proxy = _rotate_oxylabs_sessid(old_proxy)
+    if not new_proxy:
+        return None
+    s["proxy_url"] = new_proxy
+    email = s.get("email")
+    if email:
+        try:
+            async with database.pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE tab_accounts SET proxy_url = $1, updated_at = NOW() WHERE email = $2",
+                    new_proxy, email,
+                )
+        except Exception as e:
+            logger.warning(f"Auto-rotate: failed to persist proxy to tab_accounts for {email}: {e}")
+    if session_id:
+        try:
+            await save_tab_session(session_id, s)
+        except Exception as e:
+            logger.warning(f"Auto-rotate: failed to persist proxy to tab_sessions: {e}")
+    logger.info(f"Auto-rotated proxy for {email or session_id} after tunnel error")
+    return new_proxy
+
+
 async def _ensure_legacy_token(s: dict, session_id: str | None = None) -> None:
     """Lazy-fetch the TabcorpAuth legacy token if missing.
 
@@ -404,16 +468,29 @@ async def api_login(req: LoginRequest, _user: dict = Depends(_verify_app_token))
 
 @app.get("/api/balance")
 async def api_balance(session_id: str, _user: dict = Depends(_verify_app_token)) -> BalanceResponse:
-    """Get current account balance."""
+    """Get current account balance.
+
+    Auto-rotates the Oxylabs sessid once on tunnel-level failures (curl 56,
+    502 from CONNECT, etc) — those indicate a dead sticky IP, and a fresh
+    sessid pulls a new IP from the pool. TAB API errors (401/4xx) are not
+    rotated since they aren't the proxy's fault."""
     s = await _get_session_async(session_id)
-    try:
-        bal = await asyncio.to_thread(get_balance, s["token"], s["customer_id"], s["proxy_url"])
-        return BalanceResponse(
-            account_balance=bal["account_balance"],
-            withdrawal_balance=bal["withdrawal_balance"],
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Balance check failed: {str(e)}")
+    last_err = None
+    for attempt in (1, 2):
+        try:
+            bal = await asyncio.to_thread(get_balance, s["token"], s["customer_id"], s["proxy_url"])
+            return BalanceResponse(
+                account_balance=bal["account_balance"],
+                withdrawal_balance=bal["withdrawal_balance"],
+            )
+        except Exception as e:
+            last_err = str(e)
+            if attempt == 1 and _is_proxy_error(last_err):
+                if await _rotate_account_proxy(s, session_id):
+                    logger.info(f"Balance check: rotated proxy after tunnel error ({last_err[:120]}); retrying")
+                    continue
+            break
+    raise HTTPException(500, f"Balance check failed: {last_err}")
 
 
 # ─── Matches ─────────────────────────────────────────────────────────────────
