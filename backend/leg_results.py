@@ -805,27 +805,14 @@ async def check_nba_leg(client: httpx.AsyncClient, parsed: dict) -> dict:
             result["note"] = "No player stats available yet"
             return result
 
-        # Find the player
-        target = _normalize_player_name(parsed["player"])
-        best_player = None
-        best_score = 0
-        for p in players:
-            pname = _normalize_player_name(p["name"])
-            # Score matching
-            score = 0
-            target_last = target.split()[-1] if target else ""
-            pname_last = pname.split()[-1] if pname else ""
-            if target == pname:
-                score = 10
-            elif target_last and target_last == pname_last:
-                score = 5
-            elif target in pname or pname in target:
-                score = 3
-            if score > best_score:
-                best_score = score
-                best_player = p
-
-        if not best_player or best_score < 3:
+        # Find the player using the shared fuzzy matcher — handles abbreviated
+        # first names ("Shai G-Alexander" → "Shai Gilgeous-Alexander"), aliases
+        # ("SGA"), and tokenised surname matches via PLAYER_ALIASES expansion.
+        # The previous inline NBA matcher only did substring + last-name
+        # comparisons on the *normalized* (no-space) string, which couldn't
+        # see past abbreviated middle names.
+        best_player = _find_player(players, parsed["player"])
+        if not best_player:
             result["note"] = f"Player '{parsed['player']}' not found in box score"
             result["result"] = "pending"
             return result
