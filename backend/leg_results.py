@@ -116,6 +116,11 @@ def parse_leg_name(name: str) -> Optional[dict]:
     # market names like "10+ 3's" would otherwise fail the [A-Za-z0-9+\-]+ regex
     # and silently drop from the results table.
     name = name.strip().replace("’", "").replace("'", "")
+    # Collapse a space between the line "+" and the stat token (TAB sometimes
+    # writes "2+ 3s" instead of "2+3s"). Without this, the line regex consumes
+    # "2+" and stat_raw greedily matches the lone "+" before the space, giving
+    # stat="+" and a "Stat '+' not in box score" error.
+    name = re.sub(r'(\d)\+\s+(?=[A-Za-z0-9])', r'\1+', name)
 
     # Pattern: SPORT TEAMS LINE+STAT PLAYER_NAME (TEAM)
     # e.g. "AFL Brs-Col 15Disps Harry Perryman (COL)"
