@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api';
 import { useSessions } from '../context/SessionContext';
-import { User, Wifi, WifiOff, RefreshCw, Trash2, LogIn, Plus, X, TrendingUp, TrendingDown, Clock, Activity, LayoutGrid, List, Pencil } from 'lucide-react';
+import { User, Wifi, WifiOff, RefreshCw, Trash2, LogIn, Plus, X, TrendingUp, TrendingDown, Clock, Activity, LayoutGrid, List, Pencil, Wallet } from 'lucide-react';
 
 function StatCard({ label, value, icon: Icon, trend, trendLabel, color }) {
   return (
@@ -146,7 +146,7 @@ function AccountModal({ onClose, onSaved, editAccount }) {
   );
 }
 
-function AccountCard({ account, session, onLogin, onDelete, onLogout, onEdit }) {
+function AccountCard({ account, session, onLogin, onDelete, onLogout, onEdit, onBalanceUpdate }) {
   const [loginLoading, setLoginLoading] = useState(false);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [balance, setBalance] = useState(null);
@@ -161,7 +161,7 @@ function AccountCard({ account, session, onLogin, onDelete, onLogout, onEdit }) 
       autoFetched.current = true;
       setBalanceLoading(true);
       api.getBalance(session.session_id)
-        .then((bal) => setBalance(bal))
+        .then((bal) => { setBalance(bal); onBalanceUpdate?.(account.id, bal); })
         .catch(() => {})
         .finally(() => setBalanceLoading(false));
     }
@@ -173,7 +173,9 @@ function AccountCard({ account, session, onLogin, onDelete, onLogout, onEdit }) 
     try {
       const result = await onLogin(account);
       if (result.balance !== undefined) {
-        setBalance({ account_balance: result.balance });
+        const bal = { account_balance: result.balance };
+        setBalance(bal);
+        onBalanceUpdate?.(account.id, bal);
       }
     } catch (err) {
       setError(err.message);
@@ -188,6 +190,7 @@ function AccountCard({ account, session, onLogin, onDelete, onLogout, onEdit }) 
     try {
       const bal = await api.getBalance(session.session_id);
       setBalance(bal);
+      onBalanceUpdate?.(account.id, bal);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -198,7 +201,7 @@ function AccountCard({ account, session, onLogin, onDelete, onLogout, onEdit }) 
   return (
     <div className="card card-interactive">
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, minWidth: 0 }}>
           <div
             style={{
               width: 36,
@@ -215,13 +218,13 @@ function AccountCard({ account, session, onLogin, onDelete, onLogout, onEdit }) 
           </div>
           <div>
             <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>{account.label}</h3>
-            <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>{account.email}</p>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{account.email}</p>
             {(session?.account_number || account.accountNumber) && (
               <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>#{session?.account_number || account.accountNumber}</p>
             )}
           </div>
         </div>
-        <span className={`badge ${isOnline ? 'badge-success' : 'badge-neutral'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        <span className={`badge ${isOnline ? 'badge-success' : 'badge-neutral'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, whiteSpace: 'nowrap' }}>
           {isOnline ? <Wifi size={11} /> : <WifiOff size={11} />}
           {isOnline ? 'Online' : 'Offline'}
         </span>
@@ -250,7 +253,7 @@ function AccountCard({ account, session, onLogin, onDelete, onLogout, onEdit }) 
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {!isOnline ? (
           <button
             onClick={handleLogin}
@@ -384,7 +387,31 @@ export default function Dashboard() {
   const [editAccount, setEditAccount] = useState(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('card');
+  const [balances, setBalances] = useState({});
   const { sessions, addSession, removeSession } = useSessions();
+
+  const [refreshAllRunning, setRefreshAllRunning] = useState(false);
+
+  const onBalanceUpdate = useCallback((accountId, bal) => {
+    setBalances((prev) => ({ ...prev, [accountId]: bal }));
+  }, []);
+
+  const handleRefreshAllBalances = async () => {
+    setRefreshAllRunning(true);
+    const onlineAccounts = accounts.filter((a) => {
+      const s = sessions[a.id];
+      return !!s?.session_id && (!s.token_exp || Date.now() / 1000 < s.token_exp - 300);
+    });
+    await Promise.allSettled(
+      onlineAccounts.map(async (acc) => {
+        try {
+          const bal = await api.getBalance(sessions[acc.id].session_id);
+          onBalanceUpdate(acc.id, bal);
+        } catch {}
+      })
+    );
+    setRefreshAllRunning(false);
+  };
 
   const fetchAccounts = useCallback(async () => {
     try {
@@ -502,6 +529,13 @@ export default function Dashboard() {
     ? ((betStats.won / (betStats.won + betStats.lost)) * 100).toFixed(1)
     : '0.0';
 
+  const parseMoney = (v) => parseFloat(String(v || '0').replace(/[$,]/g, '')) || 0;
+  const totalBalance = Object.values(balances).reduce((sum, b) => sum + parseMoney(b?.account_balance), 0);
+  const onlineCount = accounts.filter((a) => {
+    const s = sessions[a.id];
+    return !!s?.session_id && (!s.token_exp || Date.now() / 1000 < s.token_exp - 300);
+  }).length;
+
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-secondary)' }}>
@@ -542,6 +576,14 @@ export default function Dashboard() {
           trendLabel={`$${(betStats.settledStake || 0).toFixed(2)} settled`}
           color={betStats.pl >= 0 ? 'var(--success-muted)' : 'var(--danger-muted)'}
         />
+        <StatCard
+          label="Total Balance"
+          value={`$${totalBalance.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          icon={Wallet}
+          trend={onlineCount > 0 ? 1 : 0}
+          trendLabel={`${onlineCount}/${accounts.length} online`}
+          color="var(--accent-muted)"
+        />
       </div>
 
       {/* Accounts header */}
@@ -572,6 +614,16 @@ export default function Dashboard() {
               <List size={14} style={{ color: viewMode === 'table' ? 'var(--text-primary)' : 'var(--text-muted)' }} />
             </button>
           </div>
+          {onlineCount > 0 && (
+            <button
+              onClick={handleRefreshAllBalances}
+              disabled={refreshAllRunning}
+              className="btn btn-secondary"
+            >
+              <RefreshCw size={14} className={refreshAllRunning ? 'animate-spin' : ''} />
+              {refreshAllRunning ? 'Refreshing...' : 'Refresh All'}
+            </button>
+          )}
           {accounts.some((a) => !sessions[a.id]?.session_id) && (
             <button
               onClick={handleLoginAll}
@@ -611,6 +663,7 @@ export default function Dashboard() {
               onDelete={handleDelete}
               onLogout={handleLogout}
               onEdit={(a) => setEditAccount(a)}
+              onBalanceUpdate={onBalanceUpdate}
             />
           ))}
         </div>

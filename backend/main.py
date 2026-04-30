@@ -925,6 +925,16 @@ async def api_check_results(session_id: str = None, _user: dict = Depends(_verif
     accounts_checked = []
     accounts_failed = []
 
+    # Pre-load tab_accounts for this user so we can fall back to DB auth
+    db_accounts_by_num = {}
+    try:
+        db_accounts = await get_accounts(_user["username"])
+        for a in db_accounts:
+            if a.get("account_number"):
+                db_accounts_by_num[a["account_number"]] = a
+    except Exception:
+        pass
+
     for acct_num, acct_bets in pending_by_account.items():
         # Find a session for this account
         session_found = None
@@ -935,8 +945,36 @@ async def api_check_results(session_id: str = None, _user: dict = Depends(_verif
                 session_sid = sid
                 break
 
+        # Fallback: no in-memory session (multi-worker issue) — auth fresh from DB credentials
+        if not session_found and acct_num in db_accounts_by_num:
+            db_acct = db_accounts_by_num[acct_num]
+            try:
+                logger.info(f"check-results: no in-memory session for {acct_num}, doing fresh legacy auth")
+                legacy_result = await asyncio.to_thread(
+                    lambda acct=db_acct: legacy_authenticate(
+                        acct["account_number"],
+                        acct["password"],
+                        acct.get("proxy_url"),
+                    )
+                )
+                token = legacy_result.get("legacy_token", "")
+                if token:
+                    session_found = {
+                        "legacy_token": token,
+                        "account_number": acct_num,
+                        "password": db_acct["password"],
+                        "proxy_url": db_acct.get("proxy_url"),
+                    }
+                    logger.info(f"check-results: fresh legacy auth successful for {acct_num}")
+                else:
+                    accounts_failed.append({"account": acct_num, "error": "Fresh auth returned no token"})
+                    continue
+            except Exception as e:
+                accounts_failed.append({"account": acct_num, "error": f"Fresh auth failed: {e}"})
+                continue
+
         if not session_found:
-            accounts_failed.append({"account": acct_num, "error": "No active session — login required"})
+            accounts_failed.append({"account": acct_num, "error": "No active session and no DB credentials"})
             continue
 
         # Fetch TAB bets for this account — paginate up to 5 pages (500 bets) to find older ones

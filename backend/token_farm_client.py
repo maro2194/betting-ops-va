@@ -162,6 +162,48 @@ async def pointsbet_login(email: str, password: str, proxy_url: str | None = Non
 
 # ─── bet365 ──────────────────────────────────────────────────────────────────
 
+async def bet365_get_sessions() -> dict:
+    """Get active bet365 sessions from the token farm."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{FARM_URL}/auth/bet365/status",
+                headers=_headers(),
+            )
+        if resp.status_code == 200:
+            return resp.json()
+        return {"active_sessions": 0, "sessions": {}}
+    except Exception:
+        return {"active_sessions": 0, "sessions": {}}
+
+
+async def bet365_get_or_login(username: str, password: str, proxy_url: str | None = None) -> dict:
+    """Reuse an existing alive AND logged-in bet365 session, or login fresh."""
+    status = await bet365_get_sessions()
+    sessions = status.get("sessions", {})
+    for sid, info in sessions.items():
+        if info.get("alive") and info.get("username") == username:
+            # Verify session is actually logged in (not just alive browser)
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.get(
+                        f"{FARM_URL}/bet365/debug/{sid}",
+                        headers=_headers(),
+                    )
+                if resp.status_code == 200:
+                    debug = resp.json()
+                    page_text = debug.get("text", "")
+                    if "My Bets" in page_text and "Log In" not in page_text:
+                        logger.info(f"bet365: reusing logged-in session {sid} for {username}")
+                        return {"success": True, "session_id": sid, "reused": True}
+                    else:
+                        logger.info(f"bet365: session {sid} alive but logged out, skipping")
+            except Exception as e:
+                logger.warning(f"bet365: debug check failed for {sid}: {e}")
+    logger.info(f"bet365: no logged-in session for {username}, doing fresh login")
+    return await bet365_login(username, password, proxy_url=proxy_url)
+
+
 async def bet365_login(username: str, password: str, proxy_url: str | None = None) -> dict:
     """Request Camoufox-based bet365 login from the token farm.
 

@@ -19,6 +19,60 @@ import database
 
 logger = logging.getLogger("bet365_routes")
 
+# bet365 uses abbreviated team names — map common inputs to what appears on the page
+_TEAM_ALIASES = {
+    # NBA
+    "san antonio": "SA Spurs", "spurs": "SA Spurs", "sa spurs": "SA Spurs",
+    "portland": "POR Trail Blazers", "trail blazers": "POR Trail Blazers", "blazers": "POR Trail Blazers",
+    "boston": "BOS Celtics", "celtics": "BOS Celtics",
+    "philadelphia": "PHI 76ers", "76ers": "PHI 76ers", "sixers": "PHI 76ers",
+    "new york": "NY Knicks", "knicks": "NY Knicks", "ny knicks": "NY Knicks",
+    "atlanta": "ATL Hawks", "hawks": "ATL Hawks",
+    "los angeles lakers": "LA Lakers", "lakers": "LA Lakers",
+    "los angeles clippers": "LA Clippers", "clippers": "LA Clippers",
+    "golden state": "GS Warriors", "warriors": "GS Warriors",
+    "dallas": "DAL Mavericks", "mavericks": "DAL Mavericks", "mavs": "DAL Mavericks",
+    "denver": "DEN Nuggets", "nuggets": "DEN Nuggets",
+    "milwaukee": "MIL Bucks", "bucks": "MIL Bucks",
+    "miami": "MIA Heat", "heat": "MIA Heat",
+    "phoenix": "PHX Suns", "suns": "PHX Suns",
+    "minnesota": "MIN Timberwolves", "timberwolves": "MIN Timberwolves", "wolves": "MIN Timberwolves",
+    "oklahoma city": "OKC Thunder", "thunder": "OKC Thunder", "okc": "OKC Thunder",
+    "cleveland": "CLE Cavaliers", "cavaliers": "CLE Cavaliers", "cavs": "CLE Cavaliers",
+    "memphis": "MEM Grizzlies", "grizzlies": "MEM Grizzlies",
+    "sacramento": "SAC Kings", "kings": "SAC Kings",
+    "indiana": "IND Pacers", "pacers": "IND Pacers",
+    "orlando": "ORL Magic", "magic": "ORL Magic",
+    "houston": "HOU Rockets", "rockets": "HOU Rockets",
+    "chicago": "CHI Bulls", "bulls": "CHI Bulls",
+    "detroit": "DET Pistons", "pistons": "DET Pistons",
+    "toronto": "TOR Raptors", "raptors": "TOR Raptors",
+    "charlotte": "CHA Hornets", "hornets": "CHA Hornets",
+    "washington": "WAS Wizards", "wizards": "WAS Wizards",
+    "brooklyn": "BKN Nets", "nets": "BKN Nets",
+    "new orleans": "NO Pelicans", "pelicans": "NO Pelicans",
+    "utah": "UTA Jazz", "jazz": "UTA Jazz",
+    # NRL
+    "broncos": "Brisbane", "cowboys": "North Queensland", "roosters": "Sydney Roosters",
+    "rabbitohs": "South Sydney", "panthers": "Penrith", "storm": "Melbourne",
+    "eels": "Parramatta", "sea eagles": "Manly", "knights": "Newcastle",
+    "raiders": "Canberra", "sharks": "Cronulla", "titans": "Gold Coast",
+    "warriors": "New Zealand", "bulldogs": "Canterbury", "dragons": "St George Illawarra",
+    "wests tigers": "Wests Tigers", "dolphins": "Dolphins",
+    # AFL
+    "magpies": "Collingwood", "blues": "Carlton", "cats": "Geelong",
+    "bombers": "Essendon", "demons": "Melbourne", "swans": "Sydney",
+    "power": "Port Adelaide", "crows": "Adelaide", "dockers": "Fremantle",
+    "eagles": "West Coast", "giants": "GWS", "lions": "Brisbane Lions",
+    "kangaroos": "North Melbourne", "saints": "St Kilda", "tigers": "Richmond",
+    "suns": "Gold Coast", "hawks": "Hawthorn",
+}
+
+
+def _resolve_team(team: str) -> str:
+    """Resolve a team alias to the bet365 display name."""
+    return _TEAM_ALIASES.get(team.lower().strip(), team)
+
 router = APIRouter(prefix="/api/bet365", tags=["bet365"])
 
 
@@ -307,7 +361,7 @@ class MegaBoostRequest(BaseModel):
 @router.post("/megaboost")
 async def place_megaboost(req: MegaBoostRequest):
     """Place a Mega Boost / Bet Boost via Token Farm browser."""
-    from token_farm_client import bet365_login, bet365_megaboost as farm_megaboost
+    from token_farm_client import bet365_get_or_login, bet365_megaboost as farm_megaboost
 
     # Login first if no session
     proxy_url = f"http://{os.environ.get('BET365_PROXY_USER', 'user001')}:{os.environ.get('BET365_PROXY_PASS', 'pizza33')}@{os.environ.get('BET365_PROXY_HOST', '')}:{os.environ.get('BET365_PROXY_PORT', '12323')}"
@@ -317,19 +371,20 @@ async def place_megaboost(req: MegaBoostRequest):
     if not username:
         raise HTTPException(400, "No bet365 username provided")
 
-    # Login via Token Farm
-    login_result = await bet365_login(username, password, proxy_url=proxy_url)
+    # Reuse existing session or login via Token Farm
+    login_result = await bet365_get_or_login(username, password, proxy_url=proxy_url)
     if not login_result.get("success"):
         raise HTTPException(502, f"bet365 login failed: {login_result.get('error')}")
 
     session_id = login_result["session_id"]
+    resolved_team = _resolve_team(req.match_team)
     logger.info(f"bet365 megaboost: logged in as {username}, session={session_id}, balance=${login_result.get('balance')}")
 
     # Place megaboost
     result = await farm_megaboost(
         session_id=session_id,
         sport=req.sport,
-        match_team=req.match_team,
+        match_team=resolved_team,
         stake=req.stake,
         boost_index=req.boost_index,
     )
@@ -370,7 +425,7 @@ class ScanBoostsRequest(BaseModel):
 async def scan_boosts(req: ScanBoostsRequest):
     """Start boost scan as async job. Returns job_id to poll."""
     import uuid as _uuid
-    from token_farm_client import bet365_login, bet365_megaboost, bet365_scan_boosts
+    from token_farm_client import bet365_get_or_login, bet365_megaboost, bet365_scan_boosts
 
     username = os.environ.get("BET365_USERNAME", "")
     password = os.environ.get("BET365_PASSWORD", "")
@@ -382,7 +437,7 @@ async def scan_boosts(req: ScanBoostsRequest):
 
     async def run_scan():
         try:
-            login_result = await bet365_login(username, password)
+            login_result = await bet365_get_or_login(username, password)
             if not login_result.get("success"):
                 await _save_job(job_id, "scan_boosts", "done", {"success": False, "error": f"Login failed: {login_result.get('error')}", "boosts": []})
                 return
@@ -395,7 +450,7 @@ async def scan_boosts(req: ScanBoostsRequest):
                 result = await bet365_megaboost(
                     session_id=session_id,
                     sport=req.sport,
-                    match_team=req.match_team,
+                    match_team=_resolve_team(req.match_team),
                     stake=0,
                     boost_index=999,
                 )
@@ -452,7 +507,7 @@ async def place_megaboost_all(req: MegaBoostAllRequest):
         try:
             result = await bet365_megaboost_all(
                 sport=req.sport,
-                match_team=req.match_team,
+                match_team=_resolve_team(req.match_team),
                 stake=req.stake,
                 boost_index=req.boost_index,
                 accounts=req.accounts,

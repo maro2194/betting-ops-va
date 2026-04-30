@@ -53,6 +53,28 @@ async def bet365_browser_login(username: str, password: str, proxy_url: str | No
         await page.goto("https://www.bet365.com.au/", timeout=60000)
         await page.wait_for_timeout(8000)
 
+        # Wait for auth buttons to appear — refresh once if they don't
+        for load_attempt in range(2):
+            auth_visible = False
+            for text in ["Log In", "Join"]:
+                els = page.get_by_text(text, exact=True)
+                if await els.count() > 0:
+                    for i in range(await els.count()):
+                        try:
+                            if await els.nth(i).is_visible():
+                                auth_visible = True
+                                break
+                        except Exception:
+                            continue
+                if auth_visible:
+                    break
+            if auth_visible:
+                break
+            if load_attempt == 0:
+                logger.info("bet365: no auth buttons visible, refreshing page")
+                await page.reload(timeout=60000)
+                await page.wait_for_timeout(10000)
+
         # Accept cookies if consent overlay is present — try multiple selectors
         for cookie_sel in [
             page.get_by_text("Accept All", exact=True),
@@ -88,9 +110,46 @@ async def bet365_browser_login(username: str, password: str, proxy_url: str | No
             await page.wait_for_timeout(3000)
 
         if not clicked:
-            logger.warning("bet365: no visible Log In button found after retries")
+            logger.warning("bet365: no visible Log In button found after retries, trying JS fallback")
+            try:
+                await page.evaluate("""() => {
+                    const containers = document.querySelectorAll('[class*="lms-"], [class*="slm2-"], [class*="LoginModule"]');
+                    containers.forEach(el => {
+                        el.style.display = 'block';
+                        el.style.visibility = 'visible';
+                        el.style.opacity = '1';
+                        el.style.position = 'relative';
+                        el.style.zIndex = '99999';
+                        let parent = el.parentElement;
+                        for (let i = 0; i < 5 && parent; i++) {
+                            parent.style.display = parent.style.display === 'none' ? 'block' : parent.style.display;
+                            parent.style.visibility = 'visible';
+                            parent.style.opacity = '1';
+                            parent = parent.parentElement;
+                        }
+                    });
+                }""")
+                await page.wait_for_timeout(1000)
+                logger.info("bet365: forced login form visible via JS")
+            except Exception as e:
+                logger.warning(f"bet365: JS force-show failed: {e}")
 
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(5000)
+
+        # Verify login form appeared — if not, try clicking Log In again
+        form_check = page.locator("input[type='password']")
+        if await form_check.count() == 0 or not await form_check.first.is_visible():
+            logger.info("bet365: form not open after first click, retrying Log In click")
+            login_btns = page.get_by_text("Log In", exact=True)
+            for i in range(await login_btns.count()):
+                try:
+                    if await login_btns.nth(i).is_visible():
+                        await login_btns.nth(i).click()
+                        logger.info("bet365: re-clicked Log In header")
+                        break
+                except Exception:
+                    continue
+            await page.wait_for_timeout(5000)
 
         # Fill username — try placeholder-based (stable across redesigns), then class-based
         username_filled = False
@@ -102,51 +161,156 @@ async def bet365_browser_login(username: str, password: str, proxy_url: str | No
             "input.slm2-c7",
         ]:
             el = page.locator(sel)
-            if await el.count() > 0 and await el.first.is_visible():
-                await el.first.fill(username)
-                username_filled = True
-                logger.info(f"bet365: filled username via {sel}")
-                break
+            if await el.count() > 0:
+                # Try visible first, then force-fill even if not visible (proxy pages hide the form)
+                try:
+                    if await el.first.is_visible():
+                        await el.first.fill(username)
+                        username_filled = True
+                        logger.info(f"bet365: filled username via {sel}")
+                        break
+                except Exception:
+                    pass
+
+        # Fallback: fill via JavaScript nativeSet if Playwright fill didn't work
+        if not username_filled:
+            logger.info("bet365: username not visible, trying JS nativeSet fallback")
+            try:
+                js_filled = await page.evaluate("""(username) => {
+                    const selectors = [
+                        'input[placeholder="Username or email address"]',
+                        'input[placeholder*="Username"]',
+                        '.lms-StandardLogin_Username input',
+                        'input[class*="slm2"]'
+                    ];
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (el) {
+                            const nativeSet = Object.getOwnPropertyDescriptor(
+                                window.HTMLInputElement.prototype, 'value'
+                            ).set;
+                            nativeSet.call(el, username);
+                            el.dispatchEvent(new Event('input', {bubbles: true}));
+                            el.dispatchEvent(new Event('change', {bubbles: true}));
+                            return sel;
+                        }
+                    }
+                    return null;
+                }""", username)
+                if js_filled:
+                    username_filled = True
+                    logger.info(f"bet365: filled username via JS nativeSet ({js_filled})")
+            except Exception as e:
+                logger.warning(f"bet365: JS nativeSet username failed: {e}")
 
         if not username_filled:
+            try:
+                await page.screenshot(path="/tmp/b365_login_fail.png")
+                url = page.url
+                logger.error(f"bet365: login form not found. URL: {url}")
+            except Exception:
+                pass
             await browser.__aexit__(None, None, None)
             return {"success": False, "error": "bet365 login form not found — username input missing"}
 
         await page.wait_for_timeout(500)
 
         # Fill password
+        password_filled = False
         pass_input = page.locator("input[type='password']")
         if await pass_input.count() > 0:
-            await pass_input.first.fill(password)
-            logger.info("bet365: filled password")
-        else:
+            try:
+                if await pass_input.first.is_visible():
+                    await pass_input.first.fill(password)
+                    password_filled = True
+                    logger.info("bet365: filled password via locator")
+            except Exception:
+                pass
+        if not password_filled:
+            try:
+                js_pw = await page.evaluate("""(password) => {
+                    const el = document.querySelector('input[type="password"]');
+                    if (el) {
+                        const nativeSet = Object.getOwnPropertyDescriptor(
+                            window.HTMLInputElement.prototype, 'value'
+                        ).set;
+                        nativeSet.call(el, password);
+                        el.dispatchEvent(new Event('input', {bubbles: true}));
+                        el.dispatchEvent(new Event('change', {bubbles: true}));
+                        return true;
+                    }
+                    return false;
+                }""", password)
+                if js_pw:
+                    password_filled = True
+                    logger.info("bet365: filled password via JS nativeSet")
+            except Exception as e:
+                logger.warning(f"bet365: JS nativeSet password failed: {e}")
+        if not password_filled:
             await browser.__aexit__(None, None, None)
             return {"success": False, "error": "bet365 password input not found"}
 
         await page.wait_for_timeout(500)
 
-        # Click submit — find the "Log In" button inside the form (last visible one)
-        login_btns = page.get_by_text("Log In", exact=True)
-        count = await login_btns.count()
+        # Click submit — find the form submit button (not the header "Log In" link)
         submitted = False
-        for i in range(count - 1, -1, -1):
-            try:
-                if await login_btns.nth(i).is_visible():
-                    await login_btns.nth(i).click()
-                    submitted = True
-                    logger.info(f"bet365: clicked submit (button {i})")
-                    break
-            except Exception:
-                continue
+        # Try form-specific selectors first (more reliable than text matching)
+        for sel in ["button.slm2-f5", ".lms-LoginButton", "button[class*='LoginButton']"]:
+            el = page.locator(sel)
+            if await el.count() > 0 and await el.first.is_visible():
+                await el.first.click()
+                submitted = True
+                logger.info(f"bet365: clicked submit via {sel}")
+                break
 
         if not submitted:
-            # Fallback: try class-based selectors
-            for sel in [".lms-LoginButton", "button[class*='LoginButton']"]:
-                el = page.locator(sel)
-                if await el.count() > 0:
-                    await el.first.click()
+            # Fallback: iterate "Log In" buttons, skip the header one, click the form one
+            login_btns = page.get_by_text("Log In", exact=True)
+            count = await login_btns.count()
+            for i in range(count - 1, -1, -1):
+                try:
+                    btn = login_btns.nth(i)
+                    if await btn.is_visible():
+                        tag = await btn.evaluate("el => el.tagName")
+                        cls = await btn.evaluate("el => el.className")
+                        if "hrm" in cls:
+                            continue
+                        await btn.click()
+                        submitted = True
+                        logger.info(f"bet365: clicked submit fallback ({tag}.{cls})")
+                        break
+                except Exception:
+                    continue
+
+        if not submitted:
+            # Last resort: JS click on the submit button (hidden form from proxy pages)
+            try:
+                js_submit = await page.evaluate("""() => {
+                    const selectors = [
+                        'button[class*="slm2-f5"]',
+                        '.lms-LoginButton',
+                        'button[class*="LoginButton"]',
+                    ];
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (el) { el.click(); return sel; }
+                    }
+                    // Try finding a button near the password input
+                    const pwInput = document.querySelector('input[type="password"]');
+                    if (pwInput) {
+                        const form = pwInput.closest('div[class*="lms-"], div[class*="slm2-"]');
+                        if (form) {
+                            const btn = form.querySelector('button');
+                            if (btn) { btn.click(); return 'form-context button'; }
+                        }
+                    }
+                    return null;
+                }""")
+                if js_submit:
                     submitted = True
-                    break
+                    logger.info(f"bet365: clicked submit via JS ({js_submit})")
+            except Exception as e:
+                logger.warning(f"bet365: JS submit click failed: {e}")
 
         # Wait for balance to appear (takes 12-20s after login click)
         # Login button disappears quickly but balance loads much later
