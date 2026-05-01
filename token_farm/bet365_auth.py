@@ -354,6 +354,14 @@ async def bet365_browser_login(username: str, password: str, proxy_url: str | No
                 pass
 
         if not logged_in:
+            # Capture debug info before closing
+            try:
+                await page.screenshot(path="/tmp/b365_login_fail.png")
+                fail_text = await page.evaluate("document.body.innerText")
+                fail_snippet = fail_text[:500].replace('\n', ' | ')
+                logger.error(f"bet365 login failed — page text: {fail_snippet}")
+            except Exception as dbg_err:
+                logger.error(f"bet365 login failed — debug capture error: {dbg_err}")
             await browser.__aexit__(None, None, None)
             return {"success": False, "error": "bet365 login failed — timed out"}
 
@@ -1771,8 +1779,8 @@ async def bet365_megaboost_all(sport: str, match_team: str, stake: float = 20, b
     }
 
 
-async def bet365_list_boosts(session_id: str) -> dict:
-    """List all visible boost cards on the bet365 homepage."""
+async def bet365_list_boosts(session_id: str, sport: str = "HOME", match_team: str = "") -> dict:
+    """List all visible boost cards. Navigates to sport page if sport != HOME."""
     session = _browser_sessions.get(session_id)
     if not session:
         return {"success": False, "error": f"No active session: {session_id}"}
@@ -1794,35 +1802,140 @@ async def bet365_list_boosts(session_id: str) -> dict:
         except Exception:
             pass
 
+        if sport.upper() != "HOME":
+            sport_map = {"AFL": "Australian Rules", "NRL": "Rugby League", "NBA": "Basketball"}
+            sport_name = sport_map.get(sport.upper(), sport)
+            logger.info(f"bet365 list_boosts: navigating to {sport.upper()} ({sport_name})")
+
+            sport_clicked = False
+            for name in [sport.upper(), sport_name]:
+                try:
+                    links = page.get_by_text(name, exact=True)
+                    count = await links.count()
+                    for i in range(count):
+                        if await links.nth(i).is_visible():
+                            await links.nth(i).click()
+                            sport_clicked = True
+                            logger.info(f"bet365 list_boosts: clicked '{name}'")
+                            break
+                    if sport_clicked:
+                        break
+                except Exception:
+                    continue
+
+            await page.wait_for_timeout(4000)
+
+            body_text = await page.evaluate("document.body.innerText")
+            if "Competitions" in body_text and "Featured" in body_text:
+                for comp_name in [sport.upper(), f"{sport.upper()} Premiership", "AFL", "NRL", "Premiership"]:
+                    try:
+                        comp = page.get_by_text(comp_name, exact=True)
+                        if await comp.count() > 0:
+                            for i in range(await comp.count()):
+                                if await comp.nth(i).is_visible():
+                                    await comp.nth(i).click()
+                                    logger.info(f"bet365 list_boosts: clicked competition '{comp_name}'")
+                                    await page.wait_for_timeout(3000)
+                                    break
+                            break
+                    except Exception:
+                        continue
+
+            if match_team:
+                match_team_lower = match_team.lower()
+                for scroll in range(5):
+                    if scroll > 0:
+                        await page.evaluate("window.scrollBy(0, 500)")
+                        await page.wait_for_timeout(1000)
+                    body = await page.evaluate("document.body.innerText")
+                    if match_team_lower in body.lower():
+                        el = page.get_by_text(re.compile(re.escape(match_team), re.IGNORECASE)).first
+                        try:
+                            if await el.is_visible(timeout=3000):
+                                await el.click()
+                                logger.info(f"bet365 list_boosts: clicked match '{match_team}'")
+                                await page.wait_for_timeout(4000)
+                                try:
+                                    popular = page.get_by_text("Popular", exact=True)
+                                    if await popular.count() > 0 and await popular.first.is_visible():
+                                        await popular.first.click()
+                                        await page.wait_for_timeout(2000)
+                                except Exception:
+                                    pass
+                                break
+                        except Exception:
+                            pass
+
         # Scroll to load all cards
-        for _ in range(3):
-            await page.evaluate("window.scrollBy(0, 400)")
+        for _ in range(5):
+            await page.evaluate("window.scrollBy(0, 500)")
             await page.wait_for_timeout(800)
         await page.evaluate("window.scrollTo(0, 0)")
         await page.wait_for_timeout(1000)
 
+        # Debug: log page text snippets containing boost-related keywords
+        debug_text = await page.evaluate("""() => {
+            const body = document.body.innerText || '';
+            const lines = body.split('\\n').filter(l => l.trim());
+            const relevant = [];
+            for (let i = 0; i < lines.length; i++) {
+                const l = lines[i].toLowerCase();
+                if (l.includes('boost') || l.includes('mega') || l.includes('same game multi') || l.includes('selection') || /^\\d+\\s+on\\s+a/.test(l)) {
+                    // Grab surrounding context
+                    const start = Math.max(0, i - 2);
+                    const end = Math.min(lines.length, i + 3);
+                    relevant.push('--- line ' + i + ' ---');
+                    for (let j = start; j < end; j++) {
+                        relevant.push(lines[j].trim());
+                    }
+                }
+            }
+            return relevant.slice(0, 60).join('\\n');
+        }""")
+        logger.info(f"bet365 list_boosts: page boost keywords:\n{debug_text}")
+
         boosts = await page.evaluate(r"""() => {
             const boosts = [];
             const seen = new Set();
-            const pattern = /\$\d+\s+stake\s+returns\s+\$/i;
+
+            // Pattern 1: Homepage racing boosts "$X stake returns $Y"
+            const homepagePattern = /\$\d+[\s\S]*?stake[\s\S]*?returns[\s\S]*?\$/i;
+            // Pattern 2: Sport page SGM boosts "25 on a 3+ selection Same Game Multi"
+            const sgmPattern = /\d+\s+on\s+a\s+\d\+\s+selection/i;
+            // Pattern 3: General boost keyword
+            const boostPattern = /\b(boost|mega\s*boost|bet\s*boost)\b/i;
 
             const allEls = document.querySelectorAll('*');
 
             for (const el of allEls) {
                 const text = el.innerText || '';
-                if (text.length < 30 || text.length > 400) continue;
-                if (!pattern.test(text)) continue;
+                if (text.length < 10 || text.length > 2000) continue;
+
+                const hasHomepage = homepagePattern.test(text);
+                const hasSGM = sgmPattern.test(text);
+                const hasBoost = boostPattern.test(text);
+
+                if (!hasHomepage && !hasSGM && !hasBoost) continue;
                 if (!el.offsetParent) continue;
 
                 const elRect = el.getBoundingClientRect();
-                if (elRect.width < 150 || elRect.width > 500) continue;
-                if (elRect.height < 80 || elRect.height > 500) continue;
+                if (elRect.width < 50 || elRect.width > 1200) continue;
+                if (elRect.height < 30 || elRect.height > 800) continue;
 
                 const cardId = Math.round(elRect.x) + ',' + Math.round(elRect.y);
                 if (seen.has(cardId)) continue;
                 seen.add(cardId);
 
+                // Skip tiny nav/header elements that just say "Boost" — require meaningful content
                 const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+                if (lines.length < 2 && !hasHomepage && !hasSGM) continue;
+
+                // Skip tab bars / nav elements (e.g. "Main | SGM + | Bet | Boost | More")
+                const joinedLower = lines.join(' ').toLowerCase();
+                if (joinedLower.includes('sgm +') && joinedLower.includes('more')) continue;
+                // Skip elements that are just "Bet Boost" labels without any promo content
+                if (!hasHomepage && !hasSGM && lines.length <= 3 && text.length < 30) continue;
+
                 const title = lines[0] || '';
 
                 const oddsEls = [];
@@ -1841,25 +1954,61 @@ async def bet365_list_boosts(session_id: str) -> dict:
                                el.innerHTML.toUpperCase().includes('MEGA');
 
                 oddsEls.sort((a, b) => b.val - a.val);
+
+                // Extract stake/returns from homepage format
                 const returnsMatch = text.match(/\$(\d+)\s+stake\s+returns\s+\$([\d,.]+)/i);
+                // Extract stake from SGM format "25 on a 3+ selection Same Game Multi"
+                const sgmMatch = text.match(/(\d+)\s+on\s+a\s+(\d+)\+\s+selection\s+(Same\s+Game\s+Multi)/i);
+
+                let stakeVal = 0;
+                let returnsStr = '';
+                let descExtra = '';
+                if (returnsMatch) {
+                    stakeVal = parseInt(returnsMatch[1]);
+                    returnsStr = returnsMatch[0];
+                } else if (sgmMatch) {
+                    stakeVal = parseInt(sgmMatch[1]);
+                    descExtra = `$${sgmMatch[1]} on a ${sgmMatch[2]}+ leg SGM`;
+                }
 
                 boosts.push({
                     index: boosts.length,
-                    type: isMega ? 'MEGA_BOOST' : 'BET_BOOST',
+                    type: isMega ? 'MEGA_BOOST' : (hasSGM ? 'SGM_BOOST' : 'BET_BOOST'),
                     title: title.substring(0, 80),
-                    description: lines.slice(0, 5).join(' | '),
+                    description: descExtra || lines.slice(0, 5).join(' | '),
                     original_odds: oddsEls.length >= 2 ? oddsEls[oddsEls.length - 1].text : '',
                     boosted_odds: oddsEls.length >= 1 ? oddsEls[0].text : '',
-                    stake: returnsMatch ? parseInt(returnsMatch[1]) : 0,
-                    returns: returnsMatch ? returnsMatch[0] : '',
+                    stake: stakeVal,
+                    returns: returnsStr,
                 });
             }
 
+            // Deduplicate: if a parent and child both matched, keep the most specific (smallest area)
+            const deduped = [];
+            const usedPositions = new Set();
             boosts.sort((a, b) => {
-                if (a.type !== b.type) return a.type === 'MEGA_BOOST' ? -1 : 1;
+                // Prefer items with more data
+                const scoreA = (a.stake > 0 ? 2 : 0) + (a.boosted_odds ? 1 : 0);
+                const scoreB = (b.stake > 0 ? 2 : 0) + (b.boosted_odds ? 1 : 0);
+                return scoreB - scoreA;
+            });
+            for (const b of boosts) {
+                // Check we haven't already included something at a very similar position
+                const key = b.title.substring(0, 30);
+                if (usedPositions.has(key)) continue;
+                usedPositions.add(key);
+                b.index = deduped.length;
+                deduped.push(b);
+            }
+
+            deduped.sort((a, b) => {
+                if (a.type !== b.type) {
+                    const order = { MEGA_BOOST: 0, SGM_BOOST: 1, BET_BOOST: 2 };
+                    return (order[a.type] || 9) - (order[b.type] || 9);
+                }
                 return 0;
             });
-            return boosts;
+            return deduped;
         }""")
 
         return {"success": True, "boosts": boosts, "count": len(boosts)}

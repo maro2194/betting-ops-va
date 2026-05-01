@@ -443,28 +443,7 @@ async def scan_boosts(req: ScanBoostsRequest):
                 return
 
             session_id = login_result["session_id"]
-
-            if req.sport.upper() == "HOME":
-                result = await bet365_scan_boosts(session_id)
-            else:
-                result = await bet365_megaboost(
-                    session_id=session_id,
-                    sport=req.sport,
-                    match_team=_resolve_team(req.match_team),
-                    stake=0,
-                    boost_index=999,
-                )
-                if not result.get("success") and "boosts detected" in result.get("error", ""):
-                    all_boosts = result.get("error", "")
-                    try:
-                        bracket_start = all_boosts.index("[")
-                        boosts_json = all_boosts[bracket_start:]
-                        boosts_list = eval(boosts_json)
-                        result = {"success": True, "boosts": boosts_list, "count": len(boosts_list)}
-                    except Exception:
-                        result = {"success": True, "boosts": [], "count": 0}
-                else:
-                    result = {"success": True, "boosts": [], "count": 0}
+            result = await bet365_scan_boosts(session_id, sport=req.sport, match_team=_resolve_team(req.match_team) if req.match_team else "")
 
             result["balance"] = login_result.get("balance")
             result["session_id"] = session_id

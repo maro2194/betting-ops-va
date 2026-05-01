@@ -278,13 +278,19 @@ async def bet365_megaboost(session_id: str, sport: str, match_team: str, stake: 
         return {"success": False, "error": f"Megaboost error: {e}"}
 
 
-async def bet365_scan_boosts(session_id: str) -> dict:
-    """List available boosts on bet365 homepage via Token Farm browser."""
+async def bet365_scan_boosts(session_id: str, sport: str = "HOME", match_team: str = "") -> dict:
+    """List available boosts on bet365 via Token Farm browser."""
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        params = {}
+        if sport and sport.upper() != "HOME":
+            params["sport"] = sport
+        if match_team:
+            params["match_team"] = match_team
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.get(
                 f"{FARM_URL}/bet365/list-boosts/{session_id}",
                 headers=_headers(),
+                params=params,
             )
         if resp.status_code != 200:
             return {"success": False, "error": f"Farm scan-boosts failed: HTTP {resp.status_code}: {resp.text[:200]}"}
