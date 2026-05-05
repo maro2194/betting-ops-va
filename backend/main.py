@@ -2573,9 +2573,25 @@ async def tab_tokens_accounts(_user: dict = Depends(_verify_app_token)):
     except Exception:
         pass
 
+    # Merge in-memory sessions with DB sessions (multi-worker fix)
+    all_sessions = dict(sessions)
+    try:
+        db_sessions = await load_all_tab_sessions()
+        for sid, sdata in db_sessions.items():
+            if sid not in all_sessions:
+                all_sessions[sid] = sdata
+                sessions[sid] = sdata
+    except Exception:
+        pass
+
     results = []
     seen_accounts = set()
-    for sid, s in sessions.items():
+    sorted_sessions = sorted(
+        all_sessions.items(),
+        key=lambda x: x[1].get("logged_in_at") or "",
+        reverse=True,
+    )
+    for sid, s in sorted_sessions:
         acct_num = str(s.get("account_number", ""))
         session_email = (s.get("email") or "").lower()
         # Only show sessions belonging to this user (match by acct number or email)
@@ -2618,6 +2634,15 @@ async def tab_tokens_fetch_savers(_user: dict = Depends(_verify_app_token)):
             email = (a.get("email") or "").lower()
             if email:
                 user_emails.add(email)
+    except Exception:
+        pass
+
+    # Merge in-memory sessions with DB sessions (multi-worker fix)
+    try:
+        db_sessions = await load_all_tab_sessions()
+        for sid, sdata in db_sessions.items():
+            if sid not in sessions:
+                sessions[sid] = sdata
     except Exception:
         pass
 
@@ -2682,6 +2707,15 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
             email = (a.get("email") or "").lower()
             if email:
                 user_emails.add(email)
+    except Exception:
+        pass
+
+    # Merge in-memory sessions with DB sessions (multi-worker fix)
+    try:
+        db_sessions = await load_all_tab_sessions()
+        for sid, sdata in db_sessions.items():
+            if sid not in sessions:
+                sessions[sid] = sdata
     except Exception:
         pass
 
