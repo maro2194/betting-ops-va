@@ -7,7 +7,7 @@ Multi-bookie bot operations platform. Automated betting across TAB accounts with
 - **Backend**: Python 3.12, FastAPI, asyncpg (PostgreSQL), curl_cffi
 - **Frontend**: React 18, Vite, Tailwind CSS v4, Lucide React icons
 - **Font**: JetBrains Mono (monospace only, no other fonts)
-- **Deployed on**: Hostinger VPS 2 (`76.13.214.208`), Caddy reverse proxy
+- **Deployed on**: Contabo Sydney (`46.250.246.208`), Caddy reverse proxy
 
 ## Design System
 
@@ -99,15 +99,15 @@ botops/
 
 ```bash
 # Backend — copy Python files to VPS, restart
-scp backend/*.py root@76.13.214.208:/opt/tab-betting-backend/
-ssh root@76.13.214.208 'kill $(ss -tlnp | grep 8001 | grep -oP "pid=\K[0-9]+"); cd /opt/tab-betting-backend && nohup python3 /usr/local/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --log-level info > /var/log/botops.log 2>&1 &'
+scp backend/*.py root@46.250.246.208:/opt/tab-betting-backend/
+ssh root@46.250.246.208 "systemctl restart botops"
 
 # Frontend — build + copy dist
 cd frontend && npx vite build
-# Then upload dist/ to VPS /opt/tab-betting-frontend/
+scp -r dist/* root@46.250.246.208:/opt/tab-betting-frontend/
 ```
 
-SSH password for VPS 2: `TostacoS-2023`
+SSH password: `SM2194acb`
 
 ## Key Technical Notes
 
