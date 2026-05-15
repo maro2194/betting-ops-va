@@ -52,12 +52,13 @@ _TEAM_ALIASES = {
     "brooklyn": "BKN Nets", "nets": "BKN Nets",
     "new orleans": "NO Pelicans", "pelicans": "NO Pelicans",
     "utah": "UTA Jazz", "jazz": "UTA Jazz",
-    # NRL
-    "broncos": "Brisbane", "cowboys": "North Queensland", "roosters": "Sydney Roosters",
-    "rabbitohs": "South Sydney", "panthers": "Penrith", "storm": "Melbourne",
-    "eels": "Parramatta", "sea eagles": "Manly", "knights": "Newcastle",
-    "raiders": "Canberra", "sharks": "Cronulla", "titans": "Gold Coast",
-    "warriors": "New Zealand", "bulldogs": "Canterbury", "dragons": "St George Illawarra",
+    # NRL — bet365 displays mascot names in match listings and boost cards;
+    # alias to identity so the boost-scan match-team filter doesn't drop them.
+    "broncos": "Broncos", "cowboys": "Cowboys", "roosters": "Roosters",
+    "rabbitohs": "Rabbitohs", "panthers": "Panthers", "storm": "Storm",
+    "eels": "Eels", "sea eagles": "Sea Eagles", "knights": "Knights",
+    "raiders": "Raiders", "sharks": "Sharks", "titans": "Titans",
+    "warriors": "Warriors", "bulldogs": "Bulldogs", "dragons": "Dragons",
     "wests tigers": "Wests Tigers", "dolphins": "Dolphins",
     # AFL
     "magpies": "Collingwood", "blues": "Carlton", "cats": "Geelong",
@@ -470,6 +471,7 @@ class MegaBoostAllRequest(BaseModel):
     stake: int = 20
     boost_index: int = 0
     accounts: list[str] | None = None  # Optional filter: list of usernames (None = all)
+    stakes: dict[str, int] | None = None  # Per-account stakes: {"username": stake}
 
 
 @router.post("/megaboost-all")
@@ -484,19 +486,33 @@ async def place_megaboost_all(req: MegaBoostAllRequest):
     async def run_job():
         import uuid, time as _time
         try:
-            result = await bet365_megaboost_all(
-                sport=req.sport,
-                match_team=_resolve_team(req.match_team),
-                stake=req.stake,
-                boost_index=req.boost_index,
-                accounts=req.accounts,
-            )
+            resolved_team = _resolve_team(req.match_team)
+            all_results = []
+            if req.stakes:
+                groups = {}
+                for acc, s in req.stakes.items():
+                    groups.setdefault(s, []).append(acc)
+                for grp_stake, grp_accounts in groups.items():
+                    r = await bet365_megaboost_all(
+                        sport=req.sport, match_team=resolved_team,
+                        stake=grp_stake, boost_index=req.boost_index,
+                        accounts=grp_accounts,
+                    )
+                    all_results.extend(r.get("results", []))
+                result = {"results": all_results, "success": True}
+            else:
+                result = await bet365_megaboost_all(
+                    sport=req.sport, match_team=resolved_team,
+                    stake=req.stake, boost_index=req.boost_index,
+                    accounts=req.accounts,
+                )
             log = []
             for r in result.get("results", []):
                 uname = r.get("username", "?")
+                acc_stake = (req.stakes or {}).get(uname, req.stake)
                 if r.get("success"):
                     odds_str = r.get("boosted_odds") or r.get("odds", "?")
-                    log.append(f"{uname}: Placed ${req.stake} @ {odds_str}")
+                    log.append(f"{uname}: Placed ${acc_stake} @ {odds_str}")
                 else:
                     log.append(f"{uname}: FAILED — {r.get('error', 'unknown')}")
                 await save_pick_to_db({
@@ -511,7 +527,7 @@ async def place_megaboost_all(req: MegaBoostAllRequest):
                     "parsed": True,
                     "attempted": True,
                     "placed": r.get("success", False),
-                    "stake": req.stake,
+                    "stake": acc_stake,
                     "odds": float(r.get("boosted_odds") or r.get("odds", 0) or 0),
                     "actual_odds": str(r.get("boosted_odds") or r.get("odds", "")),
                     "username": r.get("username", ""),
@@ -524,6 +540,8 @@ async def place_megaboost_all(req: MegaBoostAllRequest):
             total = len(result.get("results", []))
             log.append(f"Done: {placed}/{total} placed successfully")
             result["log"] = log
+            result["succeeded"] = placed
+            result["total"] = total
             await _save_job(job_id, "megaboost_all", "done", result)
         except Exception as e:
             await _save_job(job_id, "megaboost_all", "error", {"error": str(e)})

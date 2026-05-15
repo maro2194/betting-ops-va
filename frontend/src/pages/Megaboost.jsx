@@ -22,6 +22,9 @@ const SPORTS = [
   { value: 'Soccer', label: 'Soccer' },
   { value: 'Rugby Union', label: 'Rugby Union' },
   { value: 'Cricket', label: 'Cricket' },
+  { value: 'State of Origin Women', label: 'State of Origin Women' },
+  { value: 'MMA', label: 'UFC / MMA' },
+  { value: 'CUSTOM', label: 'Custom (type below)' },
 ];
 
 function BoostCard({ boost, selected, onClick }) {
@@ -121,6 +124,7 @@ function ResultRow({ r }) {
 
 export default function Megaboost() {
   const [sport, setSport] = useState('NRL');
+  const [customSport, setCustomSport] = useState('');
   const [matchTeam, setMatchTeam] = useState('');
   const [scanning, setScanning] = useState(false);
   const [scanStep, setScanStep] = useState('');
@@ -128,6 +132,7 @@ export default function Megaboost() {
   const [scanBalance, setScanBalance] = useState(null);
   const [selectedBoost, setSelectedBoost] = useState(null);
   const [stake, setStake] = useState(20);
+  const [accountStakes, setAccountStakes] = useState({});
   const [allAccounts, setAllAccounts] = useState([]);
   const [selectedAccounts, setSelectedAccounts] = useState([]);
   const [placing, setPlacing] = useState(false);
@@ -184,7 +189,8 @@ export default function Megaboost() {
 
     try {
       // Start async scan job (avoids Cloudflare 524 timeout)
-      const job = await api.bet365ScanBoostsStart(sport, matchTeam);
+      const effectiveSport = sport === 'CUSTOM' ? customSport : sport;
+      const job = await api.bet365ScanBoostsStart(effectiveSport, matchTeam);
       const jobId = job.job_id;
 
       // Poll every 3s until done
@@ -253,12 +259,16 @@ export default function Megaboost() {
 
     try {
       // Start async job (returns immediately, avoids Cloudflare 524 timeout)
+      const perAccStakes = {};
+      selectedAccounts.forEach(acc => { perAccStakes[acc] = accountStakes[acc] ?? stake; });
+      const placeSport = sport === 'CUSTOM' ? customSport : sport;
       const job = await api.bet365MegaboostAllStart(
-        sport,
+        placeSport,
         matchTeam,
         stake,
         selectedBoost,
         selectedAccounts,
+        perAccStakes,
       );
       const jobId = job.job_id;
       addStep(`Job started (${jobId}). Polling for results...`);
@@ -362,9 +372,22 @@ export default function Megaboost() {
               {SPORTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </div>
+          {sport === 'CUSTOM' && (
+            <div>
+              <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Sport Name</label>
+              <input
+                className="t-input"
+                placeholder="e.g. State of Origin, UFC 315"
+                value={customSport}
+                onChange={e => setCustomSport(e.target.value)}
+                style={{ width: 220, height: 38 }}
+                onKeyDown={e => e.key === 'Enter' && handleScan()}
+              />
+            </div>
+          )}
           {sport !== 'HOME' && (
             <div>
-              <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Team</label>
+              <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Team (optional)</label>
               <input
                 className="t-input"
                 placeholder="e.g. Broncos, Carlton, Lakers"
@@ -378,7 +401,7 @@ export default function Megaboost() {
           <button
             className="btn btn-primary"
             onClick={handleScan}
-            disabled={scanning || (sport !== 'HOME' && !matchTeam.trim())}
+            disabled={scanning || (sport === 'CUSTOM' && !customSport.trim())}
             style={{ height: 38, display: 'flex', alignItems: 'center', gap: 6 }}
           >
             {scanning ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
@@ -437,31 +460,48 @@ export default function Megaboost() {
                   {selectedAccounts.length === allAccounts.length ? 'Deselect All' : 'Select All'}
                 </span>
               </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <label style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                  <DollarSign size={12} style={{ display: 'inline' }} /> Set all:
+                </label>
+                <input
+                  className="t-input"
+                  type="number"
+                  value={stake}
+                  onChange={e => {
+                    const v = Number(e.target.value);
+                    setStake(v);
+                    const updated = {};
+                    allAccounts.forEach(acc => { updated[acc] = v; });
+                    setAccountStakes(updated);
+                  }}
+                  style={{ width: 80, height: 32 }}
+                  min={1}
+                />
+              </div>
               {allAccounts.map(acc => (
-                <label key={acc} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '3px 0', fontSize: 13, color: 'var(--text-primary)' }}>
+                <div key={acc} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
                   <input
                     type="checkbox"
                     checked={selectedAccounts.includes(acc)}
                     onChange={() => toggleAccount(acc)}
                   />
-                  {acc}
-                </label>
+                  <span style={{ fontSize: 13, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{acc}</span>
+                  <input
+                    className="t-input"
+                    type="number"
+                    value={accountStakes[acc] ?? stake}
+                    onChange={e => setAccountStakes(prev => ({ ...prev, [acc]: Number(e.target.value) }))}
+                    style={{ width: 70, height: 28, fontSize: 12, textAlign: 'right' }}
+                    min={1}
+                    disabled={!selectedAccounts.includes(acc)}
+                  />
+                </div>
               ))}
             </div>
             <div>
-              <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
-                <DollarSign size={12} style={{ display: 'inline' }} /> Stake per account
-              </label>
-              <input
-                className="t-input"
-                type="number"
-                value={stake}
-                onChange={e => setStake(Number(e.target.value))}
-                style={{ width: 100, height: 38 }}
-                min={1}
-              />
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                Total: ${stake * selectedAccounts.length} across {selectedAccounts.length} account{selectedAccounts.length !== 1 ? 's' : ''}
+                Total: ${selectedAccounts.reduce((s, acc) => s + (accountStakes[acc] ?? stake), 0)} across {selectedAccounts.length} account{selectedAccounts.length !== 1 ? 's' : ''}
               </div>
             </div>
           </div>
