@@ -463,7 +463,7 @@ export default function CsbV4() {
       const resolvedOdds = st.combined_odds ? parseFloat(st.combined_odds) : bet.odds;
 
       // Skip below min odds
-      if (bet.min_odds && resolvedOdds < bet.min_odds) continue;
+      if (bet.min_odds && Math.round(resolvedOdds * 100) < Math.round(bet.min_odds * 100)) continue;
 
       const totalStakeForBet = getStakeForBet(bet, resolvedOdds);
       if (totalStakeForBet <= 0) continue;
@@ -490,12 +490,16 @@ export default function CsbV4() {
         desiredStakes = [];
         let placed = 0;
         for (let s = 0; s < slotsToUse - 1; s++) {
+          if (placed + evenStake > totalStakeForBet) break;
           desiredStakes.push(evenStake);
           placed += evenStake;
         }
-        let lastStake = Math.max(5, Math.round((totalStakeForBet - placed) / 5) * 5);
-        if (lastStake > maxStakePerSlot) lastStake = maxStakePerSlot;
-        desiredStakes.push(lastStake);
+        const remaining = totalStakeForBet - placed;
+        if (remaining >= 5) {
+          let lastStake = Math.round(remaining / 5) * 5;
+          if (lastStake > maxStakePerSlot) lastStake = maxStakePerSlot;
+          desiredStakes.push(lastStake);
+        }
       }
 
       // Pass 1 — assign each desired slot to the next round-robin account that
@@ -741,7 +745,7 @@ export default function CsbV4() {
           // When recheckOk is false, we placed at item.stake at item.resolvedOdds as before —
           // visible via the ⚠ log above, so the operator knows this slot wasn't shielded.
           if (oddsDriftEnabled && recheckOk && bet.odds && bet.min_odds) {
-            if (freshOdds <= bet.min_odds) {
+            if (Math.round(freshOdds * 100) < Math.round(bet.min_odds * 100)) {
               addLog(`${label}: \u2717 Bet #${item.betIdx + 1} skipped — odds ${freshOdds.toFixed(2)} below min ${bet.min_odds}`);
               setPlacementResults((prev) => [...prev, {
                 slotId: item.slotId, betIdx: item.betIdx, accountId: acc.id, accountLabel: label,
@@ -1103,7 +1107,7 @@ export default function CsbV4() {
           // Only reprices when recheck succeeded — stale-odds fallback keeps item.stake.
           let retryStake = item.stake;
           if (oddsDriftEnabled && recheckOk && bet.odds && bet.min_odds) {
-            if (freshOdds <= bet.min_odds) {
+            if (Math.round(freshOdds * 100) < Math.round(bet.min_odds * 100)) {
               addLog(`${label}: \u2717 Bet #${item.betIdx + 1} skipped — odds ${freshOdds.toFixed(2)} below min ${bet.min_odds}`);
               setPlacementResults((prev) => [...prev, {
                 slotId: item.slotId, betIdx: item.betIdx, accountId: acc.id, accountLabel: label,
@@ -1421,6 +1425,7 @@ export default function CsbV4() {
                   const enabledIdx = enabledAccounts.findIndex((a) => a.id === acc.id);
                   const prog = accountProgress[acc.id];
                   const queueLen = allocationMatrix?.[acc.id]?.length || 0;
+                  const placedForAcc = placementResults.filter((r) => r.accountId === acc.id && r.status === 'placed').length;
                   return (
                     <div key={acc.id} className="card" style={{
                       minWidth: 200, opacity: acc.enabled ? 1 : 0.4, transition: 'all 0.2s',
@@ -1451,7 +1456,7 @@ export default function CsbV4() {
                       <p style={{ fontSize: 13, marginTop: 6, marginBottom: 0 }}>
                         {bal != null ? <span style={{ color: bal > 0 ? 'var(--success)' : 'var(--danger)' }}>${bal.toFixed(2)}</span> : <span style={{ color: 'var(--text-muted)' }}>Balance unknown</span>}
                       </p>
-                      {queueLen > 0 && <p style={{ fontSize: 11, color: 'var(--primary)', marginTop: 4, marginBottom: 0 }}>{queueLen} bets queued</p>}
+                      {queueLen > 0 && <p style={{ fontSize: 11, color: placedForAcc >= queueLen ? 'var(--success)' : 'var(--primary)', marginTop: 4, marginBottom: 0 }}>{placedForAcc >= queueLen ? `${placedForAcc} bets placed` : `${queueLen} bets queued`}</p>}
                       {prog?.placing && (
                         <div style={{ marginTop: 6 }}>
                           <div style={{ width: '100%', background: 'var(--bg-input)', borderRadius: 9999, height: 4, overflow: 'hidden' }}>

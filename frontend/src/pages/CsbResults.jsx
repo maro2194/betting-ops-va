@@ -429,7 +429,9 @@ export default function CsbResults() {
     const isAFL      = sport === 'AFL';
 
     // AFL: any voided leg refunds the whole bet (after pending legs resolve).
-    if (hasVoid && isAFL) {
+    // But if TAB already settled as won/lost, trust TAB — don't override with
+    // void just because our leg parser couldn't find stats yet.
+    if (hasVoid && isAFL && !tabSettled) {
       if (hasPending) return 'pending';
       return 'void';
     }
