@@ -2832,11 +2832,6 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
     _tab_token_groups = await load_tab_groups(_user["username"])
     group_sessions: dict[str, list[dict]] = {}
     seen_accts = set()
-    _dbg_total = len(sessions)
-    _dbg_user_filter = 0
-    _dbg_enabled_filter = 0
-    _dbg_token_filter = 0
-    _dbg_dedup_filter = 0
     sorted_sessions = sorted(
         sessions.items(),
         key=lambda x: x[1].get("logged_in_at") or 0,
@@ -2846,24 +2841,18 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
         acct = str(s.get("account_number", ""))
         session_email = (s.get("email") or "").lower()
         if (user_accts or user_emails) and acct not in user_accts and session_email not in user_emails:
-            _dbg_user_filter += 1
             continue
         if enabled_accounts and acct not in enabled_accounts:
-            _dbg_enabled_filter += 1
             continue
         claims = decode_token_claims(s.get("token", ""))
         if not (claims.get("exp", 0) and time.time() < claims["exp"] - 300):
-            _dbg_token_filter += 1
             continue
         dedup_key = acct or session_email
         if dedup_key in seen_accts:
-            _dbg_dedup_filter += 1
             continue
         seen_accts.add(dedup_key)
         grp = _tab_token_groups.get(acct, "A")
         group_sessions.setdefault(grp, []).append(s)
-    _dbg_kept = sum(len(v) for v in group_sessions.values())
-    logger.warning(f"EXECUTE DEBUG: total={_dbg_total} user_filtered={_dbg_user_filter} enabled_filtered={_dbg_enabled_filter} token_expired={_dbg_token_filter} deduped={_dbg_dedup_filter} kept={_dbg_kept} groups={list(group_sessions.keys())} enabled_accounts={enabled_accounts} user_accts={user_accts}")
 
     # Shared resolve + place logic
     async def _resolve_and_place(bets_list, group_sess, is_dry, username, progress_cb=None):
