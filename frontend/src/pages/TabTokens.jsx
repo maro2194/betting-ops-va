@@ -71,6 +71,30 @@ export default function TabTokens() {
     finally { setFetchingSavers(false); }
   };
 
+  const downloadSaversCsv = () => {
+    const rows = [['Label', 'Account #', 'Group', 'Offer', 'Match/Restriction', 'Amount', 'Remaining', 'Valid Till']];
+    for (const a of accounts) {
+      for (const s of (a.savers || [])) {
+        rows.push([
+          a.label || '', a.account_number || '', a.group || 'A',
+          s.offer_name || '', s.match || '', `$${s.max_reward || 0}`,
+          s.remaining || '', s.valid_till || '',
+        ]);
+      }
+      if (!(a.savers || []).length) {
+        rows.push([a.label || '', a.account_number || '', a.group || 'A', '', '', '$0', '', '']);
+      }
+    }
+    const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `savers_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const updateGroup = async (accountNumber, group) => {
     try {
       await api.put('/api/tab-tokens/groups', { groups: { [accountNumber]: group } });
@@ -225,6 +249,9 @@ export default function TabTokens() {
               </button>
               <button className="btn btn-primary btn-sm" onClick={fetchSavers} disabled={fetchingSavers}>
                 {fetchingSavers ? <Loader2 size={14} className="spin" /> : <Gift size={14} />} Fetch Savers
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={downloadSaversCsv} disabled={!accounts.some(a => (a.savers || []).length)}>
+                <FileSpreadsheet size={14} /> Download CSV
               </button>
             </div>
           </div>
@@ -457,6 +484,41 @@ export default function TabTokens() {
             <button className="btn btn-ghost btn-sm" onClick={() => { setStep(1); setResolvedBets(null); setResults(null); }}>
               <ChevronLeft size={14} /> New Batch
             </button>
+            {results.failed > 0 && (
+              <button className="btn btn-primary btn-sm" disabled={executing} onClick={async () => {
+                const failedAccts = (results.results || []).filter(r => !r.success).map(r => String(r.account)).filter(a => a && a !== 'N/A');
+                if (!failedAccts.length) return;
+                setExecuting(true);
+                setError('');
+                setPlacementLog([]);
+                try {
+                  const resp = await api.post('/api/tab-tokens/execute', { csv_content: csvContent, dry_run: false, enabled_accounts: failedAccts });
+                  if (resp.job_id) {
+                    setPlacementLog([`Retrying ${failedAccts.length} failed account(s)...`]);
+                    let done = false, seenLines = 0;
+                    while (!done) {
+                      await new Promise(r => setTimeout(r, 2000));
+                      try {
+                        const status = await api.get(`/api/tab-tokens/job-status/${resp.job_id}`);
+                        if (status.log && status.log.length > seenLines) { setPlacementLog(status.log); seenLines = status.log.length; }
+                        if (status.status === 'complete') {
+                          const prev = results.results.filter(r => r.success);
+                          const retryResults = status.result?.results || [];
+                          const merged = [...prev, ...retryResults];
+                          const s = merged.filter(r => r.success).length;
+                          const f = merged.filter(r => !r.success).length;
+                          setResults({ ...results, results: merged, success: s, failed: f, total_stake: merged.filter(r => r.success).reduce((sum, r) => sum + (r.stake || 0), 0) });
+                          done = true;
+                        } else if (status.status === 'error') { setError(status.result?.error || 'Retry failed'); done = true; }
+                      } catch (pollErr) { setError(pollErr.message); done = true; }
+                    }
+                  }
+                } catch (e) { setError(e.message); }
+                finally { setExecuting(false); }
+              }}>
+                <RefreshCw size={14} /> Retry Failed ({results.failed})
+              </button>
+            )}
           </div>
         </>
       )}

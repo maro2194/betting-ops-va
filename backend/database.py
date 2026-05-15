@@ -160,27 +160,39 @@ async def load_all_app_sessions() -> dict:
 
 async def save_tab_session(session_id: str, data: dict):
     """Save a TAB session to DB."""
-    async with pool.acquire() as conn:
-        await conn.execute(
-            """INSERT INTO tab_sessions (session_id, auth0_token, legacy_token, account_number,
-                   customer_id, email, password, proxy_url, logged_in_at, token_exp)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-               ON CONFLICT (session_id) DO UPDATE SET
-                   auth0_token = EXCLUDED.auth0_token,
-                   legacy_token = EXCLUDED.legacy_token,
-                   logged_in_at = EXCLUDED.logged_in_at,
-                   token_exp = EXCLUDED.token_exp""",
-            session_id,
-            data["token"],
-            data.get("legacy_token", ""),
-            data["account_number"],
-            data["customer_id"],
-            data["email"],
-            data["password"],
-            data["proxy_url"],
-            data["logged_in_at"],
-            data.get("token_exp"),
-        )
+    import sys, traceback
+    print(f"[DB-DEBUG] save_tab_session called: sid={session_id} acct={data.get('account_number')} pool={pool}", file=sys.stderr, flush=True)
+    if pool is None:
+        print("[DB-DEBUG] ERROR: pool is None!", file=sys.stderr, flush=True)
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO tab_sessions (session_id, auth0_token, legacy_token, account_number,
+                       customer_id, email, password, proxy_url, logged_in_at, token_exp)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                   ON CONFLICT (session_id) DO UPDATE SET
+                       auth0_token = EXCLUDED.auth0_token,
+                       legacy_token = EXCLUDED.legacy_token,
+                       logged_in_at = EXCLUDED.logged_in_at,
+                       token_exp = EXCLUDED.token_exp""",
+                session_id,
+                data["token"],
+                data.get("legacy_token", ""),
+                data["account_number"],
+                data["customer_id"],
+                data["email"],
+                data["password"],
+                data["proxy_url"],
+                data["logged_in_at"],
+                data.get("token_exp"),
+            )
+            cnt = await conn.fetchval("SELECT count(*) FROM tab_sessions")
+            print(f"[DB-DEBUG] save_tab_session OK: {cnt} rows now in table", file=sys.stderr, flush=True)
+    except Exception as e:
+        print(f"[DB-DEBUG] save_tab_session FAILED: {e}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        raise
 
 
 async def load_all_tab_sessions() -> dict:

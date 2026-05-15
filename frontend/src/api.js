@@ -43,10 +43,28 @@ export const api = {
     request(`/api/accounts/${id}`, { method: 'DELETE' }),
 
   // TAB Login
-  tabLogin: (email, password, proxy_url, account_number) =>
-    request('/api/login', {
+  tabLogin: async (email, password, proxy_url, account_number) => {
+    const token = getToken();
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const resp = await fetch('/api/login', {
       method: 'POST',
+      headers,
       body: JSON.stringify({ email, password, proxy_url, account_number: account_number || undefined }),
+    });
+    const data = await resp.json();
+    if (resp.status === 202 && data.mfa_required) {
+      return { mfa_required: true, email: data.email, message: data.message };
+    }
+    if (!resp.ok) throw new Error(data.detail || 'Login failed');
+    return data;
+  },
+
+  // MFA Verify
+  mfaVerify: (email, otp_code) =>
+    request('/api/mfa-verify', {
+      method: 'POST',
+      body: JSON.stringify({ email, otp_code }),
     }),
 
   // Balance
@@ -190,7 +208,7 @@ export const api = {
   bet365ManualPick: (pick) => request('/api/bet365/picks/manual', { method: 'POST', body: JSON.stringify(pick) }),
   bet365ScanBoostsStart: (sport, matchTeam) => request('/api/bet365/scan-boosts', { method: 'POST', body: JSON.stringify({ sport, match_team: matchTeam }) }),
   bet365ScanBoostsStatus: (jobId) => request(`/api/bet365/scan-boosts/status/${jobId}`),
-  bet365MegaboostAllStart: (sport, matchTeam, stake, boostIndex, accounts) => request('/api/bet365/megaboost-all', { method: 'POST', body: JSON.stringify({ sport, match_team: matchTeam, stake, boost_index: boostIndex, accounts: accounts || null }) }),
+  bet365MegaboostAllStart: (sport, matchTeam, stake, boostIndex, accounts, stakes) => request('/api/bet365/megaboost-all', { method: 'POST', body: JSON.stringify({ sport, match_team: matchTeam, stake, boost_index: boostIndex, accounts: accounts || null, stakes: stakes || null }) }),
   bet365MegaboostAllStatus: (jobId) => request(`/api/bet365/megaboost-all/status/${jobId}`),
 
   // Live P/L (bet tracker cross-referenced with live disposal counts)

@@ -15,6 +15,14 @@ from hyper_sdk.akamai import parse_akamai_script_path, is_cookie_valid
 
 logger = logging.getLogger(__name__)
 
+
+class MFARequiredException(Exception):
+    """Raised when Auth0 requires MFA. Carries state needed to complete the flow."""
+    def __init__(self, mfa_token: str, oob_code: str = ""):
+        self.mfa_token = mfa_token
+        self.oob_code = oob_code
+        super().__init__("MFA required")
+
 # Auth0 Configuration
 AUTH0_DOMAIN = "https://login.tab.com.au"
 AUTH0_CLIENT_ID = "npgc7BsgmFe2VN3hOPPgalyxPfh0crzB"
@@ -111,8 +119,56 @@ class TABLogin:
             if self.access_token:
                 logger.info("Got access token from Auth0")
                 return
+        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        if resp.status_code == 403 and body.get("error") == "mfa_required":
+            mfa_token = body["mfa_token"]
+            logger.info("MFA required — triggering SMS challenge...")
+            oob_code = self._trigger_mfa_challenge(mfa_token, headers)
+            raise MFARequiredException(mfa_token, oob_code)
         logger.error(f"Auth0 login failed: {resp.status_code} {resp.text[:500]}")
         raise Exception(f"Auth0 login failed: {resp.status_code}")
+
+    def _trigger_mfa_challenge(self, mfa_token: str, headers: dict) -> str:
+        resp = self.session.post(
+            f"{AUTH0_DOMAIN}/mfa/challenge",
+            json={"mfa_token": mfa_token, "client_id": AUTH0_CLIENT_ID, "challenge_type": "oob"},
+            headers=headers, timeout=30,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            logger.info(f"MFA SMS challenge sent (type={data.get('challenge_type')})")
+            return data.get("oob_code", "")
+        logger.error(f"MFA challenge request failed: {resp.status_code} {resp.text[:300]}")
+        raise Exception(f"MFA challenge failed: {resp.status_code}")
+
+    def complete_mfa(self, mfa_token: str, oob_code: str, otp_code: str) -> None:
+        headers = {
+            "content-type": "application/json",
+            "user-agent": USER_AGENT,
+            "accept": "application/json",
+            "origin": TAB_BASE_URL,
+            "referer": TAB_BASE_URL,
+        }
+        resp = self.session.post(
+            f"{AUTH0_DOMAIN}/oauth/token",
+            json={
+                "grant_type": "http://auth0.com/oauth/grant-type/mfa-oob",
+                "client_id": AUTH0_CLIENT_ID,
+                "mfa_token": mfa_token,
+                "oob_code": oob_code,
+                "binding_code": otp_code,
+            },
+            headers=headers, timeout=30,
+        )
+        if resp.status_code == 200:
+            tokens = resp.json()
+            self.access_token = tokens.get("access_token", "")
+            self.id_token = tokens.get("id_token", "")
+            if self.access_token:
+                logger.info("MFA verification successful — got access token")
+                return
+        logger.error(f"MFA verify failed: {resp.status_code} {resp.text[:500]}")
+        raise Exception(f"MFA verification failed: {resp.status_code}")
 
     def _fetch_page(self, url: str) -> str:
         headers = {
@@ -219,6 +275,7 @@ async def browser_login(email: str, password: str, proxy_url: str) -> dict:
     """
     HTTP-only TAB login. Drop-in replacement for the old browser-based login.
     Returns dict with: token, account_number, customer_id, email, proxy_url
+    If MFA is required, returns dict with mfa_required=True and state to complete later.
     """
     login = TABLogin(
         api_key=HYPER_API_KEY,
@@ -234,11 +291,44 @@ async def browser_login(email: str, password: str, proxy_url: str) -> dict:
             raise Exception("Token missing customerId claim")
         return {
             "token": token,
-            "account_number": customer_id,  # Will be updated by caller if needed
+            "account_number": customer_id,
             "customer_id": customer_id,
             "email": email,
             "proxy_url": proxy_url,
             "claims": claims,
         }
-    finally:
+    except MFARequiredException as mfa:
+        return {
+            "mfa_required": True,
+            "mfa_token": mfa.mfa_token,
+            "oob_code": mfa.oob_code,
+            "email": email,
+            "proxy_url": proxy_url,
+            "_login_instance": login,
+        }
+    except Exception:
         login.close()
+        raise
+
+
+async def complete_mfa_login(login_instance: TABLogin, mfa_token: str, oob_code: str, otp_code: str) -> dict:
+    """Complete MFA login with the OTP code. Returns same dict as browser_login."""
+    try:
+        login_instance.complete_mfa(mfa_token, oob_code, otp_code)
+        token = login_instance.access_token
+        if not token:
+            raise Exception("No access token after MFA")
+        claims = decode_token_claims(token)
+        customer_id = str(claims.get("https://tab.com.au/customerId", ""))
+        if not customer_id:
+            raise Exception("Token missing customerId claim")
+        return {
+            "token": token,
+            "account_number": customer_id,
+            "customer_id": customer_id,
+            "email": login_instance.email,
+            "proxy_url": login_instance.proxy or "",
+            "claims": claims,
+        }
+    finally:
+        login_instance.close()

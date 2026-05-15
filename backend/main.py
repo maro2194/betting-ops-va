@@ -14,9 +14,10 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from login import browser_login, decode_token_claims
+from login import browser_login, complete_mfa_login, decode_token_claims, MFARequiredException
 from betting import (
     get_balance, get_account_info, legacy_authenticate, get_matches,
     get_match_markets, get_sgm_propositions, price_check, place_sgm_bet,
@@ -207,6 +208,7 @@ sessions: dict[str, dict] = {}
 
 # Lock to prevent concurrent logins for the same email
 login_locks: dict[str, asyncio.Lock] = {}
+mfa_pending: dict[str, dict] = {}  # email -> {mfa_token, oob_code, login_instance, ...}
 
 PROFILE_BASE_DIR = os.path.join(os.path.dirname(__file__), "profiles")
 
@@ -393,6 +395,23 @@ async def api_login(req: LoginRequest, _user: dict = Depends(_verify_app_token))
             logger.error(f"Login failed: {e}\n{tb}")
             raise HTTPException(500, f"Login failed: {type(e).__name__}: {str(e) or tb.split(chr(10))[-2]}")
 
+        if result.get("mfa_required"):
+            mfa_pending[email] = {
+                "mfa_token": result["mfa_token"],
+                "oob_code": result["oob_code"],
+                "login_instance": result["_login_instance"],
+                "password": password,
+                "proxy_url": proxy_url,
+                "account_number": req.account_number,
+                "created_at": time.time(),
+            }
+            logger.info(f"MFA required for {email} — SMS sent, awaiting OTP")
+            return JSONResponse(status_code=202, content={
+                "mfa_required": True,
+                "email": email,
+                "message": "SMS code sent. Enter the OTP to complete login.",
+            })
+
         # Resolve real account number and balance via account-list endpoint
         customer_id = result["customer_id"]
         try:
@@ -462,6 +481,87 @@ async def api_login(req: LoginRequest, _user: dict = Depends(_verify_app_token))
             email=email,
             token_exp=session_data.get("token_exp"),
         )
+
+
+# ─── MFA Verify ──────────────────────────────────────────────────────────────
+
+class MFAVerifyRequest(_BaseModel):
+    email: str
+    otp_code: str
+
+@app.post("/api/mfa-verify", response_model=LoginResponse)
+async def api_mfa_verify(req: MFAVerifyRequest, _user: dict = Depends(_verify_app_token)):
+    """Complete MFA login with the SMS OTP code."""
+    email = req.email.strip().lower()
+    pending = mfa_pending.pop(email, None)
+    if not pending:
+        # Also try without lowercasing
+        pending = mfa_pending.pop(req.email.strip(), None)
+    if not pending:
+        raise HTTPException(400, "No pending MFA for this email. Try logging in again.")
+
+    login_instance = pending["login_instance"]
+    try:
+        result = await complete_mfa_login(
+            login_instance, pending["mfa_token"], pending["oob_code"], req.otp_code
+        )
+    except Exception as e:
+        logger.error(f"MFA verify failed for {email}: {e}")
+        raise HTTPException(400, f"MFA verification failed: {e}")
+
+    proxy_url = pending["proxy_url"]
+    password = pending["password"]
+    customer_id = result["customer_id"]
+    try:
+        acct_info = await asyncio.to_thread(get_account_info, result["token"], customer_id, proxy_url)
+        real_account_number = acct_info["account_number"]
+        balance_str = acct_info["account_balance"]
+        logger.info(f"MFA login resolved: customer_id={customer_id} → account_number={real_account_number}, balance={balance_str}")
+    except Exception as e:
+        logger.warning(f"Account info lookup failed after MFA: {e}")
+        real_account_number = pending.get("account_number") or customer_id
+        balance_str = "N/A"
+
+    account_number = pending.get("account_number") or real_account_number
+    legacy_token = ""
+    for _attempt in range(2):
+        try:
+            legacy_result = await asyncio.to_thread(legacy_authenticate, account_number, password, proxy_url)
+            legacy_token = legacy_result["legacy_token"]
+            logger.info(f"Legacy auth successful for account {account_number} (post-MFA)")
+            break
+        except Exception as e:
+            if _attempt == 0:
+                await asyncio.sleep(1)
+            else:
+                logger.warning(f"Legacy auth failed after MFA: {e}")
+
+    session_id = str(uuid.uuid4())
+    profile_dir = os.path.join(PROFILE_BASE_DIR, re.sub(r'[^a-zA-Z0-9]', '_', email))
+    session_data = {
+        "token": result["token"],
+        "legacy_token": legacy_token,
+        "account_number": account_number,
+        "customer_id": customer_id,
+        "email": email,
+        "password": password,
+        "proxy_url": proxy_url,
+        "profile_dir": profile_dir,
+        "logged_in_at": time.time(),
+    }
+    sessions[session_id] = session_data
+    claims = decode_token_claims(result["token"])
+    session_data["token_exp"] = claims.get("exp")
+    await save_tab_session(session_id, session_data)
+
+    return LoginResponse(
+        session_id=session_id,
+        account_number=account_number,
+        customer_id=customer_id,
+        balance=balance_str,
+        email=email,
+        token_exp=session_data.get("token_exp"),
+    )
 
 
 # ─── Balance ─────────────────────────────────────────────────────────────────
@@ -2658,6 +2758,15 @@ async def tab_tokens_fetch_savers(_user: dict = Depends(_verify_app_token)):
         if not (exp and time.time() < exp - 300):
             continue
         savers = _tt.get_sgm_savers(s.get("token", ""), acct, s.get("proxy_url", ""), legacy_token=s.get("legacy_token", ""))
+        if savers and savers[0].get("_proxy_error"):
+            logger.info(f"Saver fetch proxy error for {acct}, auto-rotating...")
+            new_proxy = await _rotate_account_proxy(s, sid)
+            if new_proxy:
+                savers = _tt.get_sgm_savers(s.get("token", ""), acct, new_proxy, legacy_token=s.get("legacy_token", ""))
+                if savers and savers[0].get("_proxy_error"):
+                    savers = []
+            else:
+                savers = []
         total += len(savers)
         account_savers.append({
             "session_id": sid, "account_number": acct,
@@ -2719,26 +2828,42 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
     except Exception:
         pass
 
-    # Group sessions (deduplicate by account_number)
+    # Group sessions (deduplicate by account_number, newest first)
     _tab_token_groups = await load_tab_groups(_user["username"])
     group_sessions: dict[str, list[dict]] = {}
     seen_accts = set()
-    for sid, s in sessions.items():
+    _dbg_total = len(sessions)
+    _dbg_user_filter = 0
+    _dbg_enabled_filter = 0
+    _dbg_token_filter = 0
+    _dbg_dedup_filter = 0
+    sorted_sessions = sorted(
+        sessions.items(),
+        key=lambda x: x[1].get("logged_in_at") or 0,
+        reverse=True,
+    )
+    for sid, s in sorted_sessions:
         acct = str(s.get("account_number", ""))
         session_email = (s.get("email") or "").lower()
         if (user_accts or user_emails) and acct not in user_accts and session_email not in user_emails:
+            _dbg_user_filter += 1
             continue
         if enabled_accounts and acct not in enabled_accounts:
+            _dbg_enabled_filter += 1
+            continue
+        claims = decode_token_claims(s.get("token", ""))
+        if not (claims.get("exp", 0) and time.time() < claims["exp"] - 300):
+            _dbg_token_filter += 1
             continue
         dedup_key = acct or session_email
         if dedup_key in seen_accts:
+            _dbg_dedup_filter += 1
             continue
         seen_accts.add(dedup_key)
-        claims = decode_token_claims(s.get("token", ""))
-        if not (claims.get("exp", 0) and time.time() < claims["exp"] - 300):
-            continue
         grp = _tab_token_groups.get(acct, "A")
         group_sessions.setdefault(grp, []).append(s)
+    _dbg_kept = sum(len(v) for v in group_sessions.values())
+    logger.warning(f"EXECUTE DEBUG: total={_dbg_total} user_filtered={_dbg_user_filter} enabled_filtered={_dbg_enabled_filter} token_expired={_dbg_token_filter} deduped={_dbg_dedup_filter} kept={_dbg_kept} groups={list(group_sessions.keys())} enabled_accounts={enabled_accounts} user_accts={user_accts}")
 
     # Shared resolve + place logic
     async def _resolve_and_place(bets_list, group_sess, is_dry, username, progress_cb=None):
@@ -2762,6 +2887,66 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                 results.append({"account": "N/A", "group": bet["group"], "match": bet["match"],
                                 "legs": bet["legs"], "stake": 0, "odds": None, "has_saver": False,
                                 "success": False, "error": f"No sessions in group '{bet['group']}'", "dry_run": is_dry})
+                continue
+
+            # ── Cross-match MULTI ──
+            if bet.get("bet_type") == "MULTI":
+                for s in targets:
+                    token, legacy, acct, proxy = s.get("token", ""), s.get("legacy_token", ""), s.get("account_number", ""), s.get("proxy_url", "")
+                    acct_label = acct_labels.get(acct) or acct_labels.get((s.get("email") or "").lower()) or acct
+                    if not legacy:
+                        results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
+                                        "match": bet["match"], "legs": bet["legs"], "stake": 0, "odds": None,
+                                        "has_saver": False, "success": False, "error": "No legacy token", "dry_run": is_dry})
+                        continue
+                    multi_props = []
+                    resolve_error = None
+                    for ml in bet["multi_legs"]:
+                        mlck = f"{ml['sport']}:{ml['competition']}"
+                        if mlck not in matches_cache:
+                            matches_cache[mlck] = await asyncio.to_thread(lambda _t=s: _tt.get_matches(_t["token"], ml["sport"], ml["competition"], _t.get("proxy_url")))
+                        ml_match = _tt.find_match(matches_cache[mlck], ml["match"])
+                        if not ml_match:
+                            resolve_error = f"Match not found: {ml['match']}"
+                            break
+                        ml_markets = await asyncio.to_thread(lambda: _tt.get_sgm_markets(token, ml_match, ml["sport"], ml["competition"], proxy))
+                        prop = _tt.resolve_proposition(ml["leg"], ml_markets, ml_match)
+                        if "error" in prop:
+                            resolve_error = f"{ml['match']}: {prop['error']}"
+                            break
+                        multi_props.append(prop)
+                    if resolve_error:
+                        results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
+                                        "match": bet["match"], "legs": bet["legs"], "stake": 0, "odds": None,
+                                        "has_saver": False, "success": False, "error": resolve_error, "dry_run": is_dry})
+                        continue
+                    combined_odds = 1.0
+                    for p in multi_props:
+                        combined_odds *= p["odds"]
+                    combined_odds = round(combined_odds, 2)
+                    resolved_legs = [{"name": p["name"], "odds": p["odds"], "market": p.get("market", ""), "proposition_id": p.get("proposition_id")} for p in multi_props]
+                    stake = 10.0
+                    if is_dry:
+                        results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
+                                        "match": bet["match"], "legs": [p["name"] for p in multi_props],
+                                        "resolved_legs": resolved_legs, "stake": stake, "odds": combined_odds,
+                                        "has_saver": False, "success": True, "bet_type": "MULTI",
+                                        "error": None, "dry_run": True, "potential_return": round(stake * combined_odds, 2)})
+                    else:
+                        legs_for_place = [{"propositionId": p["proposition_id"], "odds": f"{p['odds']:.2f}"} for p in multi_props]
+                        _log(f"{acct_label}: placing MULTI ${stake:.0f} @ {combined_odds:.2f} — {len(multi_props)} legs...")
+                        pr = await asyncio.to_thread(lambda: place_multi_bet(legacy, acct, legs_for_place, str(stake), proxy))
+                        if pr.get("success"):
+                            _log(f"{acct_label}: ✓ MULTI placed — TSN {pr.get('tsn', '?')}")
+                        else:
+                            _log(f"{acct_label}: ✗ MULTI failed — {pr.get('error', 'unknown')}")
+                        results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
+                                        "match": bet["match"], "legs": [p["name"] for p in multi_props],
+                                        "resolved_legs": resolved_legs, "stake": stake, "odds": combined_odds,
+                                        "has_saver": False, "success": pr.get("success", False), "bet_type": "MULTI",
+                                        "bet_id": pr.get("bet_id"), "tsn": pr.get("tsn"),
+                                        "error": pr.get("error"), "dry_run": False,
+                                        "potential_return": round(stake * combined_odds, 2)})
                 continue
 
             ck = f"{bet['sport']}:{bet['competition']}"

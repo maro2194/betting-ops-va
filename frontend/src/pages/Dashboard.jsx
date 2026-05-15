@@ -480,10 +480,36 @@ export default function Dashboard() {
   const [loginAllRunning, setLoginAllRunning] = useState(false);
   const [loginAllProgress, setLoginAllProgress] = useState('');
 
+  const [mfaAccount, setMfaAccount] = useState(null);
+  const [mfaOtp, setMfaOtp] = useState('');
+  const [mfaSubmitting, setMfaSubmitting] = useState(false);
+  const [mfaError, setMfaError] = useState('');
+
   const handleLogin = async (account) => {
     const result = await api.tabLogin(account.email, account.password, account.proxyUrl, account.accountNumber);
+    if (result.mfa_required) {
+      setMfaAccount(account);
+      setMfaOtp('');
+      setMfaError('');
+      return result;
+    }
     addSession(account.id, { ...result, accountLabel: account.label });
     return result;
+  };
+
+  const handleMfaSubmit = async () => {
+    if (!mfaAccount || !mfaOtp.trim()) return;
+    setMfaSubmitting(true);
+    setMfaError('');
+    try {
+      const result = await api.mfaVerify(mfaAccount.email, mfaOtp.trim());
+      addSession(mfaAccount.id, { ...result, accountLabel: mfaAccount.label });
+      setMfaAccount(null);
+      setMfaOtp('');
+    } catch (err) {
+      setMfaError(err.message || 'MFA verification failed');
+    }
+    setMfaSubmitting(false);
   };
 
   const handleLoginAll = async () => {
@@ -498,8 +524,33 @@ export default function Dashboard() {
       } catch (err) {
         console.error(`Login failed for ${acct.label}:`, err);
       }
-      // Staggered delay: 3-5s between logins (anti-detection)
       if (i < offlineAccounts.length - 1) {
+        await new Promise((r) => setTimeout(r, 3000 + Math.random() * 2000));
+      }
+    }
+    setLoginAllRunning(false);
+    setLoginAllProgress('');
+  };
+
+  const handleReloginAll = async () => {
+    setLoginAllRunning(true);
+    setLoginAllProgress('Logging out all...');
+    for (const acct of accounts) {
+      const session = sessions[acct.id];
+      if (session?.session_id) {
+        try { await api.deleteSession(session.session_id); } catch {}
+        removeSession(acct.id);
+      }
+    }
+    for (let i = 0; i < accounts.length; i++) {
+      const acct = accounts[i];
+      setLoginAllProgress(`${acct.label} (${i + 1}/${accounts.length})`);
+      try {
+        await handleLogin(acct);
+      } catch (err) {
+        console.error(`Relogin failed for ${acct.label}:`, err);
+      }
+      if (i < accounts.length - 1) {
         await new Promise((r) => setTimeout(r, 3000 + Math.random() * 2000));
       }
     }
@@ -546,6 +597,43 @@ export default function Dashboard() {
 
   return (
     <div className="animate-fade-in">
+      {/* MFA Modal */}
+      {mfaAccount && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div className="card" style={{ padding: 24, minWidth: 340, maxWidth: 420 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>MFA Required</h3>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
+              SMS code sent to the phone on <strong>{mfaAccount.label || mfaAccount.email}</strong>. Enter the code below.
+            </p>
+            <input
+              className="t-input"
+              type="text"
+              placeholder="Enter SMS code"
+              value={mfaOtp}
+              onChange={(e) => setMfaOtp(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleMfaSubmit()}
+              autoFocus
+              style={{ width: '100%', marginBottom: 12, fontSize: 18, textAlign: 'center', letterSpacing: 4 }}
+            />
+            {mfaError && (
+              <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 10 }}>{mfaError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-primary" onClick={handleMfaSubmit} disabled={mfaSubmitting || !mfaOtp.trim()} style={{ flex: 1 }}>
+                {mfaSubmitting ? 'Verifying...' : 'Verify'}
+              </button>
+              <button className="btn btn-secondary" onClick={() => setMfaAccount(null)} disabled={mfaSubmitting}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Stat Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 32 }}>
         <StatCard
@@ -634,6 +722,15 @@ export default function Dashboard() {
               {loginAllRunning ? loginAllProgress : 'Login All'}
             </button>
           )}
+          <button
+            onClick={handleReloginAll}
+            disabled={loginAllRunning}
+            className="btn btn-warning"
+            title="Logout all accounts then login fresh"
+          >
+            <RefreshCw size={14} />
+            {loginAllRunning ? loginAllProgress : 'Relogin All'}
+          </button>
           <button
             onClick={() => setShowAdd(true)}
             className="btn btn-primary"

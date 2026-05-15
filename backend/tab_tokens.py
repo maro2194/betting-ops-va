@@ -126,7 +126,10 @@ def get_sgm_savers(token: str, account_number: str, proxy_url: str | None = None
                     })
         return savers
     except Exception as e:
+        err_str = str(e)
         logger.error("get_sgm_savers error for %s: %s", account_number, e)
+        if "tunnel" in err_str.lower() or "curl: (56)" in err_str or "502" in err_str:
+            return [{"_proxy_error": True}]
         return []
     finally:
         s.close()
@@ -616,7 +619,7 @@ def parse_bets_csv(csv_content: str) -> list[dict]:
     lines = csv_content.strip().split("\n")
     # Auto-add header if first line looks like data (check first column, not whole line)
     first_col = lines[0].split(",")[0].strip().lower() if lines else ""
-    if lines and first_col not in ("account", "group", "match", "tryscorer", "leg1"):
+    if lines and first_col not in ("account", "group", "match", "tryscorer", "leg1", "type"):
         # Detect format: if 8 columns assume tryscorer format, else explicit legs
         cols = lines[0].split(",")
         if len(cols) >= 8:
@@ -677,4 +680,39 @@ def parse_bets_csv(csv_content: str) -> list[dict]:
         if len(legs) < 3:
             continue
         bets.append({"group": group, "match": match, "legs": legs, "sport": sport, "competition": competition})
+
+    # Format 3: Cross-match multi — rows with type=multi or type=MULTI
+    # Each row is one leg from a different match; all rows in same group combine into one multi bet
+    multi_rows: dict[str, list[dict]] = {}
+    non_multi = []
+    for b in bets:
+        # Check if any leg description is actually "multi" type marker
+        pass
+    # Re-parse looking for multi format: type,group,match,leg,sport,competition
+    if lines and "type" in (reader.fieldnames or []):
+        re_reader = csv.DictReader(io.StringIO("\n".join(lines)))
+        for row in re_reader:
+            if (row.get("type") or "").strip().lower() == "multi":
+                grp = (row.get("group", "A")).strip()
+                match = (row.get("match", "")).strip()
+                leg = (row.get("leg", "")).strip()
+                sport = row.get("sport", "Soccer").strip()
+                competition = row.get("competition", "").strip()
+                if match and leg:
+                    multi_rows.setdefault(grp, []).append({
+                        "match": match, "leg": leg, "sport": sport, "competition": competition,
+                    })
+        # Remove any SGM bets that were accidentally parsed from multi rows
+        for grp, legs_list in multi_rows.items():
+            if len(legs_list) >= 2:
+                bets.append({
+                    "group": grp,
+                    "match": " + ".join(l["match"] for l in legs_list),
+                    "legs": [l["leg"] for l in legs_list],
+                    "sport": legs_list[0]["sport"],
+                    "competition": legs_list[0]["competition"],
+                    "bet_type": "MULTI",
+                    "multi_legs": legs_list,
+                })
+
     return bets
