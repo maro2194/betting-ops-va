@@ -561,8 +561,11 @@ async def bet365_megaboost_all(sport: str, match_team: str, stake: float = 20, b
                                 accounts: list[str] | None = None) -> dict:
     """Place megaboost across all configured bet365 accounts via Token Farm.
 
-    This fires all accounts in parallel on the token farm.
-    Timeout is long because 5 parallel browser sessions take time.
+    The farm runs accounts sequentially today (despite the older comment),
+    not in parallel — each browser login + place is ~2 min, so 6 accounts is
+    ~12 min wall time. Timeout has to cover the worst case end-to-end so
+    the VPS doesn't abandon the call mid-run (which dropped 3/6 results on
+    the 2026-05-16 job and left zero rows in bet365_picks / betops_outbox).
     """
     try:
         payload = {
@@ -573,7 +576,7 @@ async def bet365_megaboost_all(sport: str, match_team: str, stake: float = 20, b
         }
         if accounts:
             payload["accounts"] = accounts
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with httpx.AsyncClient(timeout=1200) as client:
             resp = await client.post(
                 f"{FARM_URL}/bet365/megaboost-all",
                 headers=_headers(),
