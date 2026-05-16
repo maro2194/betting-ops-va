@@ -2914,54 +2914,67 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                                         "match": bet["match"], "legs": bet["legs"], "stake": 0, "odds": None,
                                         "has_saver": False, "success": False, "error": "No legacy token", "dry_run": is_dry})
                         continue
-                    multi_props = []
-                    resolve_error = None
-                    for ml in bet["multi_legs"]:
-                        mlck = f"{ml['sport']}:{ml['competition']}"
-                        if mlck not in matches_cache:
-                            matches_cache[mlck] = await asyncio.to_thread(lambda _t=s: _tt.get_matches(_t["token"], ml["sport"], ml["competition"], _t.get("proxy_url")))
-                        ml_match = _tt.find_match(matches_cache[mlck], ml["match"])
-                        if not ml_match:
-                            resolve_error = f"Match not found: {ml['match']}"
-                            break
-                        ml_markets = await asyncio.to_thread(lambda: _tt.get_sgm_markets(token, ml_match, ml["sport"], ml["competition"], proxy))
-                        prop = _tt.resolve_proposition(ml["leg"], ml_markets, ml_match)
-                        if "error" in prop:
-                            resolve_error = f"{ml['match']}: {prop['error']}"
-                            break
-                        multi_props.append(prop)
-                    if resolve_error:
+                    # Wrap the per-account body so a single proxy 403 / TAB
+                    # timeout doesn't propagate out of the loop and abort the
+                    # whole job after other accounts already placed.
+                    try:
+                        multi_props = []
+                        resolve_error = None
+                        for ml in bet["multi_legs"]:
+                            mlck = f"{ml['sport']}:{ml['competition']}"
+                            if mlck not in matches_cache:
+                                matches_cache[mlck] = await asyncio.to_thread(lambda _t=s: _tt.get_matches(_t["token"], ml["sport"], ml["competition"], _t.get("proxy_url")))
+                            ml_match = _tt.find_match(matches_cache[mlck], ml["match"])
+                            if not ml_match:
+                                resolve_error = f"Match not found: {ml['match']}"
+                                break
+                            ml_markets = await asyncio.to_thread(lambda: _tt.get_sgm_markets(token, ml_match, ml["sport"], ml["competition"], proxy))
+                            prop = _tt.resolve_proposition(ml["leg"], ml_markets, ml_match)
+                            if "error" in prop:
+                                resolve_error = f"{ml['match']}: {prop['error']}"
+                                break
+                            multi_props.append(prop)
+                        if resolve_error:
+                            _log(f"{acct_label}: ✗ MULTI resolve failed — {resolve_error}")
+                            results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
+                                            "match": bet["match"], "legs": bet["legs"], "stake": 0, "odds": None,
+                                            "has_saver": False, "success": False, "error": resolve_error, "dry_run": is_dry})
+                            continue
+                        combined_odds = 1.0
+                        for p in multi_props:
+                            combined_odds *= p["odds"]
+                        combined_odds = round(combined_odds, 2)
+                        resolved_legs = [{"name": p["name"], "odds": p["odds"], "market": p.get("market", ""), "proposition_id": p.get("proposition_id")} for p in multi_props]
+                        stake = 10.0
+                        if is_dry:
+                            results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
+                                            "match": bet["match"], "legs": [p["name"] for p in multi_props],
+                                            "resolved_legs": resolved_legs, "stake": stake, "odds": combined_odds,
+                                            "has_saver": False, "success": True, "bet_type": "MULTI",
+                                            "error": None, "dry_run": True, "potential_return": round(stake * combined_odds, 2)})
+                        else:
+                            legs_for_place = [{"propositionId": p["proposition_id"], "odds": f"{p['odds']:.2f}"} for p in multi_props]
+                            _log(f"{acct_label}: placing MULTI ${stake:.0f} @ {combined_odds:.2f} — {len(multi_props)} legs...")
+                            pr = await asyncio.to_thread(lambda: place_multi_bet(legacy, acct, legs_for_place, str(stake), proxy))
+                            if pr.get("success"):
+                                _log(f"{acct_label}: ✓ MULTI placed — TSN {pr.get('tsn', '?')}")
+                            else:
+                                _log(f"{acct_label}: ✗ MULTI failed — {pr.get('error', 'unknown')}")
+                            results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
+                                            "match": bet["match"], "legs": [p["name"] for p in multi_props],
+                                            "resolved_legs": resolved_legs, "stake": stake, "odds": combined_odds,
+                                            "has_saver": False, "success": pr.get("success", False), "bet_type": "MULTI",
+                                            "bet_id": pr.get("bet_id"), "tsn": pr.get("tsn"),
+                                            "error": pr.get("error"), "dry_run": False,
+                                        "potential_return": round(stake * combined_odds, 2)})
+                    except Exception as _e:
+                        err_msg = f"{type(_e).__name__}: {_e}"
+                        logger.warning("MULTI exception for %s on %s: %s", acct_label, bet.get("match"), err_msg)
+                        _log(f"{acct_label}: ✗ MULTI errored — {err_msg[:100]}")
                         results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
                                         "match": bet["match"], "legs": bet["legs"], "stake": 0, "odds": None,
-                                        "has_saver": False, "success": False, "error": resolve_error, "dry_run": is_dry})
-                        continue
-                    combined_odds = 1.0
-                    for p in multi_props:
-                        combined_odds *= p["odds"]
-                    combined_odds = round(combined_odds, 2)
-                    resolved_legs = [{"name": p["name"], "odds": p["odds"], "market": p.get("market", ""), "proposition_id": p.get("proposition_id")} for p in multi_props]
-                    stake = 10.0
-                    if is_dry:
-                        results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
-                                        "match": bet["match"], "legs": [p["name"] for p in multi_props],
-                                        "resolved_legs": resolved_legs, "stake": stake, "odds": combined_odds,
-                                        "has_saver": False, "success": True, "bet_type": "MULTI",
-                                        "error": None, "dry_run": True, "potential_return": round(stake * combined_odds, 2)})
-                    else:
-                        legs_for_place = [{"propositionId": p["proposition_id"], "odds": f"{p['odds']:.2f}"} for p in multi_props]
-                        _log(f"{acct_label}: placing MULTI ${stake:.0f} @ {combined_odds:.2f} — {len(multi_props)} legs...")
-                        pr = await asyncio.to_thread(lambda: place_multi_bet(legacy, acct, legs_for_place, str(stake), proxy))
-                        if pr.get("success"):
-                            _log(f"{acct_label}: ✓ MULTI placed — TSN {pr.get('tsn', '?')}")
-                        else:
-                            _log(f"{acct_label}: ✗ MULTI failed — {pr.get('error', 'unknown')}")
-                        results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
-                                        "match": bet["match"], "legs": [p["name"] for p in multi_props],
-                                        "resolved_legs": resolved_legs, "stake": stake, "odds": combined_odds,
-                                        "has_saver": False, "success": pr.get("success", False), "bet_type": "MULTI",
-                                        "bet_id": pr.get("bet_id"), "tsn": pr.get("tsn"),
-                                        "error": pr.get("error"), "dry_run": False,
-                                        "potential_return": round(stake * combined_odds, 2)})
+                                        "has_saver": False, "success": False, "bet_type": "MULTI",
+                                        "error": err_msg, "dry_run": is_dry})
                 continue
 
             ck = f"{bet['sport']}:{bet['competition']}"
