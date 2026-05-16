@@ -1017,7 +1017,8 @@ async def bet365_place_megaboost(session_id: str, sport: str, match_team: str, s
                     const boosted = oddsEls[0];
                     const original = oddsEls.length >= 2 ? oddsEls[oddsEls.length - 1] : null;
 
-                    const isMega = text.toUpperCase().includes('MEGA') ||
+                    const isMega = !!el.querySelector('img[src*="SuperBoost"]') ||
+                                   text.toUpperCase().includes('MEGA') ||
                                    el.innerHTML.toUpperCase().includes('MEGA');
 
                     // Find clickable target: walk up from boosted odds to button/anchor
@@ -1918,6 +1919,13 @@ async def bet365_list_boosts(session_id: str, sport: str = "HOME", match_team: s
                 if (!hasHomepage && !hasSGM && !hasBoost) continue;
                 if (!el.offsetParent) continue;
 
+                // Reject carousels: an element containing >1 "$X stake returns" wraps multiple cards.
+                // Without this, an outer carousel ancestor matches and steals odds from neighbours.
+                if (hasHomepage) {
+                    const stakeMatches = (text.match(/\$\d+\s+stake\s+returns/gi) || []).length;
+                    if (stakeMatches > 1) continue;
+                }
+
                 const elRect = el.getBoundingClientRect();
                 if (elRect.width < 50 || elRect.width > 1200) continue;
                 if (elRect.height < 30 || elRect.height > 800) continue;
@@ -1936,7 +1944,20 @@ async def bet365_list_boosts(session_id: str, sport: str = "HOME", match_team: s
                 // Skip elements that are just "Bet Boost" labels without any promo content
                 if (!hasHomepage && !hasSGM && lines.length <= 3 && text.length < 30) continue;
 
-                const title = lines[0] || '';
+                // Title: skip leading lines that are odds ("1.90"), bet-count counters ("2.4k"),
+                // or returns ("$20 stake returns $56"). Pick the first descriptive line.
+                const oddsRe = /^\d+\.\d{2}$/;
+                const counterRe = /^\d+(\.\d+)?k?$/i;
+                const returnsRe = /^\$\d/;
+                let title = '';
+                for (const ln of lines) {
+                    if (oddsRe.test(ln)) continue;
+                    if (counterRe.test(ln)) continue;
+                    if (returnsRe.test(ln)) continue;
+                    title = ln;
+                    break;
+                }
+                title = title || lines[0] || '';
 
                 const oddsEls = [];
                 const candidates = el.querySelectorAll('span, div, button, a');
@@ -1950,7 +1971,10 @@ async def bet365_list_boosts(session_id: str, sport: str = "HOME", match_team: s
                     }
                 }
 
-                const isMega = text.toUpperCase().includes('MEGA') ||
+                // MEGA detection via the SuperBoost badge SVG (bet365 renders the "MEGA BOOST"
+                // chevron as an asset image, not text — text-based checks miss it).
+                const isMega = !!el.querySelector('img[src*="SuperBoost"]') ||
+                               text.toUpperCase().includes('MEGA') ||
                                el.innerHTML.toUpperCase().includes('MEGA');
 
                 oddsEls.sort((a, b) => b.val - a.val);
@@ -1971,11 +1995,26 @@ async def bet365_list_boosts(session_id: str, sport: str = "HOME", match_team: s
                     descExtra = `$${sgmMatch[1]} on a ${sgmMatch[2]}+ leg SGM`;
                 }
 
+                // Description: drop title duplicate, odds, counters, returns line.
+                let description = descExtra;
+                if (!description) {
+                    const descLines = [];
+                    for (const ln of lines) {
+                        if (ln === title) continue;
+                        if (oddsRe.test(ln)) continue;
+                        if (counterRe.test(ln)) continue;
+                        if (returnsRe.test(ln)) continue;
+                        descLines.push(ln);
+                        if (descLines.length >= 5) break;
+                    }
+                    description = descLines.join(' | ');
+                }
+
                 boosts.push({
                     index: boosts.length,
                     type: isMega ? 'MEGA_BOOST' : (hasSGM ? 'SGM_BOOST' : 'BET_BOOST'),
                     title: title.substring(0, 80),
-                    description: descExtra || lines.slice(0, 5).join(' | '),
+                    description: description,
                     original_odds: oddsEls.length >= 2 ? oddsEls[oddsEls.length - 1].text : '',
                     boosted_odds: oddsEls.length >= 1 ? oddsEls[0].text : '',
                     stake: stakeVal,
@@ -1983,20 +2022,26 @@ async def bet365_list_boosts(session_id: str, sport: str = "HOME", match_team: s
                 });
             }
 
-            // Deduplicate: if a parent and child both matched, keep the most specific (smallest area)
+            // Deduplicate. Two containers can match the same boost (outer card + inner odds-only
+            // partial). Prefer the one with description and a non-odds title, then dedup by the
+            // (returns, boosted_odds) pair so the partials collapse into the proper card.
             const deduped = [];
-            const usedPositions = new Set();
+            const usedKeys = new Set();
+            const oddsLikeTitle = /^\d+\.\d{2}$/;
             boosts.sort((a, b) => {
-                // Prefer items with more data
-                const scoreA = (a.stake > 0 ? 2 : 0) + (a.boosted_odds ? 1 : 0);
-                const scoreB = (b.stake > 0 ? 2 : 0) + (b.boosted_odds ? 1 : 0);
-                return scoreB - scoreA;
+                const score = x =>
+                    (x.stake > 0 ? 2 : 0) +
+                    (x.boosted_odds ? 1 : 0) +
+                    (x.description ? 2 : 0) +
+                    (oddsLikeTitle.test(x.title) ? 0 : 4);
+                return score(b) - score(a);
             });
             for (const b of boosts) {
-                // Check we haven't already included something at a very similar position
-                const key = b.title.substring(0, 30);
-                if (usedPositions.has(key)) continue;
-                usedPositions.add(key);
+                const key = (b.boosted_odds && b.returns)
+                    ? `${b.returns}|${b.boosted_odds}`
+                    : `t:${b.title.substring(0, 30)}`;
+                if (usedKeys.has(key)) continue;
+                usedKeys.add(key);
                 b.index = deduped.length;
                 deduped.push(b);
             }
@@ -2004,7 +2049,8 @@ async def bet365_list_boosts(session_id: str, sport: str = "HOME", match_team: s
             deduped.sort((a, b) => {
                 if (a.type !== b.type) {
                     const order = { MEGA_BOOST: 0, SGM_BOOST: 1, BET_BOOST: 2 };
-                    return (order[a.type] || 9) - (order[b.type] || 9);
+                    const rank = t => (order[t] !== undefined ? order[t] : 9);
+                    return rank(a.type) - rank(b.type);
                 }
                 return 0;
             });
