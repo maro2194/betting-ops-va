@@ -2691,14 +2691,14 @@ async def tab_tokens_accounts(_user: dict = Depends(_verify_app_token)):
         key=lambda x: x[1].get("logged_in_at") or "",
         reverse=True,
     )
+    # First pass: collect the rows we'll return (still without balance)
+    pending = []  # list of (row_dict, session_dict, is_valid)
     for sid, s in sorted_sessions:
         acct_num = str(s.get("account_number", ""))
         session_email = (s.get("email") or "").lower()
-        # Only show sessions belonging to this user (match by acct number or email)
         is_users = acct_num in user_acct_numbers or session_email in user_emails
         if (user_acct_numbers or user_emails) and not is_users:
             continue
-        # Deduplicate by account_number — keep the newest (last) session
         dedup_key = acct_num or session_email
         if dedup_key in seen_accounts:
             continue
@@ -2707,7 +2707,7 @@ async def tab_tokens_accounts(_user: dict = Depends(_verify_app_token)):
         exp = claims.get("exp", 0)
         is_valid = bool(exp and time.time() < exp - 300)
         label = label_map.get(acct_num) or label_map.get(session_email) or s.get("label") or s.get("email", sid[:6])
-        results.append({
+        row = {
             "session_id": sid,
             "email": s.get("email", ""),
             "account_number": acct_num,
@@ -2716,8 +2716,34 @@ async def tab_tokens_accounts(_user: dict = Depends(_verify_app_token)):
             "group": _tab_token_groups.get(acct_num, "A"),
             "saver_count": 0,
             "savers": [],
-        })
-    return results
+            "balance": None,
+            "balance_value": None,
+        }
+        pending.append((row, s, is_valid))
+
+    # Second pass: fan out balance lookups in parallel for authenticated sessions.
+    async def _fetch_balance(s: dict):
+        try:
+            bal = await asyncio.to_thread(
+                get_balance, s.get("token", ""), s.get("customer_id", ""), s.get("proxy_url", ""),
+            )
+            return bal.get("account_balance") if isinstance(bal, dict) else None
+        except Exception:
+            return None
+
+    fetch_targets = [(row, s) for row, s, v in pending if v]
+    balances = await asyncio.gather(
+        *[_fetch_balance(s) for _, s in fetch_targets], return_exceptions=False,
+    ) if fetch_targets else []
+    for (row, _s), bal_str in zip(fetch_targets, balances):
+        row["balance"] = bal_str
+        try:
+            if bal_str:
+                row["balance_value"] = float(str(bal_str).replace("$", "").replace(",", "").strip())
+        except (ValueError, TypeError):
+            row["balance_value"] = None
+
+    return [row for row, _s, _v in pending]
 
 
 @app.post("/api/tab-tokens/fetch-savers")

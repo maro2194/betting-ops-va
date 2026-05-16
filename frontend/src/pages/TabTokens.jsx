@@ -262,13 +262,18 @@ export default function TabTokens() {
               Accounts ({accounts.length})
             </div>
             <table className="data-table" style={{ width: '100%' }}>
-              <thead><tr><th style={{ width: 32 }}><input type="checkbox" checked={accounts.every(a => isAccountEnabled(a.account_number))} onChange={() => { const allOn = accounts.every(a => isAccountEnabled(a.account_number)); setEnabledAccounts(Object.fromEntries(accounts.map(a => [a.account_number, !allOn]))); }} /></th><th>Group</th><th>Label</th><th>Account #</th><th>Status</th><th style={{ textAlign: 'right' }}>Savers</th><th>Matches</th></tr></thead>
+              <thead><tr><th style={{ width: 32 }}><input type="checkbox" checked={accounts.every(a => isAccountEnabled(a.account_number))} onChange={() => { const allOn = accounts.every(a => isAccountEnabled(a.account_number)); setEnabledAccounts(Object.fromEntries(accounts.map(a => [a.account_number, !allOn]))); }} /></th><th>Group</th><th>Label</th><th>Account #</th><th>Status</th><th style={{ textAlign: 'right' }}>Balance</th><th style={{ textAlign: 'right' }}>Savers</th><th>Matches</th></tr></thead>
               <tbody>
                 {accounts.length === 0 ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 20, color: 'var(--text-dim)' }}>
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20, color: 'var(--text-dim)' }}>
                     {loading ? 'Loading...' : 'Login accounts on Dashboard first, then Refresh.'}
                   </td></tr>
-                ) : accounts.map(a => (
+                ) : accounts.map(a => {
+                  const bv = a.balance_value;
+                  const balColor = bv == null
+                    ? 'var(--text-dim)'
+                    : (bv >= 10 ? 'var(--success)' : 'var(--danger)');
+                  return (
                   <tr key={a.account_number} style={{ opacity: isAccountEnabled(a.account_number) ? 1 : 0.4 }}>
                     <td><input type="checkbox" checked={isAccountEnabled(a.account_number)} onChange={() => toggleAccount(a.account_number)} /></td>
                     <td>
@@ -280,6 +285,9 @@ export default function TabTokens() {
                     <td style={{ fontWeight: 600 }}>{a.label}</td>
                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>{a.account_number}</td>
                     <td><span style={{ color: a.authenticated ? 'var(--success)' : 'var(--danger)', fontSize: 12, fontWeight: 600 }}>{a.authenticated ? 'Online' : 'Offline'}</span></td>
+                    <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700, color: balColor }}>
+                      {a.balance || (a.authenticated ? '—' : '')}
+                    </td>
                     <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700, color: (a.saver_count || 0) > 0 ? 'var(--success)' : 'var(--text-dim)' }}>{a.saver_count || 0}</td>
                     <td style={{ fontSize: 11, color: 'var(--text-dim)', maxWidth: 350, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {(a.savers || []).length > 0 && (() => {
@@ -289,7 +297,8 @@ export default function TabTokens() {
                       })()}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
