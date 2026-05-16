@@ -2945,17 +2945,64 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                             combined_odds *= p["odds"]
                         combined_odds = round(combined_odds, 2)
                         resolved_legs = [{"name": p["name"], "odds": p["odds"], "market": p.get("market", ""), "proposition_id": p.get("proposition_id")} for p in multi_props]
+                        # Try to attach a Multi Saver token (e.g. "Soccer Multi Saver",
+                        # "UFC Saver"). Match by usageRestrictions == bet's sport, or
+                        # "Any" as a fallback. If found, stake up to the token's
+                        # max_reward; otherwise stick with the $10 cash default.
                         stake = 10.0
+                        saver_token_group_id = None
+                        saver_offer_name = None
+                        try:
+                            multi_tokens = await asyncio.to_thread(
+                                lambda: _tt.get_multi_savers(token, acct, proxy, legacy_token=legacy)
+                            )
+                            # Drop proxy-error sentinels — they have no usable fields.
+                            multi_tokens = [t for t in multi_tokens if not t.get("_proxy_error")]
+                            bet_sports = {ml.get("sport", "").lower() for ml in bet.get("multi_legs", [])}
+                            primary_sport = next(iter(bet_sports), "") if len(bet_sports) == 1 else ""
+                            # Prefer a SAVER token for the bet's specific sport, then
+                            # any sport-specific SAVER, then "Any" SAVER, then any
+                            # SportsMulti token at all.
+                            def _score(tk):
+                                ur = (tk.get("sport") or "").lower()
+                                pt = (tk.get("promotion_type") or "").lower()
+                                s = 0
+                                if pt == "saver": s += 4
+                                if primary_sport and ur == primary_sport: s += 4
+                                if ur == "any": s += 1
+                                return s
+                            multi_tokens.sort(key=_score, reverse=True)
+                            for tk in multi_tokens:
+                                if tk.get("token_group_id") and _score(tk) > 0:
+                                    saver_token_group_id = tk["token_group_id"]
+                                    saver_offer_name = tk.get("offer_name") or "Multi Saver"
+                                    # Stake up to the token's max_reward so the saver
+                                    # actually pays out the full $25 (or whatever).
+                                    try:
+                                        mr = float(tk.get("max_reward") or 0)
+                                        if mr > stake:
+                                            stake = mr
+                                    except (TypeError, ValueError):
+                                        pass
+                                    break
+                        except Exception as _e:
+                            logger.warning("multi saver lookup failed for %s: %s", acct_label, _e)
+                        has_saver = bool(saver_token_group_id)
                         if is_dry:
                             results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
                                             "match": bet["match"], "legs": [p["name"] for p in multi_props],
                                             "resolved_legs": resolved_legs, "stake": stake, "odds": combined_odds,
-                                            "has_saver": False, "success": True, "bet_type": "MULTI",
+                                            "has_saver": has_saver, "saver_name": saver_offer_name,
+                                            "success": True, "bet_type": "MULTI",
                                             "error": None, "dry_run": True, "potential_return": round(stake * combined_odds, 2)})
                         else:
                             legs_for_place = [{"propositionId": p["proposition_id"], "odds": f"{p['odds']:.2f}"} for p in multi_props]
-                            _log(f"{acct_label}: placing MULTI ${stake:.0f} @ {combined_odds:.2f} — {len(multi_props)} legs...")
-                            pr = await asyncio.to_thread(lambda: place_multi_bet(legacy, acct, legs_for_place, str(stake), proxy))
+                            saver_tag = f" + {saver_offer_name}" if has_saver else ""
+                            _log(f"{acct_label}: placing MULTI ${stake:.0f} @ {combined_odds:.2f} — {len(multi_props)} legs{saver_tag}...")
+                            pr = await asyncio.to_thread(lambda: place_multi_bet(
+                                legacy, acct, legs_for_place, str(stake), proxy,
+                                token_group_id=saver_token_group_id,
+                            ))
                             if pr.get("success"):
                                 _log(f"{acct_label}: ✓ MULTI placed — TSN {pr.get('tsn', '?')}")
                             else:
@@ -2963,7 +3010,8 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                             results.append({"account": acct, "account_label": acct_label, "group": bet["group"],
                                             "match": bet["match"], "legs": [p["name"] for p in multi_props],
                                             "resolved_legs": resolved_legs, "stake": stake, "odds": combined_odds,
-                                            "has_saver": False, "success": pr.get("success", False), "bet_type": "MULTI",
+                                            "has_saver": has_saver, "saver_name": saver_offer_name,
+                                            "success": pr.get("success", False), "bet_type": "MULTI",
                                             "bet_id": pr.get("bet_id"), "tsn": pr.get("tsn"),
                                             "error": pr.get("error"), "dry_run": False,
                                         "potential_return": round(stake * combined_odds, 2)})

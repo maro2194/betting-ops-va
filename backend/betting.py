@@ -459,8 +459,15 @@ def place_sgm_bet(legacy_token: str, account_number: str, propositions: list[dic
 
 
 def place_multi_bet(legacy_token: str, account_number: str, legs: list[dict],
-                    stake: str, proxy_url: Optional[str] = None) -> dict:
-    """Place a cross-game multi bet using legacy TabcorpAuth token."""
+                    stake: str, proxy_url: Optional[str] = None,
+                    token_group_id: Optional[str] = None) -> dict:
+    """Place a cross-game multi bet using legacy TabcorpAuth token.
+
+    If token_group_id is provided, attaches the matching multi-saver / multi-boost
+    token (e.g. "Soccer Multi Saver", "UFC Saver") to the bet via the same
+    `tokenGroupId` field SGM placements use. Token must be SPORTS_MULTIS-eligible
+    on the account, otherwise TAB rejects the bet.
+    """
     legs_payload = []
     for leg in legs:
         legs_payload.append({
@@ -474,13 +481,16 @@ def place_multi_bet(legacy_token: str, account_number: str, legs: list[dict],
     for _try in range(2):
         session = _get_pooled_session(proxy_url)
         session.headers.update(_webapi_headers(legacy_token))
+        bet = {
+            "type": "FIXED_ODDS",
+            "betType": "WIN",
+            "stake": f"{float(stake):.2f}",
+            "legs": legs_payload,
+        }
+        if token_group_id:
+            bet["tokenGroupId"] = token_group_id
         payload = {
-            "bets": [{
-                "type": "FIXED_ODDS",
-                "betType": "WIN",
-                "stake": f"{float(stake):.2f}",
-                "legs": legs_payload,
-            }],
+            "bets": [bet],
             "transactionId": str(uuid.uuid4()),
         }
         resp = session.post(url, json=payload, timeout=5)

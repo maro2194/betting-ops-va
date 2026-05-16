@@ -95,8 +95,10 @@ def _request_with_retry(fn, *args, max_retries: int = 2, retry_delay: float = 1.
 
 # ── Saver Token Fetching ──────────────────────────────────────────
 
-def get_sgm_savers(token: str, account_number: str, proxy_url: str | None = None, legacy_token: str | None = None) -> list[dict]:
-    """Fetch SGM saver tokens for an account. Uses legacy TabcorpAuth if available."""
+def _fetch_bet_tokens_raw(token: str, account_number: str, proxy_url: str | None, legacy_token: str | None) -> dict | None:
+    """Single HTTP call to TAB's bet-tokens endpoint. Returns the parsed JSON or
+    None on a non-200. Centralised so SGM and Multi savers don't duplicate
+    network code / auth-fallback handling."""
     url = f"{PROMO_BASE}/accounts/{account_number}/bet-tokens"
     s = _make_session(proxy_url)
     try:
@@ -104,9 +106,27 @@ def get_sgm_savers(token: str, account_number: str, proxy_url: str | None = None
         resp = _request_with_retry(s.get, url, headers=headers, timeout=15)
         if resp.status_code != 200:
             logger.warning("Bet tokens failed for %s: %d", account_number, resp.status_code)
+            return None
+        return resp.json()
+    finally:
+        s.close()
+
+
+def get_sgm_savers(token: str, account_number: str, proxy_url: str | None = None, legacy_token: str | None = None) -> list[dict]:
+    """Fetch SGM saver tokens for an account. Uses legacy TabcorpAuth if available."""
+    s = _make_session(proxy_url)
+    try:
+        try:
+            data = _fetch_bet_tokens_raw(token, account_number, proxy_url, legacy_token)
+        except Exception as e:
+            err_str = str(e)
+            logger.error("get_sgm_savers error for %s: %s", account_number, e)
+            if "tunnel" in err_str.lower() or "curl: (56)" in err_str or "502" in err_str:
+                return [{"_proxy_error": True}]
+            return []
+        if data is None:
             return []
 
-        data = resp.json()
         savers = []
         for offer in data.get("exclusiveOffers", []):
             if offer.get("type") != "SGM":
@@ -125,14 +145,60 @@ def get_sgm_savers(token: str, account_number: str, proxy_url: str | None = None
                         "remaining": tk.get("remainingNumberOfBetTokens", 0),
                     })
         return savers
+    finally:
+        s.close()
+
+
+def get_multi_savers(token: str, account_number: str, proxy_url: str | None = None, legacy_token: str | None = None) -> list[dict]:
+    """Fetch cross-match MULTI saver / boost tokens for an account.
+
+    TAB exposes these under both `exclusiveOffers` and `results` in the same
+    bet-tokens response that `get_sgm_savers` reads — but it filters to SGM.
+    Multi tokens have `type == "SportsMulti"` (e.g. "Soccer Multi Saver",
+    "UFC Saver", "Venue Sport Multi Boost") and their betTokens carry
+    `betTypes: ["SPORTS_MULTIS"]`.
+
+    Returns a list of dicts with: offer_name, sport, max_reward, token_group_id,
+    promotion_type ("SAVER" / "BOOST"), reward_type, min_stake, valid_till,
+    remaining. `sport` is taken from `usageRestrictions` ("Soccer", "UFC",
+    "Any", etc.) so callers can pick a token whose sport matches the bet.
+    """
+    try:
+        data = _fetch_bet_tokens_raw(token, account_number, proxy_url, legacy_token)
     except Exception as e:
         err_str = str(e)
-        logger.error("get_sgm_savers error for %s: %s", account_number, e)
+        logger.error("get_multi_savers error for %s: %s", account_number, e)
         if "tunnel" in err_str.lower() or "curl: (56)" in err_str or "502" in err_str:
             return [{"_proxy_error": True}]
         return []
-    finally:
-        s.close()
+    if data is None:
+        return []
+
+    multi_tokens = []
+    sources = list(data.get("exclusiveOffers", [])) + list(data.get("results", []))
+    for offer in sources:
+        if offer.get("type") != "SportsMulti":
+            continue
+        for group in offer.get("tokenGroups", []):
+            for tk in group.get("betTokens", []):
+                if tk.get("type") != "SPORTS":
+                    continue
+                bt = tk.get("betTypes") or []
+                if "SPORTS_MULTIS" not in bt:
+                    continue
+                multi_tokens.append({
+                    "offer_name": offer.get("name", ""),
+                    "sport": tk.get("usageRestrictions", ""),
+                    "promotion_type": tk.get("promotionType", ""),
+                    "reward_type": tk.get("rewardType", ""),
+                    "max_reward": tk.get("maxReward", 0),
+                    "min_stake": tk.get("minStake", 0),
+                    "valid_till": tk.get("validTill", ""),
+                    "token_group_id": tk.get("tokenGroupId", ""),
+                    "remaining": tk.get("remainingNumberOfBetTokens", 0),
+                    "description": tk.get("description", ""),
+                })
+    return multi_tokens
 
 
 # ── Match & Proposition Resolution ────────────────────────────────
