@@ -3031,7 +3031,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                 try:
                     svs = await asyncio.to_thread(lambda: _tt.get_sgm_savers(token, acct, proxy, legacy_token=legacy))
                 except Exception as _e:
-                    logger.warning("execute: saver fetch failed for %s: %s — defaulting to $10 stake", acct, _e)
+                    logger.warning("execute: saver fetch failed for %s: %s — defaulting to $25 stake", acct, _e)
                     svs = []
                 # Drop proxy-error sentinel rows ({"_proxy_error": True}) — they
                 # have no "match" key so empty-string substring matches against
@@ -3042,7 +3042,9 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                     bet_match_lower in sv["match"].lower() or
                     sv["match"].lower() in bet_match_lower
                 )]
-                stake = float(matching[0].get("max_reward") or 10.0) if matching else 10.0
+                # Default $25 matches the typical SGM saver max — used when
+                # no matching saver row is found or its max_reward is missing.
+                stake = float(matching[0].get("max_reward") or 25.0) if matching else 25.0
 
                 resolved_legs = []
                 for p in props:
