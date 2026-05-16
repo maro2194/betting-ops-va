@@ -2886,6 +2886,46 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
             if progress_cb:
                 progress_cb(msg)
         matches_cache: dict[str, list] = {}
+
+        def _candidate_sessions(primary: list[dict]):
+            """Yield primary sessions first, then any other logged-in user-owned
+            session whose token isn't expired. Used as a proxy fallback pool
+            when one session's Oxylabs sticky IP is TAB-banned."""
+            tried_ids = set()
+            for _t in primary:
+                tried_ids.add(id(_t))
+                yield _t
+            for _sid, _s in sessions.items():
+                if id(_s) in tried_ids:
+                    continue
+                _acct = str(_s.get("account_number", ""))
+                _email = (_s.get("email") or "").lower()
+                if (user_accts or user_emails) and _acct not in user_accts and _email not in user_emails:
+                    continue
+                _claims = decode_token_claims(_s.get("token", ""))
+                if not (_claims.get("exp", 0) and time.time() < _claims["exp"] - 300):
+                    continue
+                tried_ids.add(id(_s))
+                yield _s
+
+        async def _fetch_matches_with_fallback(primary: list[dict], sport: str, comp: str) -> list[dict]:
+            """Public matches endpoint — try every candidate session until one
+            returns a non-empty list."""
+            for _t in _candidate_sessions(primary):
+                fetched = await asyncio.to_thread(lambda _x=_t: _tt.get_matches(_x["token"], sport, comp, _x.get("proxy_url")))
+                if fetched:
+                    return fetched
+            return []
+
+        async def _fetch_markets_with_fallback(primary: list[dict], match: dict, sport: str, comp: str) -> list[dict]:
+            """Public _links.markets endpoint — same fallback strategy as matches.
+            Per-match cache is handled by tab_tokens.get_sgm_markets itself."""
+            for _t in _candidate_sessions(primary):
+                fetched = await asyncio.to_thread(lambda _x=_t: _tt.get_sgm_markets(_x["token"], match, sport, comp, _x.get("proxy_url")))
+                if fetched:
+                    return fetched
+            return []
+
         results = []
         # Pre-fetch account labels
         acct_labels = {}
@@ -2924,10 +2964,8 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                             mlck = f"{ml['sport']}:{ml['competition']}"
                             # Only cache NON-EMPTY results — if the first session's
                             # proxy hit a 403/522, get_matches returns [] silently.
-                            # Caching that would block every subsequent account from
-                            # ever finding the match through its own (working) proxy.
                             if not matches_cache.get(mlck):
-                                fetched = await asyncio.to_thread(lambda _t=s: _tt.get_matches(_t["token"], ml["sport"], ml["competition"], _t.get("proxy_url")))
+                                fetched = await _fetch_matches_with_fallback([s], ml["sport"], ml["competition"])
                                 if fetched:
                                     matches_cache[mlck] = fetched
                             ml_match = _tt.find_match(matches_cache.get(mlck) or [], ml["match"])
@@ -2939,7 +2977,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                                 else:
                                     resolve_error = f"Match not found: {ml['match']}"
                                 break
-                            ml_markets = await asyncio.to_thread(lambda: _tt.get_sgm_markets(token, ml_match, ml["sport"], ml["competition"], proxy))
+                            ml_markets = await _fetch_markets_with_fallback([s], ml_match, ml["sport"], ml["competition"])
                             prop = _tt.resolve_proposition(ml["leg"], ml_markets, ml_match)
                             if "error" in prop:
                                 resolve_error = f"{ml['match']}: {prop['error']}"
@@ -3037,15 +3075,11 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                 continue
 
             ck = f"{bet['sport']}:{bet['competition']}"
-            # Only cache non-empty results. If the first session's proxy gets
-            # 403'd, try the next session's proxy before giving up — otherwise
-            # one bad sticky-session would mask the match list from everyone.
+            # Try all targets first, then fall back to any logged-in user session.
             if not matches_cache.get(ck):
-                for _t in targets:
-                    fetched = await asyncio.to_thread(lambda _x=_t: _tt.get_matches(_x["token"], bet["sport"], bet["competition"], _x.get("proxy_url")))
-                    if fetched:
-                        matches_cache[ck] = fetched
-                        break
+                fetched = await _fetch_matches_with_fallback(list(targets), bet["sport"], bet["competition"])
+                if fetched:
+                    matches_cache[ck] = fetched
 
             match = _tt.find_match(matches_cache.get(ck) or [], bet["match"])
             if not match:
@@ -3063,7 +3097,7 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                 token, legacy, acct, proxy = s.get("token", ""), s.get("legacy_token", ""), s.get("account_number", ""), s.get("proxy_url", "")
                 acct_label = acct_labels.get(acct) or acct_labels.get((s.get("email") or "").lower()) or acct
 
-                markets = await asyncio.to_thread(lambda: _tt.get_sgm_markets(token, match, bet["sport"], bet["competition"], proxy))
+                markets = await _fetch_markets_with_fallback([s], match, bet["sport"], bet["competition"])
                 props = []
                 tryscorer_team = None
                 for leg in bet["legs"]:
