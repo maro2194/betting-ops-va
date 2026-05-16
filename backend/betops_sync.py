@@ -738,10 +738,17 @@ async def emit_bet365_pick_to_betops(pick: dict, username: str, pool) -> None:
             return  # defensive: only emit actually-placed picks
 
         bookmaker = resolve_bookmaker("bet365")
-        # bet365 in this repo doesn't track per-pick account_number; the Megaboost
-        # flow uses a single logged-in bet365 account per browser session. Resolve
-        # via the bookie_accounts table on (platform=bet365) for this username.
-        account_email = await _lookup_email_bookie(username, "bet365", "bet365", "", pool)
+        # bet365 logins are stored verbatim in bookie_accounts.email (real emails
+        # for some, the raw "marobets" handle for others). The megaboost-all flow
+        # writes that login onto pick["username"], so use it directly as the
+        # BetOps account email. Without this, _lookup_email_bookie LIMIT 1 would
+        # collapse all bet365 picks onto a single account's email regardless of
+        # which account actually placed each bet.
+        pick_login = (pick.get("username") or "").strip()
+        if pick_login:
+            account_email = pick_login
+        else:
+            account_email = await _lookup_email_bookie(username, "bet365", "bet365", "", pool)
 
         # Activity: Megaboost is promo, everything else non_promo.
         source = (pick.get("source") or "").lower()

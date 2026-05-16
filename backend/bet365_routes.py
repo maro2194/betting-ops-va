@@ -200,11 +200,11 @@ async def save_pick_to_db(pick: dict):
         try:
             import asyncio as _asyncio
             from betops_sync import emit_bet365_pick_to_betops
-            # bet365 picks don't carry a BotOps username directly; the pipeline
-            # is tied to the singleton bet365 login. Use "default" so email lookup
-            # falls back to the bet365 platform row in bookie_accounts.
-            _username = pick.get("username") or "default"
-            _asyncio.create_task(emit_bet365_pick_to_betops(dict(pick), _username, database.pool))
+            # The BotOps user gates BETOPS_USERNAME_ALLOWLIST and seeds the
+            # bookie_accounts email lookup. pick["username"] is the *bet365 login
+            # handle* (which doubles as bookie_accounts.email for all rows) —
+            # emit_bet365_pick_to_betops uses it directly for the account email.
+            _asyncio.create_task(emit_bet365_pick_to_betops(dict(pick), "maro", database.pool))
         except Exception as _e:
             logger.error("BetOps bet365 emit scheduling failed: %s", _e)
 
