@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 FARM_URL = os.getenv("TOKEN_FARM_URL", "http://172.16.1.6:9000")
 FARM_API_KEY = os.getenv("TOKEN_FARM_API_KEY", "botops-farm-2026")
-FARM_TIMEOUT = 120  # Browser logins with proxy + geoip can take 60-90 seconds
+FARM_TIMEOUT = 180  # Camoufox bet365 login observed at ~107s; allow headroom for proxy + geoip
 
 
 def _headers() -> dict:
