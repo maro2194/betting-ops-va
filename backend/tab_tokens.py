@@ -373,11 +373,20 @@ def resolve_proposition(leg_desc: str, markets: list, match: dict, tryscorer_tea
     # Head To Head
     if "head to head" in desc_lower or "h2h" in desc_lower:
         team = desc_lower.replace("head to head", "").replace("h2h", "").strip()
+        # TAB's canonical betOption values for the full-time H2H market vary:
+        #   NRL/AFL/Rugby — "Head To Head" or "Match Result"
+        #   Soccer (and others) — just "Result"
+        # The display `name` field is league/team-prefixed ("EPL Man Utd-Nott For
+        # Result"), but we key off the canonical `betOption`. Be strict here —
+        # "Corners Result", "1st Half Result", "Card Result" are NOT H2H.
+        _h2h_betoptions = ("head to head", "match result", "result")
         for market in markets:
-            if market.get("betOption", "").lower() in ("head to head", "match result"):
-                for prop in market.get("propositions", []):
-                    if team in prop.get("name", "").lower():
-                        return {"proposition_id": int(prop.get("id", prop.get("numberId"))), "name": prop.get("name", ""), "odds": float(prop.get("returnWin", 0)), "market": market.get("betOption", ""), "status": prop.get("bettingStatus", "Unknown"), "leg_description": leg_desc}
+            bo_lower = market.get("betOption", "").lower()
+            if bo_lower not in _h2h_betoptions:
+                continue
+            for prop in market.get("propositions", []):
+                if team in prop.get("name", "").lower():
+                    return {"proposition_id": int(prop.get("id", prop.get("numberId"))), "name": prop.get("name", ""), "odds": float(prop.get("returnWin", 0)), "market": market.get("betOption", ""), "status": prop.get("bettingStatus", "Unknown"), "leg_description": leg_desc}
 
     # Try scorer — solo player only (skip "Either Player" / combo markets)
     if "try" in desc_lower or "score" in desc_lower:
