@@ -3028,13 +3028,21 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                                     "error": f"Combined odds {co_f:.2f} < $2.00", "dry_run": is_dry})
                     continue
 
-                svs = await asyncio.to_thread(lambda: _tt.get_sgm_savers(token, acct, proxy, legacy_token=legacy))
+                try:
+                    svs = await asyncio.to_thread(lambda: _tt.get_sgm_savers(token, acct, proxy, legacy_token=legacy))
+                except Exception as _e:
+                    logger.warning("execute: saver fetch failed for %s: %s — defaulting to $10 stake", acct, _e)
+                    svs = []
+                # Drop proxy-error sentinel rows ({"_proxy_error": True}) — they
+                # have no "match" key so empty-string substring matches against
+                # any bet and breaks the max_reward lookup downstream.
+                svs = [sv for sv in svs if not sv.get("_proxy_error")]
                 bet_match_lower = bet["match"].lower()
-                matching = [sv for sv in svs if (
-                    bet_match_lower in sv.get("match", "").lower() or
-                    sv.get("match", "").lower() in bet_match_lower
+                matching = [sv for sv in svs if sv.get("match") and (
+                    bet_match_lower in sv["match"].lower() or
+                    sv["match"].lower() in bet_match_lower
                 )]
-                stake = float(matching[0]["max_reward"]) if matching else 10.0
+                stake = float(matching[0].get("max_reward") or 10.0) if matching else 10.0
 
                 resolved_legs = []
                 for p in props:
