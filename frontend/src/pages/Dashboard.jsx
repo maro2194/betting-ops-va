@@ -513,7 +513,11 @@ export default function Dashboard() {
   };
 
   const handleLoginAll = async () => {
-    const offlineAccounts = accounts.filter((a) => !sessions[a.id]?.session_id);
+    const offlineAccounts = accounts.filter((a) => {
+      const s = sessions[a.id];
+      if (!s?.session_id) return true;
+      return s.token_exp && Date.now() / 1000 >= s.token_exp - 300;
+    });
     if (offlineAccounts.length === 0) return;
     setLoginAllRunning(true);
     for (let i = 0; i < offlineAccounts.length; i++) {
