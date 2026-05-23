@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 FARM_URL = os.getenv("TOKEN_FARM_URL", "http://172.16.1.6:9000")
 FARM_API_KEY = os.getenv("TOKEN_FARM_API_KEY", "botops-farm-2026")
-FARM_TIMEOUT = 180  # Camoufox bet365 login observed at ~107s; allow headroom for proxy + geoip
+FARM_TIMEOUT = 300  # Camoufox bet365 login is normally ~107s, but Akamai/captcha can push past 3min
 
 
 def _headers() -> dict:
