@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 
 const SPORTS = [
-  { value: 'HOME', label: 'Homepage (Racing/Featured)' },
+  { value: 'HOME', label: 'Homepage (Sport Boosts)' },
   { value: 'NRL', label: 'NRL' },
   { value: 'AFL', label: 'AFL' },
   { value: 'NBA', label: 'NBA' },
@@ -123,7 +123,7 @@ function ResultRow({ r }) {
 }
 
 export default function Megaboost() {
-  const [sport, setSport] = useState('NRL');
+  const [sport, setSport] = useState('HOME');
   const [customSport, setCustomSport] = useState('');
   const [matchTeam, setMatchTeam] = useState('');
   const [scanning, setScanning] = useState(false);
