@@ -3048,10 +3048,21 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
                             legs_for_place = [{"propositionId": p["proposition_id"], "odds": f"{p['odds']:.2f}"} for p in multi_props]
                             saver_tag = f" + {saver_offer_name}" if has_saver else ""
                             _log(f"{acct_label}: placing MULTI ${stake:.0f} @ {combined_odds:.2f} — {len(multi_props)} legs{saver_tag}...")
-                            pr = await asyncio.to_thread(lambda: place_multi_bet(
-                                legacy, acct, legs_for_place, str(stake), proxy,
-                                token_group_id=saver_token_group_id,
-                            ))
+                            # Rotate Oxylabs sessid once on tunnel-level failure — banned sticky IPs
+                            # 502 the CONNECT every try otherwise.
+                            pr = {"success": False, "error": "no attempts made"}
+                            for _placement_attempt in (1, 2):
+                                cur_proxy = s.get("proxy_url", "")
+                                pr = await asyncio.to_thread(lambda p=cur_proxy: place_multi_bet(
+                                    legacy, acct, legs_for_place, str(stake), p,
+                                    token_group_id=saver_token_group_id,
+                                ))
+                                if pr.get("success") or not _is_proxy_error(pr.get("error", "")):
+                                    break
+                                if _placement_attempt == 1 and await _rotate_account_proxy(s):
+                                    _log(f"{acct_label}: tunnel 502 — rotated Oxylabs sessid, retrying...")
+                                    continue
+                                break
                             if pr.get("success"):
                                 _log(f"{acct_label}: ✓ MULTI placed — TSN {pr.get('tsn', '?')}")
                             else:
@@ -3187,7 +3198,18 @@ async def tab_tokens_execute(body: dict, _user: dict = Depends(_verify_app_token
 
                     saver_token_group_id = matching[0].get("token_group_id") if matching else None
                     _log(f"{acct_label}: placing ${stake:.0f} @ {co_f:.2f} — {', '.join(l['name'] for l in resolved_legs[:2])}...")
-                    pr = await asyncio.to_thread(lambda: _tt.place_sgm_with_saver(legacy, acct, props, stake, co, deco, leg_deco, proxy, token_group_id=saver_token_group_id))
+                    # Rotate Oxylabs sessid once on tunnel-level failure — banned sticky IPs
+                    # 502 the CONNECT every try otherwise.
+                    pr = {"success": False, "error": "no attempts made"}
+                    for _placement_attempt in (1, 2):
+                        cur_proxy = s.get("proxy_url", "")
+                        pr = await asyncio.to_thread(lambda p=cur_proxy: _tt.place_sgm_with_saver(legacy, acct, props, stake, co, deco, leg_deco, p, token_group_id=saver_token_group_id))
+                        if pr.get("success") or not _is_proxy_error(pr.get("error", "")):
+                            break
+                        if _placement_attempt == 1 and await _rotate_account_proxy(s):
+                            _log(f"{acct_label}: tunnel 502 — rotated Oxylabs sessid, retrying...")
+                            continue
+                        break
                     leg_names = [p["name"] for p in props]
                     if pr.get("success"):
                         _log(f"{acct_label}: ✓ placed — TSN {pr.get('tsn', '?')}")
